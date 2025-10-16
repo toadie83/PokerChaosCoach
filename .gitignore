@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*
+
+# Logs and diagnostics
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS / tooling noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
