@@ -1,5 +1,4 @@
 import { positionCategory } from "./seatUtils.js";
-import { actsFirstOnStreet } from "./seatUtils.js";
 
 export const initialState = {
   street: "preflop",
@@ -9,6 +8,7 @@ export const initialState = {
   history: [],
   actions: [],
   previousActions: [],
+  nextActor: "hero",
   lastEvent: null,
   lastEventAt: 0,
   aggressors: 0,
@@ -16,7 +16,12 @@ export const initialState = {
   threeBets: 0,
   momentum: 0,
   handComplete: false,
-  style: "chaos_shark"
+  style: "chaos_shark",
+  persona: "chaos_shark",
+  heroCards: { card1: null, card2: null },
+  heroStackBB: 100,
+  villainStackBB: 100,
+  villainType: "fishy"
 };
 
 export function applyEvent(state, event) {
@@ -28,49 +33,78 @@ export function applyEvent(state, event) {
     s.previousActions = [...s.previousActions, code];
   };
 
+  const advanceStreet = () => {
+    const currentStreet = s.street;
+    push(`${currentStreet}_advance`);
+    if (currentStreet === "river") {
+      push("hand_complete");
+      s.handComplete = true;
+      s.nextActor = "hero";
+    } else {
+      s.street = nextStreet(currentStreet);
+      s.nextActor = "hero";
+    }
+  };
+
   switch (event) {
     // Preflop
     case "opened_to_me": {
       push("preflop_opened_to_me");
       s.opens += 1;
       s.aggressors += 1;
+      s.nextActor = "hero";
+      break;
+    }
+    case "multiple_villains_opened": {
+      push("preflop_multiple_villains_opened");
+      s.opens += 1;
+      s.aggressors += 2;
+      s.nextActor = "hero";
       break;
     }
     case "unopened": {
       push("preflop_unopened");
+      s.nextActor = "hero";
       break;
     }
     case "faced_3bet": {
       push("preflop_faced_3bet");
       s.threeBets += 1;
       s.aggressors += 1;
+      s.nextActor = "hero";
       break;
     }
     case "hero_opened": {
       push("preflop_hero_opened");
       s.opens += 1;
+      s.nextActor = "hero";
       break;
     }
     // Postflop
     case "checked_to_me": {
       push(`${s.street}_checked_to_me`);
+      s.nextActor = "hero";
       break;
     }
     case "faced_bet": {
       push(`${s.street}_faced_bet`);
       s.aggressors += 1;
+      s.nextActor = "hero";
       break;
     }
     case "multiway": {
       push(`${s.street}_multiway`);
+      s.nextActor = "hero";
       break;
     }
     case "headsup": {
       push(`${s.street}_headsup`);
+      s.nextActor = "hero";
       break;
     }
     case "first_to_act": {
       push(`${s.street}_first_to_act`);
+      s.nextActor = "hero";
       break;
     }
     case "next_street": {
@@ -78,45 +112,85 @@ export function applyEvent(state, event) {
       if (s.street === "river") {
         push("hand_complete");
         s.handComplete = true;
+        s.nextActor = "hero";
       } else {
         s.street = nextStreet(s.street);
+        s.nextActor = "hero";
       }
       break;
     }
     case "reset_hand": {
-      const keep = { heroSeat: s.heroSeat, tableSize: s.tableSize, style: s.style, openSize: s.openSize };
+      const keep = {
+        heroSeat: s.heroSeat,
+        tableSize: s.tableSize,
+        style: s.style,
+        openSize: s.openSize,
+        persona: s.persona,
+        heroCards: s.heroCards,
+        heroStackBB: s.heroStackBB,
+        villainStackBB: s.villainStackBB,
+        villainType: s.villainType,
+        preflopLimpers: s.preflopLimpers,
+        preflopCallers: s.preflopCallers
+      };
       return { ...initialState, ...keep };
     }
     case "opp_all_fold": {
       push(`${s.street}_opp_all_fold`);
+      push("hand_complete");
+      s.handComplete = true;
+      s.nextActor = "hero";
       break;
     }
     case "opp_one_call": {
       push(`${s.street}_opp_one_call`);
+      if (s.street === "preflop") {
+        advanceStreet();
+      } else {
+        s.nextActor = "hero";
+      }
       break;
     }
     case "opp_multi_call": {
       push(`${s.street}_opp_multi_call`);
+      if (s.street === "preflop") {
+        advanceStreet();
+      } else {
+        s.nextActor = "hero";
+      }
       break;
     }
     case "opp_4bet": {
       push(`${s.street}_opp_4bet`);
+      s.nextActor = "hero";
       break;
     }
     case "opp_shove": {
       push(`${s.street}_opp_shove`);
+      s.nextActor = "hero";
       break;
     }
     case "opp_fold": {
       push(`${s.street}_opp_fold`);
+      push("hand_complete");
+      s.handComplete = true;
+      s.nextActor = "hero";
       break;
     }
     case "opp_call": {
       push(`${s.street}_opp_call`);
+      if (s.street === "river") {
+        push("hand_complete");
+        s.handComplete = true;
+        s.nextActor = "hero";
+      } else {
+        advanceStreet();
+      }
       break;
     }
     case "opp_raise": {
       push(`${s.street}_opp_raise`);
+      s.nextActor = "hero";
       break;
     }
     default:
@@ -144,7 +218,8 @@ export function instructionForBranch(branch) {
   const map = {
     // Preflop
     preflop_unopened: "Hero in unopened pot — suggest open raise sizing (3x–4x)",
-    preflop_opened_to_me: "Facing an open — suggest 3-bet or call with swagger",
+    preflop_opened_to_me: "Facing an open - lead with 3-bet aggression, mix traps when image insists",
+    preflop_multiple_villains_opened: "Multiple players entered preflop - exploit loose callers or over-isolate as hero",
     preflop_faced_3bet: "Facing a 3-bet — suggest 4-bet or fold with attitude",
     preflop_hero_opened: "Hero opened — suggest plan vs callers/3-bets",
     // Postflop
@@ -188,6 +263,11 @@ export function summarizeForAI(state) {
   const branch = deriveBranch(state);
   const instruction = instructionForBranch(branch);
   const history = Array.isArray(state.history) ? state.history.slice(-8) : [];
+  const heroCards = state.heroCards || {};
+  const heroHand =
+    heroCards.card1 && heroCards.card2
+      ? String(heroCards.card1) + String(heroCards.card2)
+      : null;
   return {
     context: {
       street: state.street,
@@ -197,7 +277,23 @@ export function summarizeForAI(state) {
       aggressors: state.aggressors,
       style: state.style || "chaos_shark",
       branch,
-      history
+      history,
+      persona: state.persona || "chaos_shark",
+      heroCards,
+      heroHand,
+      heroStackBB:
+        typeof state.heroStackBB === "number" && Number.isFinite(state.heroStackBB)
+          ? state.heroStackBB
+          : null,
+      villainStackBB:
+        typeof state.villainStackBB === "number" && Number.isFinite(state.villainStackBB)
+          ? state.villainStackBB
+          : null,
+      villainType: state.villainType || "balanced",
+      preflopLimpers:
+        typeof state.preflopLimpers === "number" ? state.preflopLimpers : 0,
+      preflopCallers:
+        typeof state.preflopCallers === "number" ? state.preflopCallers : 0
     },
     instruction
   };
@@ -208,55 +304,59 @@ export function getAvailableActions(state, hasCoach) {
     return [];
   }
   const isPre = state.street === "preflop";
-  const last = state.previousActions[state.previousActions.length - 1] || "";
-  const isAlreadyOpp = /_opp_/.test(last);
-  if (hasCoach && last && !isAlreadyOpp) {
+  const next = state.nextActor || "hero";
+
+  if (next === "opp" && hasCoach) {
     if (isPre) {
       return [
-        { code: "opp_one_call", label: "1 Caller" },
-        { code: "opp_multi_call", label: "Multi callers" },
         { code: "opp_all_fold", label: "All folded" },
+        { code: "opp_one_call", label: "1 caller" },
+        { code: "opp_multi_call", label: "Multi callers" },
         { code: "opp_4bet", label: "4-bet" },
         { code: "opp_shove", label: "Shoved" }
       ];
     }
-    // Postflop: prefer perception-based options instead of generic opp reactions
-    const pos = positionCategory(state.heroSeat, state.tableSize);
-    const base = [
-      { code: "checked_to_me", label: "Checked to me" },
-      { code: "faced_bet", label: "Bet to me" },
-      { code: "multiway", label: "Multiway" },
-      { code: "headsup", label: "Heads-up" },
-      { code: "next_street", label: "Next Street" }
+    return [
+      { code: "opp_fold", label: "Villain fold" },
+      { code: "opp_call", label: "Villain call" },
+      { code: "opp_raise", label: "Villain raise" },
+      { code: "opp_shove", label: "Villain shove" }
     ];
-    if (actsFirstOnStreet(state.street, state.heroSeat)) {
-      base.unshift({ code: "first_to_act", label: "First to act" });
-    }
-    if (pos === "early") return [base[1], base[0], ...base.slice(2)];
-    if (pos === "late") return base;
-    return base;
   }
 
   if (isPre) {
     return [
       { code: "unopened", label: "Unopened pot" },
       { code: "opened_to_me", label: "Opened to me" },
+      { code: "multiple_villains_opened", label: "Multiple villains opened" },
       { code: "faced_3bet", label: "3-Bet to me" },
       { code: "hero_opened", label: "Hero opened" }
     ];
   }
   const pos = positionCategory(state.heroSeat, state.tableSize);
   const base = [
+    { code: "first_to_act", label: "First to act" },
     { code: "checked_to_me", label: "Checked to me" },
     { code: "faced_bet", label: "Bet to me" },
     { code: "multiway", label: "Multiway" },
     { code: "headsup", label: "Heads-up" },
     { code: "next_street", label: "Next Street" }
   ];
-  if (actsFirstOnStreet(state.street, state.heroSeat)) {
-    base.unshift({ code: "first_to_act", label: "First to act" });
+  if (pos === "early") {
+    return [
+      base[2], // faced bet
+      base[1], // checked
+      base[0], // first to act
+      ...base.slice(3)
+    ];
   }
-  if (pos === "early") return [base[1], base[0], ...base.slice(2)];
-  if (pos === "late") return base;
+  if (pos === "late") {
+    return [
+      base[1], // checked
+      base[2], // faced bet
+      base[0], // first to act
+      ...base.slice(3)
+    ];
+  }
   return base;
 }
