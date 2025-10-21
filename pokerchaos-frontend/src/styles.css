@@ -42,6 +42,75 @@ body {
   gap: 10px;
   align-items: center;
 }
+.controls-inline {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.controls-inline > * {
+  flex: 0 0 auto;
+  width: auto;
+}
+.game-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.95rem;
+}
+.game-summary-item {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.2;
+}
+.game-summary-item strong {
+  color: var(--text);
+}
+.seat-grid {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  justify-items: stretch;
+}
+.seat-grid.columns-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+.seat-grid.columns-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.seat-grid.columns-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.seat-grid.columns-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.seat-grid.columns-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.seat-grid.columns-6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.seat-grid button {
+  width: 100%;
+}
+.seat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+}
+.seat-row .seat-grid {
+  flex: 1 1 auto;
+  width: 100%;
+}
 label {
   font-weight: 600;
   color: var(--muted);
@@ -312,10 +381,38 @@ button {
   .row > * {
     width: 100%;
   }
-  select,
-  input,
-  button {
+  .controls-inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .controls-inline > * {
+    width: auto;
+  }
+  .controls-inline select,
+  .controls-inline input,
+  .controls-inline button {
+    width: auto;
+  }
+  .seat-row .seat-grid {
     width: 100%;
+  }
+  .game-summary {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    gap: 6px;
+  }
+  .game-summary-item {
+    padding: 3px 6px;
+  }
+  select,
+  input {
+    width: 100%;
+  }
+  button {
+    width: auto;
+    padding: 8px 10px;
+    font-size: 0.95rem;
   }
   .style-range {
     width: 100%;
@@ -325,11 +422,7 @@ button {
     text-align: center;
   }
   .chaos-hud {
-    top: auto;
-    bottom: 12px;
-    right: 12px;
-    left: 12px;
-    justify-content: space-between;
+    display: none;
   }
   .hud-card {
     padding: 12px;

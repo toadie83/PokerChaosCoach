@@ -4,6 +4,7 @@ import ActionButtons from "./components/ActionButtons.jsx";
 import PromptDisplay from "./components/PromptDisplay.jsx";
 import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
+import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import { useGameState } from "./state/useGameState.js";
 import { summarizeForAI, getAvailableActions } from "./state/machine.js";
 import { getChaosMood } from "./state/chaosMeter.js";
@@ -262,6 +263,14 @@ export default function App() {
     () => seatsForTableSize(state.tableSize),
     [state.tableSize]
   );
+  const seatColumns = useMemo(() => {
+    const total = seats.length;
+    if (total <= 3) return total;
+    if (total <= 4) return 4;
+    if (total <= 6) return 3;
+    if (total <= 8) return 4;
+    return 5;
+  }, [seats.length]);
   const mood = useMemo(
     () => getChaosMood(state),
     [
@@ -286,6 +295,17 @@ export default function App() {
     persona === "range_professor" ||
     persona === "short_stack_ninja" ||
     persona === "cash_game_crusher";
+
+  const prepareForCardChange = useCallback(() => {
+    if (heroCardsReady) {
+      handleReset();
+    }
+  }, [heroCardsReady, handleReset]);
+
+  const handleManualCardEntry = useCallback(() => {
+    prepareForCardChange();
+    setShowCardModal(true);
+  }, [prepareForCardChange, setShowCardModal]);
   const rawHeroStack = state.heroStackBB;
   const rawVillainStack = state.villainStackBB;
   const heroStackNumber = Number(rawHeroStack);
@@ -321,7 +341,7 @@ export default function App() {
       code: "cash_game_crusher",
       label: "Cash Game Crusher",
       description: "Deep-stack cash grinder targeting loose low-stakes fields.",
-      stackThreshold: null
+      stackThreshold: null,
     },
     {
       code: "short_stack_ninja",
@@ -339,9 +359,7 @@ export default function App() {
     heroStackValid &&
     heroStackNumber > stackThreshold;
   const cashStackLow =
-    persona === "cash_game_crusher" &&
-    heroStackValid &&
-    heroStackNumber < 70;
+    persona === "cash_game_crusher" && heroStackValid && heroStackNumber < 70;
   const villainType = state.villainType || "balanced";
   const villainTypeOptions = [
     { code: "balanced", label: "Solid / Balanced" },
@@ -379,6 +397,8 @@ export default function App() {
     styleOptions.findIndex((o) => o.code === state.style)
   );
 
+  const showStyleSelector = persona === "chaos_shark";
+
   return (
     <>
       <div className="wrap">
@@ -396,6 +416,55 @@ export default function App() {
             <h1 className="title" style={{ margin: 0 }}>
               Poker Chaos Coach
             </h1>
+            {showStyleSelector ? (
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span className="sub">Style:</span>
+                <input
+                  className="style-range"
+                  type="range"
+                  min={0}
+                  max={styleOptions.length - 1}
+                  step={1}
+                  value={styleIndex}
+                  onChange={(e) => {
+                    const idx = Number(e.target.value);
+                    const next = styleOptions[idx]?.code || "chaos_shark";
+                    setField("style", next);
+                  }}
+                />
+                <span className="sub style-current">
+                  {styleOptions[styleIndex]?.label || "Shark"}
+                </span>
+              </div>
+            ) : null}
+          </div>
+          <div
+            className="row controls-inline"
+            style={{ gap: 8, marginTop: 12 }}
+          >
+            <label htmlFor="tableSize">Table</label>
+            <select
+              id="tableSize"
+              value={state.tableSize}
+              onChange={(e) => setField("tableSize", Number(e.target.value))}
+            >
+              {[6, 8, 9].map((n) => (
+                <option key={n} value={n}>
+                  {n}-max
+                </option>
+              ))}
+            </select>
+            <span className="sub">Open</span>
+            <select
+              value={state.openSize}
+              onChange={(e) => setField("openSize", Number(e.target.value))}
+            >
+              {[2.2, 2.5, 2.7, 3.0, 3.2, 3.5].map((n) => (
+                <option key={n} value={n}>
+                  {n.toFixed(1)}x
+                </option>
+              ))}
+            </select>
             <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
               <span className="sub">Persona:</span>
               <select
@@ -420,22 +489,7 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              {personaNeedsCards ? (
-                <>
-                  <span
-                    className="sub"
-                    style={{
-                      color: heroCardsReady ? undefined : "#f87171",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Hand: {heroHandLabel}
-                  </span>
-                  <button type="button" onClick={() => setShowCardModal(true)}>
-                    {heroCardsReady ? "Edit hand" : "Set hand"}
-                  </button>
-                </>
-              ) : null}
+              {personaNeedsCards ? <></> : null}
             </div>
             {personaMeta?.description ? (
               <p
@@ -445,8 +499,7 @@ export default function App() {
                   width: "100%",
                   color:
                     stackOverThreshold || cashStackLow ? "#f97316" : undefined,
-                  fontWeight:
-                    stackOverThreshold || cashStackLow ? 600 : 400,
+                  fontWeight: stackOverThreshold || cashStackLow ? 600 : 400,
                 }}
               >
                 {personaMeta.description}
@@ -458,7 +511,18 @@ export default function App() {
                   : ""}
               </p>
             ) : null}
-            {persona === "exploit_detective" || persona === "cash_game_crusher" ? (
+            {personaNeedsCards ? (
+              <div style={{ marginTop: 8 }}>
+                <HeroVoiceCardInput
+                  heroCards={heroCards}
+                  onCardsParsed={handleSaveHeroCards}
+                  onManualEntry={handleManualCardEntry}
+                  onVoiceStart={prepareForCardChange}
+                />
+              </div>
+            ) : null}
+            {persona === "exploit_detective" ||
+            persona === "cash_game_crusher" ? (
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="sub">Villain type</span>
                 <select
@@ -476,24 +540,8 @@ export default function App() {
                 </span>
               </div>
             ) : null}
-            {(persona === "short_stack_ninja" ||
-              persona === "cash_game_crusher") && (
+            {persona === "cash_game_crusher" && (
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="sub">Hero stack (BB)</span>
-                <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={heroStackValid ? heroStackNumber : ""}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setField(
-                      "heroStackBB",
-                      Number.isFinite(val) && val > 0 ? val : null
-                    );
-                  }}
-                  style={{ width: 120 }}
-                />
                 <span className="sub">Villain stack (BB)</span>
                 <input
                   type="number"
@@ -509,34 +557,10 @@ export default function App() {
                   }}
                   style={{ width: 120 }}
                 />
-                <span className="sub">
-                  Effective:{" "}
-                  <strong>
-                    {effectiveStack ? `${effectiveStack} BB` : "?"}
-                  </strong>
-                </span>
               </div>
             )}
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-              <span className="sub">Style:</span>
-              <input
-                className="style-range"
-                type="range"
-                min={0}
-                max={styleOptions.length - 1}
-                step={1}
-                value={styleIndex}
-                onChange={(e) => {
-                  const idx = Number(e.target.value);
-                  const next = styleOptions[idx]?.code || "chaos_shark";
-                  setField("style", next);
-                }}
-              />
-              <span className="sub style-current">
-                {styleOptions[styleIndex]?.label || "Shark"}
-              </span>
-            </div>
-            {persona === "short_stack_ninja" ? (
+            {persona === "short_stack_ninja" ||
+            persona === "cash_game_crusher" ? (
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="sub">Hero stack (BB)</span>
                 <input
@@ -553,35 +577,19 @@ export default function App() {
                   }}
                   style={{ width: 120 }}
                 />
-                <span className="sub">Villain stack (BB)</span>
-                <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={villainStackValid ? villainStackNumber : ""}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setField(
-                      "villainStackBB",
-                      Number.isFinite(val) && val > 0 ? val : null
-                    );
-                  }}
-                  style={{ width: 120 }}
-                />
-                <span className="sub">
-                  Effective:{" "}
-                  <strong>
-                    {effectiveStack ? `${effectiveStack} BB` : "?"}
-                  </strong>
-                </span>
+                {persona === "cash_game_crusher" ? (
+                  <span className="sub">
+                    Effective:{" "}
+                    <strong>
+                      {effectiveStack ? `${effectiveStack} BB` : "?"}
+                    </strong>
+                  </span>
+                ) : null}
               </div>
             ) : null}
-          </div>
 
-          <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <button onClick={handleReset}>Reset</button>
-            <button onClick={handleClearActions}>Clear Actions</button>
-            {/* <button onClick={() => {
+            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+              {/* <button onClick={() => {
             const lines = (state.actions || []).map((a) => JSON.stringify(a));
             const blob = new Blob(lines.map(l => l + "\n"), { type: "application/x-ndjson" });
             const url = URL.createObjectURL(blob);
@@ -593,61 +601,41 @@ export default function App() {
             a.remove();
             URL.revokeObjectURL(url);
           }}>Export Session</button> */}
-          </div>
+            </div>
 
-          <div className="row" style={{ gap: 8, marginTop: 12 }}>
-            <label htmlFor="tableSize">Table Size</label>
-            <select
-              id="tableSize"
-              value={state.tableSize}
-              onChange={(e) => setField("tableSize", Number(e.target.value))}
-            >
-              {[6, 8, 9].map((n) => (
-                <option key={n} value={n}>
-                  {n}-max
-                </option>
-              ))}
-            </select>
-            <span className="sub">Open Size</span>
-            <select
-              value={state.openSize}
-              onChange={(e) => setField("openSize", Number(e.target.value))}
-            >
-              {[2.2, 2.5, 2.7, 3.0, 3.2, 3.5].map((n) => (
-                <option key={n} value={n}>
-                  {n.toFixed(1)}x
-                </option>
-              ))}
-            </select>
-            <span className="sub">Seat:</span>
-            <div className="row" style={{ gap: 6 }}>
-              {seats.map((seat) => (
-                <button
-                  key={seat}
-                  onClick={() => setField("heroSeat", seat)}
-                  style={
-                    state.heroSeat === seat
-                      ? { background: "#f59e0b", color: "#111827" }
-                      : undefined
-                  }
-                >
-                  {seat}
-                </button>
-              ))}
+            <div className="row seat-row" style={{ gap: 8 }}>
+              <span className="sub">Seat:</span>
+              <div className={`seat-grid columns-${seatColumns}`}>
+                {seats.map((seat) => (
+                  <button
+                    key={seat}
+                    onClick={() => setField("heroSeat", seat)}
+                    style={
+                      state.heroSeat === seat
+                        ? { background: "#f59e0b", color: "#111827" }
+                        : undefined
+                    }
+                  >
+                    {seat}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="row" style={{ gap: 10, marginTop: 12 }}>
-            <span className="sub">
-              Street: <strong>{state.street}</strong>
+          <div className="game-summary">
+            <span className="game-summary-item">
+              Street&nbsp;<strong>{state.street}</strong>
             </span>
-            <span className="sub">
-              Table: <strong>{state.tableSize}-max</strong>
+            <span className="game-summary-item">
+              Table&nbsp;<strong>{state.tableSize}-max</strong>
             </span>
-            <span className="sub">
-              Hero Seat: <strong>{state.heroSeat || "?"}</strong>
+            <span className="game-summary-item">
+              Hero&nbsp;Seat&nbsp;<strong>{state.heroSeat || "?"}</strong>
             </span>
-            <span className="sub">Aggressors: {state.aggressors}</span>
+            <span className="game-summary-item">
+              Aggressors&nbsp;<strong>{state.aggressors}</strong>
+            </span>
           </div>
 
           {!state.handComplete && (
@@ -655,7 +643,11 @@ export default function App() {
               <ActionButtons actions={actions} onAction={onAction} embedded />
             </div>
           )}
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <button onClick={handleReset}>Reset</button>
 
+            <button onClick={handleClearActions}>Clear Actions</button>
+          </div>
           <div style={{ marginTop: 12 }}>
             <PromptDisplay
               key={state.street + (state.handComplete ? "-complete" : "")}

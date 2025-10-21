@@ -21,7 +21,7 @@ export const initialState = {
   heroCards: { card1: null, card2: null },
   heroStackBB: 100,
   villainStackBB: 100,
-  villainType: "fishy"
+  villainType: "fishy",
 };
 
 export function applyEvent(state, event) {
@@ -131,7 +131,7 @@ export function applyEvent(state, event) {
         villainStackBB: s.villainStackBB,
         villainType: s.villainType,
         preflopLimpers: s.preflopLimpers,
-        preflopCallers: s.preflopCallers
+        preflopCallers: s.preflopCallers,
       };
       return { ...initialState, ...keep };
     }
@@ -217,13 +217,17 @@ export function deriveBranch(state) {
 export function instructionForBranch(branch) {
   const map = {
     // Preflop
-    preflop_unopened: "Hero in unopened pot — suggest open raise sizing (3x–4x)",
-    preflop_opened_to_me: "Facing an open - lead with 3-bet aggression, mix traps when image insists",
-    preflop_multiple_villains_opened: "Multiple players entered preflop - exploit loose callers or over-isolate as hero",
+    preflop_unopened:
+      "Hero in unopened pot — suggest open raise sizing (3x–4x)",
+    preflop_opened_to_me:
+      "Facing an open - lead with 3-bet aggression, mix traps when image insists",
+    preflop_multiple_villains_opened:
+      "Multiple players entered preflop - exploit loose callers or over-isolate as hero",
     preflop_faced_3bet: "Facing a 3-bet — suggest 4-bet or fold with attitude",
     preflop_hero_opened: "Hero opened — suggest plan vs callers/3-bets",
     // Postflop
-    flop_checked_to_me: "Checked to hero — suggest continuation bet (half to full pot)",
+    flop_checked_to_me:
+      "Checked to hero — suggest continuation bet (half to full pot)",
     flop_faced_bet: "Facing bet — suggest check-raise or float for chaos",
     flop_multiway: "Multiway pot — suggest pressure or positioning play",
     flop_headsup: "Heads-up pot — suggest pressure line",
@@ -236,14 +240,17 @@ export function instructionForBranch(branch) {
     river_multiway: "River multiway — polarized pressure",
     river_headsup: "River heads-up — decisive finisher",
     // First to act (postflop)
-    flop_first_to_act: "First to act — suggest c-bet, small probe, or check-trap",
-    turn_first_to_act: "First to act — suggest second barrel, small stab, or trap",
+    flop_first_to_act:
+      "First to act — suggest c-bet, small probe, or check-trap",
+    turn_first_to_act:
+      "First to act — suggest second barrel, small stab, or trap",
     river_first_to_act: "First to act — thin value, block bet, or bluff shove",
     // Opponent reactions (preflop)
     preflop_opp_all_fold: "Everyone folded — reflect table image next hand",
     preflop_opp_one_call: "Single caller — prepare flop plan and initiative",
     preflop_opp_multi_call: "Multiway pot — prepare pressure lines",
-    preflop_opp_4bet: "Facing 4-bet — suggest plan (shove or fold with swagger)",
+    preflop_opp_4bet:
+      "Facing 4-bet — suggest plan (shove or fold with swagger)",
     preflop_opp_shove: "Facing shove — decisive response with presence",
     // Opponent reactions (postflop generic)
     flop_opp_fold: "Villain folded — keep pressure narrative",
@@ -254,7 +261,7 @@ export function instructionForBranch(branch) {
     turn_opp_raise: "Facing turn raise — bold reply",
     river_opp_fold: "Villain folded — table image established",
     river_opp_call: "Caller on river — reflect table dynamics",
-    river_opp_raise: "Facing river raise — audacious counter"
+    river_opp_raise: "Facing river raise — audacious counter",
   };
   return map[branch] || "Generate a short, high-energy chaos line.";
 }
@@ -282,20 +289,22 @@ export function summarizeForAI(state) {
       heroCards,
       heroHand,
       heroStackBB:
-        typeof state.heroStackBB === "number" && Number.isFinite(state.heroStackBB)
+        typeof state.heroStackBB === "number" &&
+        Number.isFinite(state.heroStackBB)
           ? state.heroStackBB
           : null,
       villainStackBB:
-        typeof state.villainStackBB === "number" && Number.isFinite(state.villainStackBB)
+        typeof state.villainStackBB === "number" &&
+        Number.isFinite(state.villainStackBB)
           ? state.villainStackBB
           : null,
       villainType: state.villainType || "balanced",
       preflopLimpers:
         typeof state.preflopLimpers === "number" ? state.preflopLimpers : 0,
       preflopCallers:
-        typeof state.preflopCallers === "number" ? state.preflopCallers : 0
+        typeof state.preflopCallers === "number" ? state.preflopCallers : 0,
     },
-    instruction
+    instruction,
   };
 }
 
@@ -313,14 +322,14 @@ export function getAvailableActions(state, hasCoach) {
         { code: "opp_one_call", label: "1 caller" },
         { code: "opp_multi_call", label: "Multi callers" },
         { code: "opp_4bet", label: "4-bet" },
-        { code: "opp_shove", label: "Shoved" }
+        { code: "opp_shove", label: "Shoved" },
       ];
     }
     return [
       { code: "opp_fold", label: "Villain fold" },
       { code: "opp_call", label: "Villain call" },
       { code: "opp_raise", label: "Villain raise" },
-      { code: "opp_shove", label: "Villain shove" }
+      { code: "opp_shove", label: "Villain shove" },
     ];
   }
 
@@ -330,7 +339,6 @@ export function getAvailableActions(state, hasCoach) {
       { code: "opened_to_me", label: "Opened to me" },
       { code: "multiple_villains_opened", label: "Multiple villains opened" },
       { code: "faced_3bet", label: "3-Bet to me" },
-      { code: "hero_opened", label: "Hero opened" }
     ];
   }
   const pos = positionCategory(state.heroSeat, state.tableSize);
@@ -340,14 +348,13 @@ export function getAvailableActions(state, hasCoach) {
     { code: "faced_bet", label: "Bet to me" },
     { code: "multiway", label: "Multiway" },
     { code: "headsup", label: "Heads-up" },
-    { code: "next_street", label: "Next Street" }
   ];
   if (pos === "early") {
     return [
       base[2], // faced bet
       base[1], // checked
       base[0], // first to act
-      ...base.slice(3)
+      ...base.slice(3),
     ];
   }
   if (pos === "late") {
@@ -355,7 +362,7 @@ export function getAvailableActions(state, hasCoach) {
       base[1], // checked
       base[2], // faced bet
       base[0], // first to act
-      ...base.slice(3)
+      ...base.slice(3),
     ];
   }
   return base;
