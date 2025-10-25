@@ -19,6 +19,11 @@ export const initialState = {
   style: "chaos_shark",
   persona: "chaos_shark",
   heroCards: { card1: null, card2: null },
+  board: {
+    flop: [null, null, null],
+    turn: null,
+    river: null,
+  },
   heroStackBB: 100,
   villainStackBB: 100,
   villainType: "fishy",
@@ -59,6 +64,13 @@ export function applyEvent(state, event) {
       push("preflop_multiple_villains_opened");
       s.opens += 1;
       s.aggressors += 2;
+      s.nextActor = "hero";
+      break;
+    }
+    case "button_steal": {
+      push("preflop_button_steal");
+      s.opens += 1;
+      s.aggressors += 1;
       s.nextActor = "hero";
       break;
     }
@@ -190,6 +202,9 @@ export function applyEvent(state, event) {
     }
     case "opp_raise": {
       push(`${s.street}_opp_raise`);
+      if (s.street === "preflop") {
+        push("preflop_faced_3bet");
+      }
       s.nextActor = "hero";
       break;
     }
@@ -223,6 +238,8 @@ export function instructionForBranch(branch) {
       "Facing an open - lead with 3-bet aggression, mix traps when image insists",
     preflop_multiple_villains_opened:
       "Multiple players entered preflop - exploit loose callers or over-isolate as hero",
+    preflop_button_steal:
+      "Button opened into blinds - defend with balanced 3-bets and strategic calls",
     preflop_faced_3bet: "Facing a 3-bet — suggest 4-bet or fold with attitude",
     preflop_hero_opened: "Hero opened — suggest plan vs callers/3-bets",
     // Postflop
@@ -275,6 +292,21 @@ export function summarizeForAI(state) {
     heroCards.card1 && heroCards.card2
       ? String(heroCards.card1) + String(heroCards.card2)
       : null;
+  const normalizeCard = (card) =>
+    typeof card === "string" && card.trim().length === 2
+      ? card.trim().toUpperCase()
+      : null;
+  const flopCards = Array.isArray(state.board?.flop)
+    ? state.board.flop.map(normalizeCard)
+    : [null, null, null];
+  const boardContext = {};
+  if (flopCards.some((card) => card)) {
+    boardContext.flop = flopCards;
+  }
+  const turnCard = normalizeCard(state.board?.turn);
+  if (turnCard) boardContext.turn = turnCard;
+  const riverCard = normalizeCard(state.board?.river);
+  if (riverCard) boardContext.river = riverCard;
   return {
     context: {
       street: state.street,
@@ -288,6 +320,7 @@ export function summarizeForAI(state) {
       persona: state.persona || "chaos_shark",
       heroCards,
       heroHand,
+      board: Object.keys(boardContext).length ? boardContext : undefined,
       heroStackBB:
         typeof state.heroStackBB === "number" &&
         Number.isFinite(state.heroStackBB)
@@ -321,6 +354,7 @@ export function getAvailableActions(state, hasCoach) {
         { code: "opp_all_fold", label: "All folded" },
         { code: "opp_one_call", label: "1 caller" },
         { code: "opp_multi_call", label: "Multi callers" },
+        { code: "opp_raise", label: "Re-raise (3-bet)" },
         { code: "opp_4bet", label: "4-bet" },
         { code: "opp_shove", label: "Shoved" },
       ];
@@ -334,12 +368,20 @@ export function getAvailableActions(state, hasCoach) {
   }
 
   if (isPre) {
-    return [
+    const heroSeat = String(state.heroSeat || "").toUpperCase();
+    const actions = [
       { code: "unopened", label: "Unopened pot" },
       { code: "opened_to_me", label: "Opened to me" },
       { code: "multiple_villains_opened", label: "Multiple villains opened" },
       { code: "faced_3bet", label: "3-Bet to me" },
     ];
+    if (heroSeat === "SB" || heroSeat === "BB") {
+      actions.splice(2, 0, {
+        code: "button_steal",
+        label: "Button Open",
+      });
+    }
+    return actions;
   }
   const pos = positionCategory(state.heroSeat, state.tableSize);
   const base = [

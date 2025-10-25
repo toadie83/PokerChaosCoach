@@ -1,10 +1,27 @@
 import { useCallback, useMemo, useState } from "react";
 import { applyEvent, initialState } from "./machine.js";
 
+const normalizeCard = (card) =>
+  typeof card === "string" && card.trim().length === 2 ? card.trim().toUpperCase() : null;
+
+function sanitizeBoard(board) {
+  const flop = Array.isArray(board?.flop) ? board.flop : [null, null, null];
+  return {
+    flop: flop.map((card, idx) => (idx < 3 ? normalizeCard(card) : null)).slice(0, 3),
+    turn: normalizeCard(board?.turn),
+    river: normalizeCard(board?.river)
+  };
+}
+
 function loadInitialState() {
   const base = {
     ...initialState,
-    heroCards: { ...initialState.heroCards }
+    heroCards: { ...initialState.heroCards },
+    board: {
+      flop: [...(initialState.board?.flop || [null, null, null])],
+      turn: initialState.board?.turn ?? null,
+      river: initialState.board?.river ?? null
+    }
   };
   try {
     if (typeof localStorage !== "undefined") {
@@ -66,6 +83,13 @@ export function useGameState() {
         }
       } catch {}
     }
+    if (key === "board") {
+      setState((s) => ({
+        ...s,
+        board: sanitizeBoard(value)
+      }));
+      return;
+    }
     if (key === "heroStackBB") {
       try {
         if (typeof localStorage !== "undefined") {
@@ -89,9 +113,10 @@ export function useGameState() {
     }
     setState((s) => ({
       ...s,
-      [key]: key === "heroCards" && value
-        ? { card1: value.card1 || null, card2: value.card2 || null }
-        : value
+      [key]:
+        key === "heroCards" && value
+          ? { card1: value.card1 || null, card2: value.card2 || null }
+          : value
     }));
   }, []);
 
@@ -124,6 +149,11 @@ export function useGameState() {
           openSize: s.openSize,
           persona: s.persona,
           heroCards: { ...s.heroCards },
+          board: {
+            flop: [...(initialState.board?.flop || [null, null, null])],
+            turn: initialState.board?.turn ?? null,
+            river: initialState.board?.river ?? null
+          },
           heroStackBB: s.heroStackBB,
           villainStackBB: s.villainStackBB,
           villainType: s.villainType

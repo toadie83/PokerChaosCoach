@@ -78,24 +78,70 @@ function toCardCode(rankWord: string, suitWord: string): CardCode | null {
   return `${rank}${suit}`;
 }
 
-export function parseSpokenCards(input: string): ParsedCards | null {
+function extractCards(input: string, expectedCount: number): CardCode[] {
   if (!input.trim()) {
-    return null;
+    return [];
   }
 
   const text = normaliseInput(input);
   if (!text) {
-    return null;
+    return [];
   }
 
-  // Reset lastIndex so repeated parses start from the beginning (RegExp with /g stores state).
-  cardRegex.lastIndex = 0;
+  const tokens = text.split(" ").filter(Boolean);
 
   const matches: CardCode[] = [];
   const seen = new Set<CardCode>();
+  let pendingRanks: RankCode[] = [];
+
+  const pushCard = (rank: RankCode, suit: SuitCode) => {
+    const card = `${rank}${suit}` as CardCode;
+    if (seen.has(card)) {
+      return;
+    }
+    seen.add(card);
+    matches.push(card);
+  };
+
+  for (const token of tokens) {
+    if (matches.length === expectedCount) {
+      break;
+    }
+
+    const maybeRank = rankAliases.get(token);
+    if (maybeRank) {
+      pendingRanks.push(maybeRank);
+      continue;
+    }
+
+    const maybeSuit = suitAliases.get(token);
+    if (maybeSuit) {
+      if (pendingRanks.length === 0) {
+        continue;
+      }
+      for (const rank of pendingRanks) {
+        pushCard(rank, maybeSuit);
+        if (matches.length === expectedCount) {
+          break;
+        }
+      }
+      pendingRanks = [];
+      continue;
+    }
+  }
+
+  if (matches.length === expectedCount) {
+    return matches;
+  }
+
+  // Fallback: use phrase-by-phrase extraction to capture any remaining cards.
+  cardRegex.lastIndex = 0;
 
   let match: RegExpExecArray | null;
   while ((match = cardRegex.exec(text))) {
+    if (matches.length === expectedCount) {
+      break;
+    }
     const rankWord = match.groups?.rank;
     const suitWord = match.groups?.suit;
     if (!rankWord || !suitWord) {
@@ -107,14 +153,26 @@ export function parseSpokenCards(input: string): ParsedCards | null {
     }
     seen.add(card);
     matches.push(card);
-    if (matches.length === 2) {
-      break;
-    }
   }
 
-  if (matches.length !== 2) {
+  return matches;
+}
+
+export function parseSpokenNCards(input: string, expectedCount: number): CardCode[] | null {
+  if (expectedCount <= 0) {
     return null;
   }
+  const matches = extractCards(input, expectedCount);
+  if (matches.length !== expectedCount) {
+    return null;
+  }
+  return matches;
+}
 
+export function parseSpokenCards(input: string): ParsedCards | null {
+  const matches = parseSpokenNCards(input, 2);
+  if (!matches) {
+    return null;
+  }
   return { card1: matches[0], card2: matches[1] };
 }
