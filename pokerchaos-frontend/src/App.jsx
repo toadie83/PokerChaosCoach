@@ -76,6 +76,7 @@ export default function App() {
         "opp_all_fold",
         "opp_one_call",
         "opp_multi_call",
+        "opp_check_back",
       ]);
       if (autoClearCoach.has(evt)) {
         try {
@@ -122,6 +123,7 @@ export default function App() {
           opp_shove: { action: "jam" },
           opp_fold: { action: "fold" },
           opp_call: { action: "call" },
+          opp_check_back: { action: "check", note: "checked back" },
           opp_raise: { action: "raise" },
         };
         if (oppMap[evt]) {
@@ -164,6 +166,7 @@ export default function App() {
         "opp_multi_call",
         "opp_fold",
         "opp_all_fold",
+        "opp_check_back",
       ]);
       if (skip.has(state.lastEvent)) return;
 

@@ -200,6 +200,17 @@ export function applyEvent(state, event) {
       }
       break;
     }
+    case "opp_check_back": {
+      push(`${s.street}_opp_check_back`);
+      if (s.street === "river") {
+        push("hand_complete");
+        s.handComplete = true;
+        s.nextActor = "hero";
+      } else {
+        advanceStreet();
+      }
+      break;
+    }
     case "opp_raise": {
       push(`${s.street}_opp_raise`);
       if (s.street === "preflop") {
@@ -272,12 +283,15 @@ export function instructionForBranch(branch) {
     // Opponent reactions (postflop generic)
     flop_opp_fold: "Villain folded — keep pressure narrative",
     flop_opp_call: "Caller on flop — plan next barrel",
+    flop_opp_check_back: "Villain checked back flop - exploit capped range",
     flop_opp_raise: "Facing raise — escalate or contain with swagger",
     turn_opp_fold: "Villain folded — cement image",
     turn_opp_call: "Caller on turn — plan river pressure",
+    turn_opp_check_back: "Villain checked back turn - punish delayed weakness",
     turn_opp_raise: "Facing turn raise — bold reply",
     river_opp_fold: "Villain folded — table image established",
     river_opp_call: "Caller on river — reflect table dynamics",
+    river_opp_check_back: "Villain checked back river - assess showdown plan",
     river_opp_raise: "Facing river raise — audacious counter",
   };
   return map[branch] || "Generate a short, high-energy chaos line.";
@@ -361,6 +375,7 @@ export function getAvailableActions(state, hasCoach) {
     }
     return [
       { code: "opp_fold", label: "Villain fold" },
+      { code: "opp_check_back", label: "Villain checked back" },
       { code: "opp_call", label: "Villain call" },
       { code: "opp_raise", label: "Villain raise" },
       { code: "opp_shove", label: "Villain shove" },
