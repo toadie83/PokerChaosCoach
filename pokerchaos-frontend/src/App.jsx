@@ -301,6 +301,7 @@ export default function App() {
   );
 
   const persona = state.persona || "chaos_shark";
+  const stakeTier = state.stakeTier || "unknown";
   const heroCards = state.heroCards || { card1: null, card2: null };
   const heroCardsReady = Boolean(heroCards.card1 && heroCards.card2);
   const heroHandLabel = heroCardsReady
@@ -576,6 +577,40 @@ export default function App() {
     { code: "maniac", label: "Aggro Maniac" },
     { code: "fishy", label: "Loose-Passive" },
   ];
+  const stakeTierOptions = [
+    {
+      code: "unknown",
+      label: "Unknown / default",
+      description: "Baseline solver guidance with no stake-specific exploits.",
+    },
+    {
+      code: "micro",
+      label: "Micro stakes",
+      description:
+        "Population over-calls and under-bluffs. Widen value bets, tighten pure bluffs, punish passive lines.",
+    },
+    {
+      code: "low",
+      label: "Low stakes",
+      description:
+        "Loose calling preflop, passive postflop. Value bet confidently, mix simple exploits, beware rare big bluffs.",
+    },
+    {
+      code: "mid",
+      label: "Mid stakes",
+      description:
+        "Regulars mix aggression and balanced ranges. Respect 3-bets, defend competently, mix blocker-driven bluffs.",
+    },
+    {
+      code: "high",
+      label: "High stakes",
+      description:
+        "Tough balanced opponents. Assume solver responses, use polarized sizings, apply pressure on capped ranges.",
+    },
+  ];
+  const stakeTierMeta =
+    stakeTierOptions.find((option) => option.code === stakeTier) ||
+    stakeTierOptions[0];
 
   useEffect(() => {
     if (!seats.includes(state.heroSeat)) {
@@ -646,10 +681,42 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          <div
-            className="row controls-inline"
-            style={{ gap: 8, marginTop: 12 }}
-          >
+          <div className="row controls-inline" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span className="sub">Stakes</span>
+              {persona === "range_professor" && stakeTierMeta?.description ? (
+                <button
+                  type="button"
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: "50%",
+                    border: "1px solid var(--muted)",
+                    background: "transparent",
+                    fontSize: 12,
+                    lineHeight: "18px",
+                    textAlign: "center",
+                    cursor: "help",
+                  }}
+                  title={stakeTierMeta.description}
+                  aria-label={`Stake guidance: ${stakeTierMeta.description}`}
+                >
+                  i
+                </button>
+              ) : null}
+              <select
+                value={stakeTier}
+                onChange={(e) => setField("stakeTier", e.target.value)}
+                style={{ minWidth: 150 }}
+                aria-label="Stakes"
+              >
+                {stakeTierOptions.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <label htmlFor="tableSize">Table</label>
             <select
               id="tableSize"

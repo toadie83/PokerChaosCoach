@@ -27,6 +27,7 @@ export const initialState = {
   heroStackBB: 100,
   villainStackBB: 100,
   villainType: "fishy",
+  stakeTier: "unknown",
 };
 
 export function applyEvent(state, event) {
@@ -144,6 +145,7 @@ export function applyEvent(state, event) {
         villainType: s.villainType,
         preflopLimpers: s.preflopLimpers,
         preflopCallers: s.preflopCallers,
+        stakeTier: s.stakeTier,
       };
       return { ...initialState, ...keep };
     }
@@ -350,6 +352,7 @@ export function summarizeForAI(state) {
         typeof state.preflopLimpers === "number" ? state.preflopLimpers : 0,
       preflopCallers:
         typeof state.preflopCallers === "number" ? state.preflopCallers : 0,
+      stakeTier: state.stakeTier || "unknown",
     },
     instruction,
   };

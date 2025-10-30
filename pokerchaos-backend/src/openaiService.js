@@ -954,6 +954,31 @@ Rules:
   const hypeLevel = Math.min((context?.previousActions?.length ?? 0) * 5, 100);
   const sizingPref = sizingCue(context);
   const historyHint = summarizeHistory(context?.history);
+  const stakeTier = String(context?.stakeTier || "unknown");
+  const stakeGuidanceMap = {
+    micro: {
+      label: "Micro stakes",
+      note:
+        "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
+    },
+    low: {
+      label: "Low stakes",
+      note:
+        "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
+    },
+    mid: {
+      label: "Mid stakes",
+      note:
+        "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
+    },
+    high: {
+      label: "High stakes",
+      note:
+        "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
+    },
+  };
+  const stakeGuide =
+    stakeTier !== "unknown" ? stakeGuidanceMap[stakeTier] || null : null;
 
   const user = `Context: ${JSON.stringify(context || {}, null, 2)}
 ${mixHint}
@@ -1317,6 +1342,31 @@ async function runRangeProfessor(context = {}, instruction) {
     ? context.previousActions
     : [];
   const historyHint = summarizeHistory(context?.history);
+  const stakeTier = String(context?.stakeTier || "unknown");
+  const stakeGuidanceMap = {
+    micro: {
+      label: "Micro stakes",
+      note:
+        "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
+    },
+    low: {
+      label: "Low stakes",
+      note:
+        "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
+    },
+    mid: {
+      label: "Mid stakes",
+      note:
+        "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
+    },
+    high: {
+      label: "High stakes",
+      note:
+        "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
+    },
+  };
+  const stakeGuide =
+    stakeTier !== "unknown" ? stakeGuidanceMap[stakeTier] || null : null;
   const normalizeCard = (card) =>
     typeof card === "string" && card.trim().length === 2
       ? card.trim().toUpperCase()
@@ -1358,6 +1408,11 @@ async function runRangeProfessor(context = {}, instruction) {
       : "",
     ...(handFeatures?.notes || []).map((note) => `Hand note: ${note}`),
     historyHint ? `Recent history: ${historyHint}` : "",
+    stakeGuide
+      ? `Stakes: ${stakeGuide.label}. Guidance: ${stakeGuide.note}`
+      : stakeTier === "unknown"
+      ? "Stakes: Unknown - use baseline solver frequencies."
+      : "",
   ].filter(Boolean);
 
   const boardContext = {};
@@ -1385,8 +1440,10 @@ async function runRangeProfessor(context = {}, instruction) {
       riskTolerance: "medium",
       style: "balanced_cautious",
       guidance:
-        "Hero feels variance-prone; apply controlled aggression—press nut or blocker edges, otherwise temper pot growth.",
+        "Hero feels variance-prone; apply controlled aggression - press nut or blocker edges, otherwise temper pot growth.",
     },
+    stakeTier: stakeTier,
+    stakeGuidance: stakeGuide ? stakeGuide.note : undefined,
   };
 
   const system = `You are Range Professor - a disciplined poker strategy coach.

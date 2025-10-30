@@ -51,6 +51,8 @@ function loadInitialState() {
       }
       const savedVillainType = localStorage.getItem("pcc_villain_type");
       if (savedVillainType) base.villainType = savedVillainType;
+      const savedStakeTier = localStorage.getItem("pcc_stake_tier");
+      if (savedStakeTier) base.stakeTier = savedStakeTier;
     }
   } catch {}
   return base;
@@ -111,6 +113,13 @@ export function useGameState() {
         }
       } catch {}
     }
+    if (key === "stakeTier") {
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("pcc_stake_tier", String(value));
+        }
+      } catch {}
+    }
     setState((s) => ({
       ...s,
       [key]:
@@ -156,7 +165,8 @@ export function useGameState() {
           },
           heroStackBB: s.heroStackBB,
           villainStackBB: s.villainStackBB,
-          villainType: s.villainType
+          villainType: s.villainType,
+          stakeTier: s.stakeTier
         }))
     }),
     [state, setField, dispatch, clearActions]
