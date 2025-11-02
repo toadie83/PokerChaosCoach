@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestChaosLine } from "./api/aiService.js";
 import ActionButtons from "./components/ActionButtons.jsx";
-import PromptDisplay from "./components/PromptDisplay.jsx";
 import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
+import DecisionCard from "./components/DecisionCard.jsx";
+import HistoryStrip from "./components/HistoryStrip.jsx";
 import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
 import SingleBoardCardInput from "./components/SingleBoardCardInput.jsx";
+import StackDepthModal from "./components/StackDepthModal.jsx";
 import { useGameState } from "./state/useGameState.js";
 import { summarizeForAI, getAvailableActions } from "./state/machine.js";
 import { getChaosMood } from "./state/chaosMeter.js";
@@ -29,16 +31,63 @@ export default function App() {
   const [coach, setCoach] = useState(null);
   const [loading, setLoading] = useState(false);
   const [cardSelectorConfig, setCardSelectorConfig] = useState(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [compactMode, setCompactMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const saved = window.localStorage?.getItem("pcc_compact_mode");
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [previewSizing, setPreviewSizing] = useState(null);
+  const [stackModalOpen, setStackModalOpen] = useState(false);
   const lastAutoAdvanceAt = useRef(0);
-
   const lastCommittedCoachAt = useRef(0);
   const lastCoachAt = useRef(0);
+
+  const openStackModal = useCallback(() => {
+    setStackModalOpen(true);
+  }, []);
+
+  const closeStackModal = useCallback(() => {
+    setStackModalOpen(false);
+  }, []);
+
+  const handleSaveStacksQuick = useCallback(
+    ({ heroStack, villainStack }) => {
+      if (heroStack !== undefined) {
+        setField("heroStackBB", heroStack);
+      }
+      if (villainStack !== undefined) {
+        setField("villainStackBB", villainStack);
+      }
+      setStackModalOpen(false);
+    },
+    [setField]
+  );
+
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(
+          "pcc_compact_mode",
+          compactMode ? "true" : "false"
+        );
+      }
+    } catch {}
+    if (typeof document !== "undefined") {
+      document.body.classList.toggle("compact-mode", compactMode);
+    }
+  }, [compactMode]);
 
   const handleReset = useCallback(() => {
     setCoach(null);
     lastCoachAt.current = 0;
     lastCommittedCoachAt.current = 0;
     setCardSelectorConfig(null);
+    setStackModalOpen(false);
     reset();
   }, [reset]);
 
@@ -52,15 +101,20 @@ export default function App() {
 
   const handleSaveHeroCards = useCallback(
     (cards) => {
-      setField("heroCards", cards);
-      setCoach(null);
+      const normalized = {
+        card1: cards?.card1 || null,
+        card2: cards?.card2 || null,
+      };
+      handleReset();
+      setTimeout(() => {
+        setField("heroCards", normalized);
+      }, 0);
     },
-    [setField]
+    [handleReset, setField]
   );
 
   const onAction = useCallback(
     (evt) => {
-      // Clear current coach output when advancing streets or resetting hand
       if (evt === "next_street" || evt === "reset_hand") {
         try {
           setCoach(null);
@@ -68,6 +122,12 @@ export default function App() {
         try {
           setField("nextActor", "hero");
         } catch {}
+        if (evt === "reset_hand") {
+          try {
+            setField("potSizes", { total: null });
+          } catch {}
+        }
+        setPreviewSizing(null);
       }
 
       const autoClearCoach = new Set([
@@ -84,7 +144,6 @@ export default function App() {
         } catch {}
       }
 
-      // Auto-commit last coach suggestion as a hero history item before next event
       try {
         const additions = [];
         if (
@@ -114,7 +173,6 @@ export default function App() {
           lastCommittedCoachAt.current = lastCoachAt.current;
         }
 
-        // Record opponent reactions as structured history automatically
         const oppMap = {
           opp_one_call: { action: "call", note: "one" },
           opp_multi_call: { action: "call", note: "multi" },
@@ -222,7 +280,6 @@ export default function App() {
             setField("nextActor", "opp");
           } catch {}
           lastCoachAt.current = Date.now();
-          // update momentum heuristically based on suggested action
           try {
             const inc = /bet|raise|jam|3-bet|4-bet|open/i.test(
               res?.hero_action || ""
@@ -257,7 +314,10 @@ export default function App() {
     state.villainStackBB,
   ]);
 
-  // Auto-advance to next street after certain opponent reactions on preflop
+  useEffect(() => {
+    setPreviewSizing(null);
+  }, [coach?.hero_action, coach?.sizing, state.street]);
+
   useEffect(() => {
     const autoAdvancePreflop = new Set(["opp_one_call", "opp_multi_call"]);
     if (
@@ -268,7 +328,6 @@ export default function App() {
       autoAdvancePreflop.has(state.lastEvent)
     ) {
       lastAutoAdvanceAt.current = state.lastEventAt;
-      // slight delay to let the user see the response before advancing
       const t = setTimeout(() => dispatch("next_street"), 350);
       return () => clearTimeout(t);
     }
@@ -278,14 +337,6 @@ export default function App() {
     () => seatsForTableSize(state.tableSize),
     [state.tableSize]
   );
-  const seatColumns = useMemo(() => {
-    const total = seats.length;
-    if (total <= 3) return total;
-    if (total <= 4) return 4;
-    if (total <= 6) return 3;
-    if (total <= 8) return 4;
-    return 5;
-  }, [seats.length]);
   const mood = useMemo(
     () => getChaosMood(state),
     [
@@ -319,7 +370,6 @@ export default function App() {
   const openCardSelector = useCallback((config) => {
     setCardSelectorConfig(config);
   }, []);
-
   const openHeroCardSelector = useCallback(() => {
     openCardSelector({
       kind: "hero",
@@ -430,7 +480,6 @@ export default function App() {
     },
     [setField, state.board]
   );
-
   const openFlopManualSelector = useCallback(() => {
     const sanitize = (value) =>
       typeof value === "string" && value.trim().length === 2
@@ -530,6 +579,38 @@ export default function App() {
     : villainStackValid
     ? villainStackNumber
     : "";
+  const potTotal =
+    typeof state.potSizes?.total === "number" &&
+    Number.isFinite(state.potSizes.total) &&
+    state.potSizes.total > 0
+      ? state.potSizes.total
+      : null;
+  const villainStackRanges = [
+    { code: "", label: "Unknown", value: null },
+    { code: "lt10", label: "< 10 BB", value: 8 },
+    { code: "10to20", label: "10 - 20 BB", value: 15 },
+    { code: "20to40", label: "20 - 40 BB", value: 30 },
+    { code: "40to60", label: "40 - 60 BB", value: 50 },
+    { code: "60plus", label: "60+ BB", value: 80 },
+  ];
+  const inferVillainStackRangeCode = (value) => {
+    if (!Number.isFinite(value) || value <= 0) return "";
+    if (value < 10) return "lt10";
+    if (value < 20) return "10to20";
+    if (value < 40) return "20to40";
+    if (value < 60) return "40to60";
+    return "60plus";
+  };
+  const villainStackRangeCode = inferVillainStackRangeCode(villainStackNumber);
+  const updatePotSize = useCallback(
+    (rawValue) => {
+      const numeric = rawValue === "" ? null : Number(rawValue);
+      const nextValue =
+        Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+      setField("potSizes", { total: nextValue });
+    },
+    [setField]
+  );
   const personaOptions = [
     {
       code: "chaos_shark",
@@ -561,6 +642,14 @@ export default function App() {
   ];
   const personaMeta =
     personaOptions.find((p) => p.code === persona) || personaOptions[0];
+  const personaAvatars = {
+    chaos_shark: "*",
+    range_professor: "*",
+    exploit_detective: "*",
+    cash_game_crusher: "*",
+    short_stack_ninja: "*",
+  };
+  const personaAvatar = personaAvatars[persona] || "??";
   const stackThreshold = personaMeta?.stackThreshold || null;
   const stackOverThreshold =
     persona === "short_stack_ninja" &&
@@ -576,6 +665,12 @@ export default function App() {
     { code: "station", label: "Calling Station" },
     { code: "maniac", label: "Aggro Maniac" },
     { code: "fishy", label: "Loose-Passive" },
+  ];
+  const model = state.model || "gpt-4.1-mini";
+  const modelOptions = [
+    { code: "gpt-4.1", label: "GPT-4.1" },
+    { code: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    { code: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
   ];
   const stakeTierOptions = [
     {
@@ -611,7 +706,6 @@ export default function App() {
   const stakeTierMeta =
     stakeTierOptions.find((option) => option.code === stakeTier) ||
     stakeTierOptions[0];
-
   useEffect(() => {
     if (!seats.includes(state.heroSeat)) {
       setField("heroSeat", "");
@@ -629,7 +723,6 @@ export default function App() {
     [state, coach]
   );
 
-  // Order from least -> most aggressive
   const styleOptions = [
     { code: "controlled_maniac", label: "Controlled" },
     { code: "chaos_shark", label: "Shark" },
@@ -642,164 +735,253 @@ export default function App() {
 
   const showStyleSelector = persona === "chaos_shark";
 
+  const aiSnapshot = useMemo(() => summarizeForAI(state), [state]);
+  const branchLabel = useMemo(() => {
+    const raw = aiSnapshot?.context?.branch;
+    if (!raw) return null;
+    return raw
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }, [aiSnapshot]);
+
+  const spr = useMemo(() => {
+    if (
+      !potTotal ||
+      !effectiveStack ||
+      !Number.isFinite(Number(effectiveStack))
+    ) {
+      return null;
+    }
+    if (potTotal <= 0) return null;
+    const ratio = Number(effectiveStack) / Number(potTotal || 1);
+    if (!Number.isFinite(ratio)) return null;
+    return ratio.toFixed(1);
+  }, [effectiveStack, potTotal]);
+
+  const statusBadges = useMemo(() => {
+    const badges = [];
+    if (personaMeta?.label) {
+      badges.push({
+        label: "Persona",
+        value: personaMeta.label,
+        variant: "persona",
+      });
+    }
+    badges.push({
+      label: "Seat",
+      value: state.heroSeat ? state.heroSeat.toUpperCase() : "?",
+    });
+    if (branchLabel) {
+      badges.push({ label: "Branch", value: branchLabel });
+    }
+    badges.push({
+      label: "Table",
+      value: `${state.tableSize}-max`,
+    });
+    badges.push({
+      label: "Street",
+      value: state.street.toUpperCase(),
+    });
+      badges.push({
+        label: "Villain",
+        value: villainType.replace(/_/g, "-"),
+      });
+      badges.push({
+        label: "Eff",
+        value: effectiveStack ? `${effectiveStack} BB` : "Set stacks",
+        variant: "interactive",
+        onClick: openStackModal,
+      });
+      return badges;
+    }, [
+      personaMeta?.label,
+      state.heroSeat,
+      branchLabel,
+      state.tableSize,
+      state.street,
+      villainType,
+      effectiveStack,
+      openStackModal,
+  ]);
+
+  const ticker = useMemo(() => {
+    const recent = (state.history || []).slice(-3);
+    return recent.map((entry) => {
+      const actor =
+        entry.actor === "hero"
+          ? state.heroSeat
+            ? state.heroSeat.toUpperCase()
+            : "Hero"
+          : "Villain";
+      const sizing =
+        entry.sizing && entry.sizing.kind === "percent"
+          ? `${entry.sizing.value}%`
+          : entry.sizing && entry.sizing.kind === "multiple"
+          ? `${entry.sizing.value}x`
+          : "";
+      return [actor, entry.action, sizing].filter(Boolean).join(" ");
+    });
+  }, [state.history, state.heroSeat]);
+
+  const alternativeSizes = useMemo(() => {
+    return [
+      {
+        label: "35%",
+        code: "size_35",
+        hint: "Light pressure",
+        preview: "35% pot",
+      },
+      { label: "50%", code: "size_50", hint: "Standard", preview: "50% pot" },
+      { label: "65%", code: "size_65", hint: "Pressure", preview: "65% pot" },
+      { label: "90%", code: "size_90", hint: "Polarized", preview: "90% pot" },
+      { label: "Jam", code: "size_jam", hint: "All-in", preview: "Jam" },
+    ];
+  }, []);
+
+  const handleAlternativeSizeSelect = useCallback(
+    (size) => {
+      setPreviewSizing(size?.preview || size?.label || "");
+    },
+    [setPreviewSizing]
+  );
+
+  useEffect(() => {
+    const handler = (event) => {
+      const target = event.target;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "SELECT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.code.startsWith("Digit")) {
+        const idx = Number(event.code.replace("Digit", "")) - 1;
+        if (idx >= 0 && idx < actions.length) {
+          event.preventDefault();
+          onAction(actions[idx].code);
+        }
+        return;
+      }
+      const ladderKeyMap = {
+        KeyQ: 0,
+        KeyW: 1,
+        KeyE: 2,
+        KeyR: 3,
+        KeyT: 4,
+      };
+      if (ladderKeyMap[event.code] !== undefined) {
+        const idx = ladderKeyMap[event.code];
+        const option = alternativeSizes[idx];
+        if (option) {
+          event.preventDefault();
+          handleAlternativeSizeSelect(option);
+        }
+        return;
+      }
+      if (event.code === "KeyN") {
+        event.preventDefault();
+        onAction("next_street");
+        return;
+      }
+      if (event.code === "KeyH") {
+        event.preventDefault();
+        onAction("reset_hand");
+        return;
+      }
+      if (event.code === "KeyZ") {
+        event.preventDefault();
+        dispatch("undo");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    actions,
+    alternativeSizes,
+    onAction,
+    dispatch,
+    handleAlternativeSizeSelect,
+  ]);
+
+  const formatCard = useCallback((card) => {
+    return card && typeof card === "string" && card.trim().length === 2
+      ? card.trim().toUpperCase()
+      : "__";
+  }, []);
+  const flopDisplay = useMemo(() => {
+    const flop = Array.isArray(state.board?.flop)
+      ? state.board.flop
+      : [null, null, null];
+    return flop.map((card) => formatCard(card)).join(" ");
+  }, [state.board?.flop, formatCard]);
+  const turnDisplay = formatCard(state.board?.turn);
+  const riverDisplay = formatCard(state.board?.river);
   return (
     <>
-      <div className="wrap">
-        <ChaosHud mood={mood} />
+      <div className={`wrap ${compactMode ? "wrap-compact" : ""}`}>
         <div className="panel">
-          <div
-            className="row"
-            style={{
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: 12,
-            }}
-          >
-            <h1 className="title" style={{ margin: 0 }}>
-              Poker Chaos Coach
-            </h1>
-            {showStyleSelector ? (
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="sub">Style:</span>
-                <input
-                  className="style-range"
-                  type="range"
-                  min={0}
-                  max={styleOptions.length - 1}
-                  step={1}
-                  value={styleIndex}
-                  onChange={(e) => {
-                    const idx = Number(e.target.value);
-                    const next = styleOptions[idx]?.code || "chaos_shark";
-                    setField("style", next);
-                  }}
-                />
-                <span className="sub style-current">
-                  {styleOptions[styleIndex]?.label || "Shark"}
-                </span>
-              </div>
-            ) : null}
+          <div className="panel-heading">
+            <div>
+              <h1 className="title">Poker Chaos Coach</h1>
+            </div>
+            <div className="panel-heading-actions">
+              <button
+                type="button"
+                className={`pill-toggle ${compactMode ? "active" : ""}`}
+                onClick={() => setCompactMode((value) => !value)}
+                title="Toggle compact density"
+              >
+                Compact
+              </button>
+              <button
+                type="button"
+                className="pill-toggle"
+                onClick={() => setSetupOpen((value) => !value)}
+              >
+                {setupOpen ? "Hide setup" : "Game setup"}
+              </button>
+            </div>
           </div>
-          <div className="row controls-inline" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <span className="sub">Stakes</span>
-              {persona === "range_professor" && stakeTierMeta?.description ? (
-                <button
-                  type="button"
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: "50%",
-                    border: "1px solid var(--muted)",
-                    background: "transparent",
-                    fontSize: 12,
-                    lineHeight: "18px",
-                    textAlign: "center",
-                    cursor: "help",
+          <ChaosHud mood={mood} />
+          <div className="quick-pills">
+            <div
+              className="pill-field persona-field"
+              title={personaMeta?.description || "Persona guidance"}
+            >
+              <span className="pill-label">Persona</span>
+              <div className="pill-control persona-control">
+                <span className="persona-avatar">{personaAvatar}</span>
+                <select
+                  value={persona}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setCoach(null);
+                    setField("persona", next);
+                    if (
+                      (next === "range_professor" ||
+                        next === "short_stack_ninja" ||
+                        next === "cash_game_crusher") &&
+                      !heroCardsReady
+                    ) {
+                      openHeroCardSelector();
+                    }
                   }}
-                  title={stakeTierMeta.description}
-                  aria-label={`Stake guidance: ${stakeTierMeta.description}`}
                 >
-                  i
-                </button>
-              ) : null}
-              <select
-                value={stakeTier}
-                onChange={(e) => setField("stakeTier", e.target.value)}
-                style={{ minWidth: 150 }}
-                aria-label="Stakes"
-              >
-                {stakeTierOptions.map((option) => (
-                  <option key={option.code} value={option.code}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <label htmlFor="tableSize">Table</label>
-            <select
-              id="tableSize"
-              value={state.tableSize}
-              onChange={(e) => setField("tableSize", Number(e.target.value))}
-            >
-              {[6, 8, 9].map((n) => (
-                <option key={n} value={n}>
-                  {n}-max
-                </option>
-              ))}
-            </select>
-            <span className="sub">Open</span>
-            <select
-              value={state.openSize}
-              onChange={(e) => setField("openSize", Number(e.target.value))}
-            >
-              {[2.2, 2.5, 2.7, 3.0, 3.2, 3.5].map((n) => (
-                <option key={n} value={n}>
-                  {n.toFixed(1)}x
-                </option>
-              ))}
-            </select>
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-              <span className="sub">Persona:</span>
-              <select
-                value={persona}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setCoach(null);
-                  setField("persona", next);
-                  if (
-                    (next === "range_professor" ||
-                      next === "short_stack_ninja" ||
-                      next === "cash_game_crusher") &&
-                    !heroCardsReady
-                  ) {
-                    openHeroCardSelector();
-                  }
-                }}
-              >
-                {personaOptions.map((p) => (
-                  <option key={p.code} value={p.code}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              {personaNeedsCards ? <></> : null}
-            </div>
-            {personaMeta?.description ? (
-              <p
-                className="sub"
-                style={{
-                  margin: "4px 0 8px",
-                  width: "100%",
-                  color:
-                    stackOverThreshold || cashStackLow ? "#f97316" : undefined,
-                  fontWeight: stackOverThreshold || cashStackLow ? 600 : 400,
-                }}
-              >
-                {personaMeta.description}
-                {stackOverThreshold
-                  ? ` (Current stack ${heroStackNumber} BB - Ninja shines <= ${stackThreshold} BB.)`
-                  : ""}
-                {cashStackLow
-                  ? ` (Stack ${heroStackNumber} BB - Crusher loves 100 BB+; consider topping up.)`
-                  : ""}
-              </p>
-            ) : null}
-            {personaNeedsCards ? (
-              <div style={{ marginTop: 8 }}>
-                <HeroVoiceCardInput
-                  heroCards={heroCards}
-                  onCardsParsed={handleSaveHeroCards}
-                  onManualEntry={handleManualCardEntry}
-                  onVoiceStart={prepareForCardChange}
-                />
+                  {personaOptions.map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : null}
-            {persona === "exploit_detective" ||
-            persona === "cash_game_crusher" ? (
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="sub">Villain type</span>
+            </div>
+            <div className="pill-field villain-field">
+              <span className="pill-label">Villain type</span>
+              <div className="pill-control">
                 <select
                   value={villainType}
                   onChange={(e) => setField("villainType", e.target.value)}
@@ -810,86 +992,23 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-                <span className="sub">
-                  Target villain: <strong>{villainType}</strong>
-                </span>
               </div>
-            ) : null}
-            {persona === "cash_game_crusher" && (
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="sub">Villain stack (BB)</span>
-                <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={villainStackValid ? villainStackNumber : ""}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setField(
-                      "villainStackBB",
-                      Number.isFinite(val) && val > 0 ? val : null
-                    );
-                  }}
-                  style={{ width: 120 }}
-                />
-              </div>
-            )}
-            {persona === "short_stack_ninja" ||
-            persona === "cash_game_crusher" ? (
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="sub">Hero stack (BB)</span>
-                <input
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={heroStackValid ? heroStackNumber : ""}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setField(
-                      "heroStackBB",
-                      Number.isFinite(val) && val > 0 ? val : null
-                    );
-                  }}
-                  style={{ width: 120 }}
-                />
-                {persona === "cash_game_crusher" ? (
-                  <span className="sub">
-                    Effective:{" "}
-                    <strong>
-                      {effectiveStack ? `${effectiveStack} BB` : "?"}
-                    </strong>
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="row" style={{ gap: 8, marginTop: 8 }}>
-              {/* <button onClick={() => {
-            const lines = (state.actions || []).map((a) => JSON.stringify(a));
-            const blob = new Blob(lines.map(l => l + "\n"), { type: "application/x-ndjson" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `session-${Date.now()}.ndjson`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-          }}>Export Session</button> */}
             </div>
+          </div>
 
-            <div className="row seat-row" style={{ gap: 8 }}>
-              <span className="sub">Seat:</span>
-              <div className={`seat-grid columns-${seatColumns}`}>
+          <div className="table-context">
+            <div className="table-context-row">
+              <span className="pill-label">Seat</span>
+              <div className="seat-ring">
                 {seats.map((seat) => (
                   <button
                     key={seat}
+                    type="button"
+                    className={`seat-chip ${
+                      state.heroSeat === seat ? "active" : ""
+                    }`}
                     onClick={() => setField("heroSeat", seat)}
-                    style={
-                      state.heroSeat === seat
-                        ? { background: "#f59e0b", color: "#111827" }
-                        : undefined
-                    }
+                    title={`Set hero seat to ${seat}`}
                   >
                     {seat}
                   </button>
@@ -898,80 +1017,319 @@ export default function App() {
             </div>
           </div>
 
-          <div className="game-summary">
-            <span className="game-summary-item">
-              Street&nbsp;<strong>{state.street}</strong>
-            </span>
-            <span className="game-summary-item">
-              Table&nbsp;<strong>{state.tableSize}-max</strong>
-            </span>
-            <span className="game-summary-item">
-              Hero&nbsp;Seat&nbsp;<strong>{state.heroSeat || "?"}</strong>
-            </span>
-            <span className="game-summary-item">
-              Aggressors&nbsp;<strong>{state.aggressors}</strong>
-            </span>
-          </div>
-
-          {(state.street === "flop" ||
-            state.street === "turn" ||
-            state.street === "river") &&
-          !state.handComplete ? (
-            <FlopCardInput
-              flop={state.board?.flop}
-              onChange={handleFlopCardsChange}
-              onOpenManual={openFlopManualSelector}
-            />
-          ) : null}
-          {(state.street === "turn" || state.street === "river") &&
-          !state.handComplete ? (
-            <SingleBoardCardInput
-              label="Turn card"
-              value={state.board?.turn}
-              onChange={handleTurnCardChange}
-              voiceButtonLabel="Enter turn by voice"
-              placeholder="Qs"
-              onPickCard={openTurnCardSelector}
-              pickButtonLabel="Select turn card"
-            />
-          ) : null}
-          {state.street === "river" && !state.handComplete ? (
-            <SingleBoardCardInput
-              label="River card"
-              value={state.board?.river}
-              onChange={handleRiverCardChange}
-              voiceButtonLabel="Enter river by voice"
-              placeholder="Kd"
-              onPickCard={openRiverCardSelector}
-              pickButtonLabel="Select river card"
-            />
-          ) : null}
-
-          {!state.handComplete && (
-            <div style={{ marginTop: 12 }}>
-              <ActionButtons actions={actions} onAction={onAction} embedded />
+          <div className="card-strip">
+            <button
+              type="button"
+          className="card-pill"
+          data-street="hero"
+          data-active="true"
+              onClick={() => openHeroCardSelector()}
+              title="Tap to edit hero cards"
+            >
+              <span className="card-pill-label">Hero</span>
+              <span className="card-pill-value">{heroHandLabel}</span>
+            </button>
+            <button
+              type="button"
+              className="card-pill"
+            onClick={() => openFlopManualSelector()}
+            data-street="flop"
+            data-active={state.street === "flop" && !state.handComplete}
+              title="Tap to edit flop cards"
+            >
+              <span className="card-pill-label">Flop</span>
+              <span className="card-pill-value">{flopDisplay}</span>
+            </button>
+            <button
+              type="button"
+              className="card-pill"
+            onClick={() => openTurnCardSelector(state.board?.turn)}
+            data-street="turn"
+            data-active={
+              (state.street === "turn" || state.street === "river") &&
+              !state.handComplete
+            }
+              title="Tap to edit turn card"
+            >
+              <span className="card-pill-label">Turn</span>
+              <span className="card-pill-value">{turnDisplay}</span>
+            </button>
+            <button
+              type="button"
+              className="card-pill"
+            onClick={() => openRiverCardSelector(state.board?.river)}
+            data-street="river"
+            data-active={state.street === "river" && !state.handComplete}
+              title="Tap to edit river card"
+            >
+              <span className="card-pill-label">River</span>
+              <span className="card-pill-value">{riverDisplay}</span>
+            </button>
+            <div className="pot-pill">
+              <span className="pill-label">Pot (BB)</span>
+              <input
+                id="potInput"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={potTotal ?? ""}
+                onChange={(e) => updatePotSize(e.target.value)}
+                placeholder="0"
+              />
+              {spr ? <span className="badge spr">SPR {spr}</span> : null}
             </div>
-          )}
-          <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <button onClick={handleReset}>Reset</button>
-
-            <button onClick={handleClearActions}>Clear Actions</button>
           </div>
-          <div style={{ marginTop: 12 }}>
-            <PromptDisplay
-              key={state.street + (state.handComplete ? "-complete" : "")}
-              coach={coach}
-              isLoading={loading}
-              onNextStreet={() => onAction("next_street")}
+
+          {/* --- PRIMARY ACTIONS (moved up) --- */}
+          <div className="actions-block actions-top">
+            <ActionButtons
+              actions={actions}
+              onAction={onAction}
               embedded
-              mood={mood}
-              handComplete={state.handComplete}
-              onResetHand={() => onAction("reset_hand")}
-              sizingNote={sizingNote}
+              disabled={loading}
             />
           </div>
+
+          <DecisionCard
+            coach={coach}
+            isLoading={loading}
+            handComplete={state.handComplete}
+            onNextStreet={() => onAction("next_street")}
+            onResetHand={() => onAction("reset_hand")}
+            sizingNote={sizingNote}
+            previewSizing={previewSizing}
+            statusBadges={statusBadges}
+            ticker={ticker}
+            alternativeSizes={alternativeSizes}
+            onSelectAlternativeSize={handleAlternativeSizeSelect}
+          />
+
+          <HistoryStrip history={state.history} heroSeat={state.heroSeat} />
+
+          {/* --- SECONDARY ACTIONS (stay below guidance/history) --- */}
+          <div className="actions-block actions-bottom">
+            <div className="secondary-actions">
+              <button type="button" className="link-btn" onClick={handleReset}>
+                Reset session
+              </button>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={handleClearActions}
+              >
+                Clear actions
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="drawer-toggle"
+            onClick={() => setSetupOpen((value) => !value)}
+          >
+            <span>{setupOpen ? "Hide advanced setup" : "Advanced setup"}</span>
+            <span className="chevron">{setupOpen ? "?" : "?"}</span>
+          </button>
+
+          {setupOpen ? (
+            <div className="setup-drawer">
+              <div className="drawer-section">
+                <h3>Stack depth</h3>
+                <div className="drawer-row">
+                  <label className="pill-label" htmlFor="heroStack">
+                    Hero stack (BB)
+                  </label>
+                  <input
+                    id="heroStack"
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={heroStackValid ? heroStackNumber : ""}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setField(
+                        "heroStackBB",
+                        Number.isFinite(val) && val > 0 ? val : null
+                      );
+                    }}
+                  />
+                  {personaMeta?.description ? (
+                    <span className="drawer-hint">
+                      {personaMeta.description}
+                      {stackOverThreshold
+                        ? ` · Current stack ${heroStackNumber} BB`
+                        : ""}
+                      {cashStackLow ? ` · Consider topping up to 100 BB+` : ""}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="drawer-row">
+                  <label className="pill-label" htmlFor="villainStack">
+                    Villain stack
+                  </label>
+                  <select
+                    id="villainStack"
+                    value={villainStackRangeCode}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      const option = villainStackRanges.find(
+                        (item) => item.code === code
+                      );
+                      setField("villainStackBB", option?.value || null);
+                    }}
+                  >
+                    {villainStackRanges.map((range) => (
+                      <option key={range.code || "unknown"} value={range.code}>
+                        {range.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="drawer-section">
+                <h3>Game settings</h3>
+                <div className="drawer-row">
+                  <span className="pill-label">Table size</span>
+                  <div className="chip-group">
+                    {[6, 8, 9].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`chip ${
+                          state.tableSize === n ? "active" : ""
+                        }`}
+                        onClick={() => setField("tableSize", n)}
+                      >
+                        {n}-max
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Stakes</span>
+                  <div className="chip-group">
+                    {stakeTierOptions.map((option) => (
+                      <button
+                        key={option.code}
+                        type="button"
+                        className={`chip ${
+                          stakeTier === option.code ? "active" : ""
+                        }`}
+                        onClick={() => setField("stakeTier", option.code)}
+                        title={option.description}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Open size</span>
+                  <div className="chip-group">
+                    {[2.2, 2.5, 2.7, 3.0, 3.2, 3.5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`chip ${
+                          state.openSize === n ? "active" : ""
+                        }`}
+                        onClick={() => setField("openSize", n)}
+                      >
+                        {n.toFixed(1)}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Model</span>
+                  <div className="pill-control">
+                    <select
+                      value={model}
+                      onChange={(e) => setField("model", e.target.value)}
+                    >
+                      {modelOptions.map((option) => (
+                        <option key={option.code} value={option.code}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="drawer-section">
+                <h3>Card tools</h3>
+                {personaNeedsCards ? (
+                  <HeroVoiceCardInput
+                    heroCards={heroCards}
+                    onCardsParsed={handleSaveHeroCards}
+                    onManualEntry={handleManualCardEntry}
+                    onVoiceStart={prepareForCardChange}
+                  />
+                ) : null}
+                <FlopCardInput
+                  flop={state.board?.flop}
+                  onChange={handleFlopCardsChange}
+                  onOpenManual={openFlopManualSelector}
+                />
+                <div className="drawer-row board-row">
+                  <SingleBoardCardInput
+                    label="Turn card"
+                    value={state.board?.turn}
+                    onChange={handleTurnCardChange}
+                    voiceButtonLabel="Enter turn by voice"
+                    placeholder="Qs"
+                    onPickCard={openTurnCardSelector}
+                    pickButtonLabel="Select turn card"
+                  />
+                  <SingleBoardCardInput
+                    label="River card"
+                    value={state.board?.river}
+                    onChange={handleRiverCardChange}
+                    voiceButtonLabel="Enter river by voice"
+                    placeholder="Kd"
+                    onPickCard={openRiverCardSelector}
+                    pickButtonLabel="Select river card"
+                  />
+                </div>
+              </div>
+
+              {showStyleSelector ? (
+                <div className="drawer-section">
+                  <h3>Chaos tone</h3>
+                  <div className="tone-slider">
+                    <input
+                      className="style-range"
+                      type="range"
+                      min={0}
+                      max={styleOptions.length - 1}
+                      step={1}
+                      value={styleIndex}
+                      onChange={(e) => {
+                        const idx = Number(e.target.value);
+                        const next = styleOptions[idx]?.code || "chaos_shark";
+                        setField("style", next);
+                      }}
+                    />
+                    <span className="style-current">
+                      {styleOptions[styleIndex]?.label || "Shark"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
+      <StackDepthModal
+        open={stackModalOpen}
+        heroStack={heroStackValid ? heroStackNumber : null}
+        villainStack={villainStackValid ? villainStackNumber : null}
+        villainRanges={villainStackRanges}
+        onClose={closeStackModal}
+        onSave={handleSaveStacksQuick}
+      />
       <CardSelectorModal
         open={Boolean(cardSelectorConfig)}
         title={cardSelectorConfig?.title}

@@ -24,10 +24,14 @@ export const initialState = {
     turn: null,
     river: null,
   },
+  potSizes: {
+    total: null,
+  },
   heroStackBB: 100,
   villainStackBB: 100,
   villainType: "fishy",
   stakeTier: "unknown",
+  model: "gpt-4.1-mini",
 };
 
 export function applyEvent(state, event) {
@@ -353,6 +357,13 @@ export function summarizeForAI(state) {
       preflopCallers:
         typeof state.preflopCallers === "number" ? state.preflopCallers : 0,
       stakeTier: state.stakeTier || "unknown",
+      model: state.model || "gpt-4.1-mini",
+      potSize:
+        typeof state.potSizes?.total === "number" &&
+        Number.isFinite(state.potSizes.total) &&
+        state.potSizes.total > 0
+          ? state.potSizes.total
+          : null,
     },
     instruction,
   };

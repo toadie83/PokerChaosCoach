@@ -42,6 +42,9 @@ const VALID_ACTIONS = [
   "fold",
 ];
 
+const DEFAULT_MODEL = "gpt-4.1-mini";
+const ALLOWED_MODELS = new Set(["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"]);
+
 const RANK_VALUES = {
   A: 14,
   K: 13,
@@ -836,9 +839,11 @@ async function completePrompt({
   temperature = 0.6,
   top_p = 0.85,
   max_tokens = 120,
+  model = DEFAULT_MODEL,
 }) {
+  const chosenModel = ALLOWED_MODELS.has(model) ? model : DEFAULT_MODEL;
   const completion = await getClient().chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: chosenModel,
     temperature,
     top_p,
     max_tokens,
@@ -890,22 +895,30 @@ function buildResponse(
 
 export async function getAggressionPrompt(context = {}, instruction) {
   const persona = String(context?.persona || "chaos_shark");
+  const requestedModel =
+    typeof context?.model === "string" && context.model.trim()
+      ? context.model.trim()
+      : null;
+  const model = requestedModel && ALLOWED_MODELS.has(requestedModel)
+    ? requestedModel
+    : DEFAULT_MODEL;
+
   if (persona === "cash_game_crusher") {
-    return runCashGameCrusher(context, instruction);
+    return runCashGameCrusher(context, instruction, model);
   }
   if (persona === "exploit_detective") {
-    return runExploitDetective(context, instruction);
+    return runExploitDetective(context, instruction, model);
   }
   if (persona === "range_professor") {
-    return runRangeProfessor(context, instruction);
+    return runRangeProfessor(context, instruction, model);
   }
   if (persona === "short_stack_ninja") {
-    return runShortStackNinja(context, instruction);
+    return runShortStackNinja(context, instruction, model);
   }
-  return runChaosCoach(context, instruction);
+  return runChaosCoach(context, instruction, model);
 }
 
-async function runChaosCoach(context = {}, instruction) {
+async function runChaosCoach(context = {}, instruction, model) {
   const styleTone = buildStyleTone(context?.style);
   const system = `You are ChaosCoach - an AI poker hype bot.
 You never reference hole cards, board cards, math, or odds.
@@ -996,12 +1009,13 @@ Instruction: ${
     temperature: 0.6,
     top_p: 0.85,
     max_tokens: 120,
+    model,
   });
 
   return buildResponse(parsed, completion, "Apply pressure.");
 }
 
-async function runCashGameCrusher(context = {}, instruction) {
+async function runCashGameCrusher(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
   const effective = stacks.effective || stacks.hero || 100;
   const villainType = String(context?.villainType || "fishy");
@@ -1115,6 +1129,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.5,
     top_p: 0.85,
     max_tokens: 160,
+    model,
   });
 
   return buildResponse(
@@ -1125,7 +1140,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runExploitDetective(context = {}, instruction) {
+async function runExploitDetective(context = {}, instruction, model) {
   const villainType = String(context?.villainType || "balanced");
   const villainNotes = {
     balanced: "Solid, balanced villain - mix pressure but respect resistance.",
@@ -1207,6 +1222,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.45,
     top_p: 0.8,
     max_tokens: 150,
+    model,
   });
 
   return buildResponse(
@@ -1217,7 +1233,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runShortStackNinja(context = {}, instruction) {
+async function runShortStackNinja(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
   if (!stacks.hero && !stacks.effective) {
     return {
@@ -1310,6 +1326,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.35,
     top_p: 0.7,
     max_tokens: 140,
+    model,
   });
 
   return buildResponse(
@@ -1320,7 +1337,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runRangeProfessor(context = {}, instruction) {
+async function runRangeProfessor(context = {}, instruction, model) {
   const { compact, readable } = formatHeroHand(context);
   if (!compact) {
     return {
@@ -1488,6 +1505,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.35,
     top_p: 0.75,
     max_tokens: 160,
+    model,
   });
 
   return buildResponse(parsed, completion, "Balance range discipline.", "fold");
