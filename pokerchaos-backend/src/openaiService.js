@@ -1360,6 +1360,40 @@ async function runRangeProfessor(context = {}, instruction, model) {
     : [];
   const historyHint = summarizeHistory(context?.history);
   const stakeTier = String(context?.stakeTier || "unknown");
+  const format = String(context?.format || "unknown");
+  const stacks = stackSnapshot(context);
+  const effectiveStack = stacks.effective || stacks.hero || null;
+  const stackBucket =
+    context?.stackBucket ||
+    (effectiveStack !== null
+      ? effectiveStack >= 60
+        ? "deep"
+        : effectiveStack >= 30
+        ? "medium"
+        : effectiveStack > 0
+        ? "short"
+        : "unknown"
+      : "unknown");
+  const relativePosition =
+    context?.relativePosition ||
+    context?.tendencies?.resolvedRelativePosition ||
+    "unknown";
+  const isPreflop = String(context?.street || "").toLowerCase() === "preflop";
+  const unopenedPreflop =
+    isPreflop && !actionInfo.facingOpen && !actionInfo.heroOpened;
+  if (
+    unopenedPreflop &&
+    ["early", "mid"].includes(posCategory) &&
+    handCategory.tier === "trash"
+  ) {
+    return {
+      hero_action: "fold",
+      sizing: "",
+      flavor_text:
+        "Trash-tier offsuit from early/mid position—standard preflop fold at this stack depth.",
+      usage: null,
+    };
+  }
   const stakeGuidanceMap = {
     micro: {
       label: "Micro stakes",
@@ -1402,6 +1436,9 @@ async function runRangeProfessor(context = {}, instruction, model) {
     `Hero hand: ${readable}${descriptor ? ` (${descriptor})` : ""}`,
     `Hand tier: ${handCategory.label} (tier=${handCategory.tier})`,
     "Hero profile: balanced aggression; manage pot size when nut edge is unclear.",
+    stacks.hero ? `Hero stack: ${stacks.hero} BB` : "",
+    stacks.villain ? `Villain stack: ${stacks.villain} BB` : "",
+    stacks.effective ? `Effective stack: ${stacks.effective} BB` : "",
     context?.heroSeat ? `Hero seat: ${String(context.heroSeat)}` : "",
     posCategory !== "unknown" ? `Seat category: ${posCategory}` : "",
     context?.street ? `Street: ${String(context.street)}` : "",
@@ -1430,6 +1467,20 @@ async function runRangeProfessor(context = {}, instruction, model) {
       : stakeTier === "unknown"
       ? "Stakes: Unknown - use baseline solver frequencies."
       : "",
+    relativePosition === "ip"
+      ? "In position: leverage informational advantage to mix flats and controlled aggression."
+      : relativePosition === "oop"
+      ? "Out of position: temper barreling frequency, protect checking ranges, lean on bluff-catchers judiciously."
+      : "",
+    format === "tournament"
+      ? stackBucket === "deep"
+        ? "Tournament context, deep stack (60bb+): widen open-raising ranges from mid/late seats, apply pressure to accumulate chips early."
+        : stackBucket === "medium"
+        ? "Tournament context, medium stack (30-60bb): balance chip preservation with selective steals; avoid bloating marginal spots OOP."
+        : stackBucket === "short"
+        ? "Tournament context, short stack (<30bb): tighten opens, preserve fold equity for jam-or-fold decisions."
+        : "Tournament context: adjust ranges based on stack depth."
+      : "",
   ].filter(Boolean);
 
   const boardContext = {};
@@ -1453,6 +1504,10 @@ async function runRangeProfessor(context = {}, instruction, model) {
     actionContext: actionInfo,
     board: Object.keys(boardContext).length ? boardContext : undefined,
     handFeatures: handFeatures || undefined,
+    format,
+    stacks,
+    stackBucket,
+    relativePosition,
     heroProfile: {
       riskTolerance: "medium",
       style: "balanced_cautious",

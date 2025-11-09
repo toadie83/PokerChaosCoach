@@ -5,6 +5,7 @@ import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
 import DecisionCard from "./components/DecisionCard.jsx";
 import HistoryStrip from "./components/HistoryStrip.jsx";
+import PlayHandModal from "./components/PlayHandModal.jsx";
 import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
 import SingleBoardCardInput from "./components/SingleBoardCardInput.jsx";
@@ -43,6 +44,13 @@ export default function App() {
   });
   const [previewSizing, setPreviewSizing] = useState(null);
   const [stackModalOpen, setStackModalOpen] = useState(false);
+  const [playHandOpen, setPlayHandOpen] = useState(false);
+  const handlePlayHandOpen = useCallback(() => {
+    setField("heroSeat", "");
+    setField("heroCards", { card1: null, card2: null });
+    setField("heroRelativePosition", "auto");
+    setPlayHandOpen(true);
+  }, [setField]);
   const lastAutoAdvanceAt = useRef(0);
   const lastCommittedCoachAt = useRef(0);
   const lastCoachAt = useRef(0);
@@ -394,6 +402,19 @@ export default function App() {
     openHeroCardSelector();
   }, [prepareForCardChange, openHeroCardSelector]);
 
+  const handlePlayHandRestart = useCallback(() => {
+    handleReset();
+    setTimeout(() => {
+      setField("heroSeat", "");
+      setField("heroCards", { card1: null, card2: null });
+      setField("board", { flop: [null, null, null], turn: null, river: null });
+      setField("history", []);
+      setField("heroRelativePosition", "auto");
+      setField("potSizes", { total: null });
+      setField("handComplete", false);
+      setField("street", "preflop");
+    }, 0);
+  }, [handleReset, setField]);
   const handleFlopCardsChange = useCallback(
     (cards) => {
       const nextFlop = Array.isArray(cards)
@@ -508,6 +529,36 @@ export default function App() {
       },
     });
   }, [state.board, openCardSelector, handleFlopCardsChange]);
+
+  const openFlopCardSelector = useCallback(
+    (slotIndex = 0) => {
+      const sanitize = (value) =>
+        typeof value === "string" && value.trim().length === 2
+          ? value.trim().toUpperCase()
+          : null;
+      const currentFlop = Array.isArray(state.board?.flop)
+        ? state.board.flop.map(sanitize)
+        : [null, null, null];
+      const slot = Math.min(Math.max(Number(slotIndex) || 0, 0), 2);
+      openCardSelector({
+        kind: "board",
+        subtype: `flop_card_${slot}`,
+        title: `Select Flop Card ${slot + 1}`,
+        slots: [{ key: "card", label: `Flop card ${slot + 1}` }],
+        initialCards: { card: currentFlop[slot] },
+        requireAll: true,
+        onSave: (cards) => {
+          const next = [...currentFlop];
+          next[slot] =
+            typeof cards.card === "string" && cards.card.trim().length === 2
+              ? cards.card.trim().toUpperCase()
+              : null;
+          handleFlopCardsChange(next);
+        },
+      });
+    },
+    [state.board, openCardSelector, handleFlopCardsChange]
+  );
 
   const openTurnCardSelector = useCallback(
     (currentValue) => {
@@ -783,26 +834,26 @@ export default function App() {
       label: "Street",
       value: state.street.toUpperCase(),
     });
-      badges.push({
-        label: "Villain",
-        value: villainType.replace(/_/g, "-"),
-      });
-      badges.push({
-        label: "Eff",
-        value: effectiveStack ? `${effectiveStack} BB` : "Set stacks",
-        variant: "interactive",
-        onClick: openStackModal,
-      });
-      return badges;
-    }, [
-      personaMeta?.label,
-      state.heroSeat,
-      branchLabel,
-      state.tableSize,
-      state.street,
-      villainType,
-      effectiveStack,
-      openStackModal,
+    badges.push({
+      label: "Villain",
+      value: villainType.replace(/_/g, "-"),
+    });
+    badges.push({
+      label: "Eff",
+      value: effectiveStack ? `${effectiveStack} BB` : "Set stacks",
+      variant: "interactive",
+      onClick: openStackModal,
+    });
+    return badges;
+  }, [
+    personaMeta?.label,
+    state.heroSeat,
+    branchLabel,
+    state.tableSize,
+    state.street,
+    villainType,
+    effectiveStack,
+    openStackModal,
   ]);
 
   const ticker = useMemo(() => {
@@ -931,6 +982,14 @@ export default function App() {
             <div className="panel-heading-actions">
               <button
                 type="button"
+                className={`pill-toggle ${playHandOpen ? "active" : ""}`}
+                onClick={handlePlayHandOpen}
+                title="Start a guided play hand session"
+              >
+                Play Hand
+              </button>
+              <button
+                type="button"
                 className={`pill-toggle ${compactMode ? "active" : ""}`}
                 onClick={() => setCompactMode((value) => !value)}
                 title="Toggle compact density"
@@ -1020,9 +1079,9 @@ export default function App() {
           <div className="card-strip">
             <button
               type="button"
-          className="card-pill"
-          data-street="hero"
-          data-active="true"
+              className="card-pill"
+              data-street="hero"
+              data-active="true"
               onClick={() => openHeroCardSelector()}
               title="Tap to edit hero cards"
             >
@@ -1032,9 +1091,9 @@ export default function App() {
             <button
               type="button"
               className="card-pill"
-            onClick={() => openFlopManualSelector()}
-            data-street="flop"
-            data-active={state.street === "flop" && !state.handComplete}
+              onClick={() => openFlopManualSelector()}
+              data-street="flop"
+              data-active={state.street === "flop" && !state.handComplete}
               title="Tap to edit flop cards"
             >
               <span className="card-pill-label">Flop</span>
@@ -1043,12 +1102,12 @@ export default function App() {
             <button
               type="button"
               className="card-pill"
-            onClick={() => openTurnCardSelector(state.board?.turn)}
-            data-street="turn"
-            data-active={
-              (state.street === "turn" || state.street === "river") &&
-              !state.handComplete
-            }
+              onClick={() => openTurnCardSelector(state.board?.turn)}
+              data-street="turn"
+              data-active={
+                (state.street === "turn" || state.street === "river") &&
+                !state.handComplete
+              }
               title="Tap to edit turn card"
             >
               <span className="card-pill-label">Turn</span>
@@ -1057,9 +1116,9 @@ export default function App() {
             <button
               type="button"
               className="card-pill"
-            onClick={() => openRiverCardSelector(state.board?.river)}
-            data-street="river"
-            data-active={state.street === "river" && !state.handComplete}
+              onClick={() => openRiverCardSelector(state.board?.river)}
+              data-street="river"
+              data-active={state.street === "river" && !state.handComplete}
               title="Tap to edit river card"
             >
               <span className="card-pill-label">River</span>
@@ -1258,42 +1317,42 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="drawer-section">
-                <h3>Card tools</h3>
-                {personaNeedsCards ? (
+              {/* {personaNeedsCards ? (
+                <div className="drawer-section">
+                  <h3>Card tools</h3>
                   <HeroVoiceCardInput
                     heroCards={heroCards}
                     onCardsParsed={handleSaveHeroCards}
                     onManualEntry={handleManualCardEntry}
                     onVoiceStart={prepareForCardChange}
                   />
-                ) : null}
-                <FlopCardInput
-                  flop={state.board?.flop}
-                  onChange={handleFlopCardsChange}
-                  onOpenManual={openFlopManualSelector}
-                />
-                <div className="drawer-row board-row">
-                  <SingleBoardCardInput
-                    label="Turn card"
-                    value={state.board?.turn}
-                    onChange={handleTurnCardChange}
-                    voiceButtonLabel="Enter turn by voice"
-                    placeholder="Qs"
-                    onPickCard={openTurnCardSelector}
-                    pickButtonLabel="Select turn card"
+                  <FlopCardInput
+                    flop={state.board?.flop}
+                    onChange={handleFlopCardsChange}
+                    onOpenManual={openFlopManualSelector}
                   />
-                  <SingleBoardCardInput
-                    label="River card"
-                    value={state.board?.river}
-                    onChange={handleRiverCardChange}
-                    voiceButtonLabel="Enter river by voice"
-                    placeholder="Kd"
-                    onPickCard={openRiverCardSelector}
-                    pickButtonLabel="Select river card"
-                  />
+                  <div className="drawer-row board-row">
+                    <SingleBoardCardInput
+                      label="Turn card"
+                      value={state.board?.turn}
+                      onChange={handleTurnCardChange}
+                      voiceButtonLabel="Enter turn by voice"
+                      placeholder="Qs"
+                      onPickCard={openTurnCardSelector}
+                      pickButtonLabel="Select turn card"
+                    />
+                    <SingleBoardCardInput
+                      label="River card"
+                      value={state.board?.river}
+                      onChange={handleRiverCardChange}
+                      voiceButtonLabel="Enter river by voice"
+                      placeholder="Kd"
+                      onPickCard={openRiverCardSelector}
+                      pickButtonLabel="Select river card"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : null} */}
 
               {showStyleSelector ? (
                 <div className="drawer-section">
@@ -1329,6 +1388,32 @@ export default function App() {
         villainRanges={villainStackRanges}
         onClose={closeStackModal}
         onSave={handleSaveStacksQuick}
+      />
+      <PlayHandModal
+        open={playHandOpen}
+        onExit={() => setPlayHandOpen(false)}
+        onRestart={handlePlayHandRestart}
+        state={state}
+        seats={seats}
+        setField={setField}
+        actions={actions}
+        onAction={onAction}
+        coach={coach}
+        loading={loading}
+        openHeroCardSelector={openHeroCardSelector}
+        handleSaveHeroCards={handleSaveHeroCards}
+        handleManualCardEntry={handleManualCardEntry}
+        prepareForCardChange={prepareForCardChange}
+        openFlopManualSelector={openFlopManualSelector}
+        openFlopCardSelector={openFlopCardSelector}
+        openTurnCardSelector={openTurnCardSelector}
+        openRiverCardSelector={openRiverCardSelector}
+        handleFlopCardsChange={handleFlopCardsChange}
+        handleTurnCardChange={handleTurnCardChange}
+        handleRiverCardChange={handleRiverCardChange}
+        dispatch={dispatch}
+        villainTypeOptions={villainTypeOptions}
+        aiSnapshot={aiSnapshot}
       />
       <CardSelectorModal
         open={Boolean(cardSelectorConfig)}

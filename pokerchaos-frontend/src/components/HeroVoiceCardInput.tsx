@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseSpokenCards, type ParsedCards, type CardCode } from "../lib/parseVoiceCards";
 
-type RecognitionStatus = "idle" | "listening" | "processing" | "success" | "error";
+export type RecognitionStatus = "idle" | "listening" | "processing" | "success" | "error";
 
 interface HeroVoiceCardInputProps {
   heroCards: {
@@ -11,6 +11,10 @@ interface HeroVoiceCardInputProps {
   onCardsParsed: (cards: ParsedCards) => void;
   onManualEntry: () => void;
   onVoiceStart: () => void;
+  onVoiceStatusChange?: (
+    status: RecognitionStatus,
+    details?: { transcript?: string | null; error?: string | null; confidence?: number | null }
+  ) => void;
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
@@ -29,7 +33,7 @@ const getSpeechRecognitionCtor = (): SpeechRecognitionConstructor | null => {
 };
 
 export default function HeroVoiceCardInput(props: HeroVoiceCardInputProps) {
-  const { heroCards, onCardsParsed, onManualEntry, onVoiceStart } = props;
+  const { heroCards, onCardsParsed, onManualEntry, onVoiceStart, onVoiceStatusChange } = props;
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [status, setStatus] = useState<RecognitionStatus>("idle");
@@ -58,35 +62,47 @@ export default function HeroVoiceCardInput(props: HeroVoiceCardInputProps) {
     };
   }, [stopRecognition]);
 
+  const reportStatus = useCallback(
+    (nextStatus: RecognitionStatus, details?: { transcript?: string | null; error?: string | null; confidence?: number | null }) => {
+      setStatus(nextStatus);
+      if (typeof onVoiceStatusChange === "function") {
+        onVoiceStatusChange(nextStatus, details);
+      }
+    },
+    [onVoiceStatusChange]
+  );
+
   const handleResult = useCallback(
-    (speechTranscript: string) => {
+    (speechTranscript: string, confidence?: number | null) => {
       const parsed = parseSpokenCards(speechTranscript);
       if (parsed) {
-        setStatus("success");
+        reportStatus("success", { transcript: speechTranscript, confidence: confidence ?? null });
         setErrorMessage(null);
         onCardsParsed(parsed);
       } else {
-        setStatus("error");
+        reportStatus("error", { transcript: speechTranscript, error: "Couldn't recognize cards. Please try again.", confidence: confidence ?? null });
         setErrorMessage("Couldn't recognize cards. Please try again.");
       }
     },
-    [onCardsParsed]
+    [onCardsParsed, reportStatus]
   );
 
   const startListening = useCallback(() => {
     onVoiceStart();
 
     if (!isSupported) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
     stopRecognition();
     const ctor = getSpeechRecognitionCtor();
     if (!ctor) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
@@ -102,14 +118,15 @@ export default function HeroVoiceCardInput(props: HeroVoiceCardInputProps) {
         .trim();
 
       if (!combinedTranscript) {
-        setStatus("error");
+        reportStatus("error", { error: "Heard silence. Please try again." });
         setErrorMessage("Heard silence. Please try again.");
         return;
       }
-
+      const bestAlt = event.results?.[0]?.[0];
+      const confidence = typeof bestAlt?.confidence === "number" ? bestAlt.confidence : null;
       setTranscript(combinedTranscript);
-      setStatus("processing");
-      handleResult(combinedTranscript);
+      reportStatus("processing", { transcript: combinedTranscript, confidence });
+      handleResult(combinedTranscript, confidence);
       recognition.stop();
     };
 
@@ -120,21 +137,29 @@ export default function HeroVoiceCardInput(props: HeroVoiceCardInputProps) {
       } else if (event.error === "not-allowed") {
         message = "Microphone access denied. Please allow access and retry.";
       }
-      setStatus("error");
+      reportStatus("error", { error: message });
       setErrorMessage(message);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
-      setStatus((current) => (current === "listening" ? "idle" : current));
+      setStatus((current) => {
+        if (current === "listening") {
+          if (typeof onVoiceStatusChange === "function") {
+            onVoiceStatusChange("idle", {});
+          }
+          return "idle";
+        }
+        return current;
+      });
     };
 
     recognitionRef.current = recognition;
     setErrorMessage(null);
     setTranscript(null);
-    setStatus("listening");
+    reportStatus("listening");
     recognition.start();
-  }, [handleResult, isSupported, onVoiceStart, stopRecognition]);
+  }, [handleResult, isSupported, onVoiceStart, reportStatus, stopRecognition]);
 
   const listening = status === "listening";
 

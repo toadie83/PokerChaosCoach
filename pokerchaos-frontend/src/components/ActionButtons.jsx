@@ -1,11 +1,26 @@
-export default function ActionButtons({ actions, onAction, embedded = false, title = "Actions", disabled = false }) {
+export default function ActionButtons({
+  actions,
+  onAction,
+  embedded = false,
+  title = "Actions",
+  disabled = false,
+  highlightedCodes = [],
+}) {
   const content = (
     <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-      {(actions || []).map((a) => (
-        <button key={a.code} onClick={() => onAction(a.code)} disabled={disabled}>
-          {a.label}
-        </button>
-      ))}
+      {(actions || []).map((a) => {
+        const isHighlighted = highlightedCodes.includes(a.code);
+        return (
+          <button
+            key={a.code}
+            onClick={() => onAction(a.code)}
+            disabled={disabled}
+            className={`action-btn${isHighlighted ? " highlighted" : ""}`}
+          >
+            {a.label}
+          </button>
+        );
+      })}
     </div>
   );
 

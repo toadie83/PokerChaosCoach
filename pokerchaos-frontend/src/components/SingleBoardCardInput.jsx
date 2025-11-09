@@ -25,6 +25,7 @@ export default function SingleBoardCardInput({
   placeholder = "Ah",
   onPickCard,
   pickButtonLabel,
+  onVoiceStatusChange,
 }) {
   const recognitionRef = useRef(null);
   const [status, setStatus] = useState("idle");
@@ -68,35 +69,48 @@ export default function SingleBoardCardInput({
     [onChange]
   );
 
+  const reportStatus = useCallback(
+    (nextStatus, details = {}) => {
+      setStatus(nextStatus);
+      if (typeof onVoiceStatusChange === "function") {
+        onVoiceStatusChange(nextStatus, details);
+      }
+    },
+    [onVoiceStatusChange]
+  );
+
   const handleResult = useCallback(
-    (speechTranscript) => {
+    (speechTranscript, confidence) => {
       const parsed = parseSpokenNCards(speechTranscript, expectedCount);
       if (parsed && parsed.length === expectedCount) {
         const card = parsed[0].toUpperCase();
         setDraft(card);
         emitChange(card);
-        setStatus("success");
+        reportStatus("success", { transcript: speechTranscript, confidence });
         setErrorMessage(null);
       } else {
-        setStatus("error");
-        setErrorMessage("Couldn't recognize that card. Please try again.");
+        const message = "Couldn't recognize that card. Please try again.";
+        reportStatus("error", { transcript: speechTranscript, error: message, confidence });
+        setErrorMessage(message);
       }
     },
-    [emitChange]
+    [emitChange, reportStatus]
   );
 
   const startListening = useCallback(() => {
     if (!isSupported) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
     stopRecognition();
     const ctor = getSpeechRecognitionCtor();
     if (!ctor) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
@@ -112,14 +126,17 @@ export default function SingleBoardCardInput({
         .trim();
 
       if (!combinedTranscript) {
-        setStatus("error");
-        setErrorMessage("Heard silence. Please try again.");
+        const message = "Heard silence. Please try again.";
+        reportStatus("error", { error: message });
+        setErrorMessage(message);
         return;
       }
 
       setTranscript(combinedTranscript);
-      setStatus("processing");
-      handleResult(combinedTranscript);
+      const bestAlt = event.results?.[0]?.[0];
+      const confidence = typeof bestAlt?.confidence === "number" ? bestAlt.confidence : null;
+      reportStatus("processing", { transcript: combinedTranscript, confidence });
+      handleResult(combinedTranscript, confidence);
       recognition.stop();
     };
 
@@ -130,21 +147,29 @@ export default function SingleBoardCardInput({
       } else if (event.error === "not-allowed") {
         message = "Microphone access denied. Please allow access and retry.";
       }
-      setStatus("error");
+      reportStatus("error", { error: message });
       setErrorMessage(message);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
-      setStatus((current) => (current === "listening" ? "idle" : current));
+      setStatus((current) => {
+        if (current === "listening") {
+          if (typeof onVoiceStatusChange === "function") {
+            onVoiceStatusChange("idle", {});
+          }
+          return "idle";
+        }
+        return current;
+      });
     };
 
     recognitionRef.current = recognition;
     setErrorMessage(null);
     setTranscript(null);
-    setStatus("listening");
+    reportStatus("listening");
     recognition.start();
-  }, [handleResult, isSupported, stopRecognition]);
+  }, [handleResult, isSupported, reportStatus, stopRecognition, onVoiceStatusChange]);
 
   const listening = status === "listening";
 
@@ -167,7 +192,7 @@ export default function SingleBoardCardInput({
           onClick={() => {
             setDraft("");
             emitChange(null);
-            setStatus("idle");
+            reportStatus("idle");
             setErrorMessage(null);
             setTranscript(null);
           }}

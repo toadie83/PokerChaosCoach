@@ -19,6 +19,7 @@ export const initialState = {
   style: "chaos_shark",
   persona: "chaos_shark",
   heroCards: { card1: null, card2: null },
+  heroRelativePosition: "auto",
   board: {
     flop: [null, null, null],
     turn: null,
@@ -312,6 +313,35 @@ export function summarizeForAI(state) {
     heroCards.card1 && heroCards.card2
       ? String(heroCards.card1) + String(heroCards.card2)
       : null;
+  const heroStack =
+    typeof state.heroStackBB === "number" && Number.isFinite(state.heroStackBB)
+      ? state.heroStackBB
+      : null;
+  const villainStack =
+    typeof state.villainStackBB === "number" &&
+    Number.isFinite(state.villainStackBB)
+      ? state.villainStackBB
+      : null;
+  const effectiveStack =
+    heroStack && villainStack
+      ? Math.min(heroStack, villainStack)
+      : heroStack || villainStack || null;
+  const stackBucket =
+    effectiveStack === null
+      ? "unknown"
+      : effectiveStack >= 60
+      ? "deep"
+      : effectiveStack >= 30
+      ? "medium"
+      : effectiveStack > 0
+      ? "short"
+      : "unknown";
+  const inferredFormat =
+    state.persona === "cash_game_crusher"
+      ? "cash"
+      : state.persona === "range_professor" || state.persona === "short_stack_ninja"
+      ? "tournament"
+      : "unknown";
   const normalizeCard = (card) =>
     typeof card === "string" && card.trim().length === 2
       ? card.trim().toUpperCase()
@@ -327,6 +357,84 @@ export function summarizeForAI(state) {
   if (turnCard) boardContext.turn = turnCard;
   const riverCard = normalizeCard(state.board?.river);
   if (riverCard) boardContext.river = riverCard;
+
+  const streets = ["preflop", "flop", "turn", "river"];
+  const villainCallsByStreet = streets.reduce((acc, street) => {
+    acc[street] = 0;
+    return acc;
+  }, {});
+  const villainRaisesByStreet = streets.reduce((acc, street) => {
+    acc[street] = 0;
+    return acc;
+  }, {});
+  const heroAggressionByStreet = streets.reduce((acc, street) => {
+    acc[street] = 0;
+    return acc;
+  }, {});
+
+  history.forEach((entry) => {
+    const street = entry.street || state.street;
+    if (!street || !streets.includes(street)) return;
+    const actor = entry.actor || "";
+    const action = String(entry.action || "").toLowerCase();
+    if (actor === "opp") {
+      if (action === "call") {
+        villainCallsByStreet[street] += 1;
+      } else if (/raise|jam|shove/.test(action)) {
+        villainRaisesByStreet[street] += 1;
+      }
+    } else if (actor === "hero" && /bet|raise|jam|shove/.test(action)) {
+      heroAggressionByStreet[street] += 1;
+    }
+  });
+
+  const totalVillainCalls = streets.reduce(
+    (sum, street) => sum + (villainCallsByStreet[street] || 0),
+    0
+  );
+
+  const previousActions = Array.isArray(state.previousActions)
+    ? state.previousActions
+    : [];
+  const heroFirstToActStreets = new Set(
+    previousActions
+      .filter((code) => typeof code === "string" && code.endsWith("_first_to_act"))
+      .map((code) => code.replace("_first_to_act", ""))
+  );
+  const heroFirstToActCurrent = heroFirstToActStreets.has(state.street);
+  const relativePositionExplicit = state.heroRelativePosition || "auto";
+  const resolvedRelativePosition =
+    relativePositionExplicit !== "auto"
+      ? relativePositionExplicit
+      : heroFirstToActCurrent
+      ? "oop"
+      : "ip";
+
+  const cautionNotes = [];
+  if (
+    resolvedRelativePosition === "oop" &&
+    totalVillainCalls > 0 &&
+    (state.persona === "range_professor" || state.persona === "cash_game_crusher")
+  ) {
+    cautionNotes.push(
+      "Opponent has already called previous aggression. Prioritise pot control when out of position unless equity is strong."
+    );
+  }
+  if (
+    resolvedRelativePosition === "oop" &&
+    villainCallsByStreet.flop > 0 &&
+    state.street === "turn"
+  ) {
+    cautionNotes.push(
+      "Flop bet was called; consider checking marginal holdings on the turn to avoid bloating the pot."
+    );
+  }
+
+  const finalInstruction =
+    cautionNotes.length > 0
+      ? `${instruction}\n\nCaution: ${cautionNotes.join(" ")}`
+      : instruction;
+
   return {
     context: {
       street: state.street,
@@ -341,22 +449,23 @@ export function summarizeForAI(state) {
       heroCards,
       heroHand,
       board: Object.keys(boardContext).length ? boardContext : undefined,
-      heroStackBB:
-        typeof state.heroStackBB === "number" &&
-        Number.isFinite(state.heroStackBB)
-          ? state.heroStackBB
-          : null,
-      villainStackBB:
-        typeof state.villainStackBB === "number" &&
-        Number.isFinite(state.villainStackBB)
-          ? state.villainStackBB
-          : null,
+      heroStackBB: heroStack,
+      villainStackBB: villainStack,
+      stackInfo: {
+        hero: heroStack,
+        villain: villainStack,
+        effective: effectiveStack,
+        bucket: stackBucket,
+      },
+      stackBucket,
       villainType: state.villainType || "balanced",
+      relativePosition: resolvedRelativePosition,
       preflopLimpers:
         typeof state.preflopLimpers === "number" ? state.preflopLimpers : 0,
       preflopCallers:
         typeof state.preflopCallers === "number" ? state.preflopCallers : 0,
       stakeTier: state.stakeTier || "unknown",
+      format: inferredFormat,
       model: state.model || "gpt-4.1-mini",
       potSize:
         typeof state.potSizes?.total === "number" &&
@@ -364,8 +473,18 @@ export function summarizeForAI(state) {
         state.potSizes.total > 0
           ? state.potSizes.total
           : null,
+      tendencies: {
+        villainCallsByStreet,
+        villainRaisesByStreet,
+      heroAggressionByStreet,
+      totalVillainCalls,
+      heroFirstToActCurrent,
+      relativePositionExplicit,
+      resolvedRelativePosition,
     },
-    instruction,
+     caution: cautionNotes.length ? cautionNotes : undefined,
+    },
+    instruction: finalInstruction,
   };
 }
 
