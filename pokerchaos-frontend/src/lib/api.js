@@ -42,6 +42,23 @@ async function requestJson(path, options = {}) {
   return res.json();
 }
 
+export async function pingHealth({ timeoutMs = 4000 } = {}) {
+  const base = getApiBaseUrl();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}/healthz`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function postJson(path, data) {
   return requestJson(path, {
     method: "POST",

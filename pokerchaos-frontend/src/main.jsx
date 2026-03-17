@@ -9,7 +9,7 @@ import {
   useAuth,
 } from "@clerk/react";
 import App from "./App.jsx";
-import { setAuthTokenFetcher } from "./lib/api.js";
+import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
 import "./styles.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -29,6 +29,47 @@ function AuthSync({ children }) {
   return children;
 }
 
+function ServerWakeGate({ children }) {
+  const [status, setStatus] = React.useState("checking"); // checking | waking | online
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const ok = await pingHealth();
+      if (cancelled) return;
+      setStatus(ok ? "online" : "waking");
+    }
+    check();
+    const id = setInterval(check, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const showOverlay = status !== "online";
+  return (
+    <>
+      {showOverlay ? (
+        <div className="wake-overlay">
+          <div className="wake-card">
+            <div className="wake-dot" />
+            <div>
+              <p className="wake-title">
+                {status === "waking" ? "Server waking up" : "Checking server"}
+              </p>
+              <p className="wake-sub">
+                Please wait — finding a coach on the backend.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {children}
+    </>
+  );
+}
+
 function Shell() {
   if (!clerkPublishableKey) {
     return (
@@ -46,7 +87,9 @@ function Shell() {
           <div className="auth-bar">
             <UserButton />
           </div>
-          <App />
+          <ServerWakeGate>
+            <App />
+          </ServerWakeGate>
         </AuthSync>
       </Show>
       <Show when="signed-out">

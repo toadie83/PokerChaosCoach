@@ -763,12 +763,6 @@ export default function App() {
     }
   }, [seats.join("|")]);
 
-  useEffect(() => {
-    if (!personaNeedsCards && cardSelectorConfig?.kind === "hero") {
-      closeCardSelector();
-    }
-  }, [personaNeedsCards, cardSelectorConfig?.kind, closeCardSelector]);
-
   const actions = useMemo(
     () => getAvailableActions(state, !!coach),
     [state, coach]
