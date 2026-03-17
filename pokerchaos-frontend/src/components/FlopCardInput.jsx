@@ -11,7 +11,7 @@ const getSpeechRecognitionCtor = () => {
   return anyWindow.SpeechRecognition || anyWindow.webkitSpeechRecognition || null;
 };
 
-export default function FlopCardInput({ flop, onChange, onOpenManual }) {
+export default function FlopCardInput({ flop, onChange, onOpenManual, onVoiceStatusChange }) {
   const recognitionRef = useRef(null);
   const [status, setStatus] = useState("idle");
   const [transcript, setTranscript] = useState(null);
@@ -62,42 +62,59 @@ export default function FlopCardInput({ flop, onChange, onOpenManual }) {
     [onChange]
   );
 
+  const reportStatus = useCallback(
+    (nextStatus, details = {}) => {
+      setStatus(nextStatus);
+      if (typeof onVoiceStatusChange === "function") {
+        onVoiceStatusChange(nextStatus, details);
+      }
+    },
+    [onVoiceStatusChange]
+  );
+
   const handleResult = useCallback(
-    (speechTranscript) => {
+    (speechTranscript, confidence) => {
       const parsed = parseSpokenNCards(speechTranscript, expectedFlopCount);
       if (parsed) {
         const next = parsed.map((card) => card.toUpperCase());
         setDraft(next);
         emitChange(next);
-        setStatus("success");
+        reportStatus("success", { transcript: speechTranscript, confidence });
         setErrorMessage(null);
       } else {
-        setStatus("error");
+        reportStatus("error", {
+          transcript: speechTranscript,
+          error: "Couldn't recognize flop cards. Please try again.",
+          confidence,
+        });
         setErrorMessage("Couldn't recognize flop cards. Please try again.");
       }
     },
-    [emitChange]
+    [emitChange, reportStatus]
   );
 
   const startListening = useCallback(() => {
     if (!isSupported) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
     stopRecognition();
     const ctor = getSpeechRecognitionCtor();
     if (!ctor) {
-      setErrorMessage("This browser does not support speech recognition.");
-      setStatus("error");
+      const message = "This browser does not support speech recognition.";
+      setErrorMessage(message);
+      reportStatus("error", { error: message });
       return;
     }
 
     const recognition = new ctor();
     recognition.lang = "en-US";
     recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
+    recognition.continuous = true;
 
     recognition.onresult = (event) => {
       const combinedTranscript = Array.from(event.results)
@@ -106,14 +123,15 @@ export default function FlopCardInput({ flop, onChange, onOpenManual }) {
         .trim();
 
       if (!combinedTranscript) {
-        setStatus("error");
+        reportStatus("error", { error: "Heard silence. Please try again." });
         setErrorMessage("Heard silence. Please try again.");
         return;
       }
-
+      const bestAlt = event.results?.[0]?.[0];
+      const confidence = typeof bestAlt?.confidence === "number" ? bestAlt.confidence : null;
       setTranscript(combinedTranscript);
-      setStatus("processing");
-      handleResult(combinedTranscript);
+      reportStatus("processing", { transcript: combinedTranscript, confidence });
+      handleResult(combinedTranscript, confidence);
       recognition.stop();
     };
 
@@ -124,21 +142,29 @@ export default function FlopCardInput({ flop, onChange, onOpenManual }) {
       } else if (event.error === "not-allowed") {
         message = "Microphone access denied. Please allow access and retry.";
       }
-      setStatus("error");
+      reportStatus("error", { error: message });
       setErrorMessage(message);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
-      setStatus((current) => (current === "listening" ? "idle" : current));
+      setStatus((current) => {
+        if (current === "listening") {
+          if (typeof onVoiceStatusChange === "function") {
+            onVoiceStatusChange("idle", {});
+          }
+          return "idle";
+        }
+        return current;
+      });
     };
 
     recognitionRef.current = recognition;
     setErrorMessage(null);
     setTranscript(null);
-    setStatus("listening");
+    reportStatus("listening");
     recognition.start();
-  }, [handleResult, isSupported, stopRecognition]);
+  }, [handleResult, isSupported, reportStatus, stopRecognition, onVoiceStatusChange]);
 
   const listening = status === "listening";
 
@@ -171,7 +197,7 @@ export default function FlopCardInput({ flop, onChange, onOpenManual }) {
             const cleared = ["", "", ""];
             setDraft(cleared);
             emitChange([null, null, null]);
-            setStatus("idle");
+            reportStatus("idle");
             setErrorMessage(null);
             setTranscript(null);
           }}

@@ -8,9 +8,31 @@ export function getApiBaseUrl() {
   return DEFAULT_API_BASE_URL;
 }
 
+let authTokenFetcher = null;
+
+export function setAuthTokenFetcher(fetcher) {
+  authTokenFetcher = typeof fetcher === "function" ? fetcher : null;
+}
+
+async function withAuthHeader(options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (authTokenFetcher) {
+    try {
+      const token = await authTokenFetcher();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+    } catch (err) {
+      console.warn("[api] Failed to fetch auth token", err);
+    }
+  }
+  return { ...options, headers };
+}
+
 async function requestJson(path, options = {}) {
   const base = getApiBaseUrl();
-  const res = await fetch(`${base}${path}`, options);
+  const opts = await withAuthHeader(options);
+  const res = await fetch(`${base}${path}`, opts);
 
   if (!res.ok) {
     const text = await res.text();
@@ -38,4 +60,3 @@ export async function getJson(path) {
     }
   });
 }
-

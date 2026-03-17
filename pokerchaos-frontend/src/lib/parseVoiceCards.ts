@@ -8,6 +8,7 @@ export interface ParsedCards {
 }
 
 const rankAliases = new Map<string, RankCode>([
+  ["iv", "4"],
   ["ace", "A"],
   ["king", "K"],
   ["queen", "Q"],
@@ -26,13 +27,22 @@ const rankAliases = new Map<string, RankCode>([
   ["five", "5"],
   ["5", "5"],
   ["four", "4"],
+  ["for", "4"],
+  ["fore", "4"],
   ["4", "4"],
   ["three", "3"],
   ["3", "3"],
+  ["tree", "3"],
   ["trey", "3"],
   ["2", "2"],
   ["two", "2"],
+  ["too", "2"],
+  ["tu", "2"],
   ["deuce", "2"],
+  ["ate", "8"],
+  ["sicks", "6"],
+  ["sixx", "6"],
+  ["fife", "5"],
 ]);
 
 const suitAliases = new Map<string, SuitCode>([

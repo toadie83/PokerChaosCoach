@@ -42,6 +42,9 @@ const VALID_ACTIONS = [
   "fold",
 ];
 
+const DEFAULT_MODEL = "gpt-4.1-mini";
+const ALLOWED_MODELS = new Set(["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"]);
+
 const RANK_VALUES = {
   A: 14,
   K: 13,
@@ -836,9 +839,11 @@ async function completePrompt({
   temperature = 0.6,
   top_p = 0.85,
   max_tokens = 120,
+  model = DEFAULT_MODEL,
 }) {
+  const chosenModel = ALLOWED_MODELS.has(model) ? model : DEFAULT_MODEL;
   const completion = await getClient().chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: chosenModel,
     temperature,
     top_p,
     max_tokens,
@@ -890,22 +895,30 @@ function buildResponse(
 
 export async function getAggressionPrompt(context = {}, instruction) {
   const persona = String(context?.persona || "chaos_shark");
+  const requestedModel =
+    typeof context?.model === "string" && context.model.trim()
+      ? context.model.trim()
+      : null;
+  const model = requestedModel && ALLOWED_MODELS.has(requestedModel)
+    ? requestedModel
+    : DEFAULT_MODEL;
+
   if (persona === "cash_game_crusher") {
-    return runCashGameCrusher(context, instruction);
+    return runCashGameCrusher(context, instruction, model);
   }
   if (persona === "exploit_detective") {
-    return runExploitDetective(context, instruction);
+    return runExploitDetective(context, instruction, model);
   }
   if (persona === "range_professor") {
-    return runRangeProfessor(context, instruction);
+    return runRangeProfessor(context, instruction, model);
   }
   if (persona === "short_stack_ninja") {
-    return runShortStackNinja(context, instruction);
+    return runShortStackNinja(context, instruction, model);
   }
-  return runChaosCoach(context, instruction);
+  return runChaosCoach(context, instruction, model);
 }
 
-async function runChaosCoach(context = {}, instruction) {
+async function runChaosCoach(context = {}, instruction, model) {
   const styleTone = buildStyleTone(context?.style);
   const system = `You are ChaosCoach - an AI poker hype bot.
 You never reference hole cards, board cards, math, or odds.
@@ -996,12 +1009,13 @@ Instruction: ${
     temperature: 0.6,
     top_p: 0.85,
     max_tokens: 120,
+    model,
   });
 
   return buildResponse(parsed, completion, "Apply pressure.");
 }
 
-async function runCashGameCrusher(context = {}, instruction) {
+async function runCashGameCrusher(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
   const effective = stacks.effective || stacks.hero || 100;
   const villainType = String(context?.villainType || "fishy");
@@ -1115,6 +1129,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.5,
     top_p: 0.85,
     max_tokens: 160,
+    model,
   });
 
   return buildResponse(
@@ -1125,7 +1140,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runExploitDetective(context = {}, instruction) {
+async function runExploitDetective(context = {}, instruction, model) {
   const villainType = String(context?.villainType || "balanced");
   const villainNotes = {
     balanced: "Solid, balanced villain - mix pressure but respect resistance.",
@@ -1207,6 +1222,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.45,
     top_p: 0.8,
     max_tokens: 150,
+    model,
   });
 
   return buildResponse(
@@ -1217,7 +1233,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runShortStackNinja(context = {}, instruction) {
+async function runShortStackNinja(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
   if (!stacks.hero && !stacks.effective) {
     return {
@@ -1310,6 +1326,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.35,
     top_p: 0.7,
     max_tokens: 140,
+    model,
   });
 
   return buildResponse(
@@ -1320,7 +1337,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   );
 }
 
-async function runRangeProfessor(context = {}, instruction) {
+async function runRangeProfessor(context = {}, instruction, model) {
   const { compact, readable } = formatHeroHand(context);
   if (!compact) {
     return {
@@ -1343,6 +1360,40 @@ async function runRangeProfessor(context = {}, instruction) {
     : [];
   const historyHint = summarizeHistory(context?.history);
   const stakeTier = String(context?.stakeTier || "unknown");
+  const format = String(context?.format || "unknown");
+  const stacks = stackSnapshot(context);
+  const effectiveStack = stacks.effective || stacks.hero || null;
+  const stackBucket =
+    context?.stackBucket ||
+    (effectiveStack !== null
+      ? effectiveStack >= 60
+        ? "deep"
+        : effectiveStack >= 30
+        ? "medium"
+        : effectiveStack > 0
+        ? "short"
+        : "unknown"
+      : "unknown");
+  const relativePosition =
+    context?.relativePosition ||
+    context?.tendencies?.resolvedRelativePosition ||
+    "unknown";
+  const isPreflop = String(context?.street || "").toLowerCase() === "preflop";
+  const unopenedPreflop =
+    isPreflop && !actionInfo.facingOpen && !actionInfo.heroOpened;
+  if (
+    unopenedPreflop &&
+    ["early", "mid"].includes(posCategory) &&
+    handCategory.tier === "trash"
+  ) {
+    return {
+      hero_action: "fold",
+      sizing: "",
+      flavor_text:
+        "Trash-tier offsuit from early/mid position—standard preflop fold at this stack depth.",
+      usage: null,
+    };
+  }
   const stakeGuidanceMap = {
     micro: {
       label: "Micro stakes",
@@ -1385,6 +1436,9 @@ async function runRangeProfessor(context = {}, instruction) {
     `Hero hand: ${readable}${descriptor ? ` (${descriptor})` : ""}`,
     `Hand tier: ${handCategory.label} (tier=${handCategory.tier})`,
     "Hero profile: balanced aggression; manage pot size when nut edge is unclear.",
+    stacks.hero ? `Hero stack: ${stacks.hero} BB` : "",
+    stacks.villain ? `Villain stack: ${stacks.villain} BB` : "",
+    stacks.effective ? `Effective stack: ${stacks.effective} BB` : "",
     context?.heroSeat ? `Hero seat: ${String(context.heroSeat)}` : "",
     posCategory !== "unknown" ? `Seat category: ${posCategory}` : "",
     context?.street ? `Street: ${String(context.street)}` : "",
@@ -1413,6 +1467,20 @@ async function runRangeProfessor(context = {}, instruction) {
       : stakeTier === "unknown"
       ? "Stakes: Unknown - use baseline solver frequencies."
       : "",
+    relativePosition === "ip"
+      ? "In position: leverage informational advantage to mix flats and controlled aggression."
+      : relativePosition === "oop"
+      ? "Out of position: temper barreling frequency, protect checking ranges, lean on bluff-catchers judiciously."
+      : "",
+    format === "tournament"
+      ? stackBucket === "deep"
+        ? "Tournament context, deep stack (60bb+): widen open-raising ranges from mid/late seats, apply pressure to accumulate chips early."
+        : stackBucket === "medium"
+        ? "Tournament context, medium stack (30-60bb): balance chip preservation with selective steals; avoid bloating marginal spots OOP."
+        : stackBucket === "short"
+        ? "Tournament context, short stack (<30bb): tighten opens, preserve fold equity for jam-or-fold decisions."
+        : "Tournament context: adjust ranges based on stack depth."
+      : "",
   ].filter(Boolean);
 
   const boardContext = {};
@@ -1436,6 +1504,10 @@ async function runRangeProfessor(context = {}, instruction) {
     actionContext: actionInfo,
     board: Object.keys(boardContext).length ? boardContext : undefined,
     handFeatures: handFeatures || undefined,
+    format,
+    stacks,
+    stackBucket,
+    relativePosition,
     heroProfile: {
       riskTolerance: "medium",
       style: "balanced_cautious",
@@ -1488,6 +1560,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     temperature: 0.35,
     top_p: 0.75,
     max_tokens: 160,
+    model,
   });
 
   return buildResponse(parsed, completion, "Balance range discipline.", "fold");

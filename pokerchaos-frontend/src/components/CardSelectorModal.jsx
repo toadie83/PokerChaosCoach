@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { parseSpokenNCards } from "../lib/parseVoiceCards";
 
 const suits = [
   { code: "s", label: "Spades" },
@@ -12,6 +13,12 @@ const ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
 function formatCard(card) {
   if (!card?.rank || !card?.suit) return null;
   return `${card.rank}${card.suit}`;
+}
+
+function getSpeechRecognitionCtor() {
+  if (typeof window === "undefined") return null;
+  const anyWindow = window;
+  return anyWindow.SpeechRecognition || anyWindow.webkitSpeechRecognition || null;
 }
 
 export default function CardSelectorModal({
@@ -39,14 +46,152 @@ export default function CardSelectorModal({
   );
   const pendingAdvanceRef = useRef(null);
   const [error, setError] = useState("");
+  const recognitionRef = useRef(null);
+  const [voiceStatus, setVoiceStatus] = useState("idle");
+  const [voiceError, setVoiceError] = useState("");
+  const isVoiceSupported = useMemo(() => getSpeechRecognitionCtor() !== null, []);
 
   useEffect(() => {
     if (open) {
       setDraft(buildDraft(effectiveSlots, initialCards));
       setActiveIndex(computeInitialActiveIndex(effectiveSlots, initialCards));
       setError("");
+      setVoiceError("");
+      setVoiceStatus(isVoiceSupported ? "idle" : "unsupported");
     }
-  }, [open, initialCards, effectiveSlots]);
+  }, [open, initialCards, effectiveSlots, isVoiceSupported]);
+
+  const stopVoiceCapture = useCallback(() => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    try {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+    } catch {}
+    recognitionRef.current = null;
+  }, []);
+
+  const handleVoiceTranscript = useCallback(
+    (speechTranscript) => {
+      const expectedCount = effectiveSlots.length;
+      if (expectedCount <= 0) return false;
+      const parsed = parseSpokenNCards(speechTranscript, expectedCount);
+      if (!parsed) {
+        return false;
+      }
+      let nextIndexResult = -1;
+      setDraft((prev) => {
+        const next = { ...prev };
+        parsed.forEach((code, idx) => {
+          const slot = effectiveSlots[idx];
+          if (!slot || typeof code !== "string" || code.length < 2) return;
+          next[slot.key] = {
+            rank: code[0].toUpperCase(),
+            suit: code[1].toLowerCase()
+          };
+        });
+        nextIndexResult = findNextIncomplete(next, effectiveSlots, 0);
+        return next;
+      });
+      pendingAdvanceRef.current = null;
+      setError("");
+      if (nextIndexResult !== undefined) {
+        setActiveIndex((prev) => {
+          if (nextIndexResult === -1) {
+            return effectiveSlots.length > 0 ? effectiveSlots.length - 1 : prev;
+          }
+          return nextIndexResult;
+        });
+      }
+      return true;
+    },
+    [effectiveSlots]
+  );
+
+  const startVoiceCapture = useCallback(() => {
+    if (!isVoiceSupported) return;
+    stopVoiceCapture();
+    const ctor = getSpeechRecognitionCtor();
+    if (!ctor) {
+      setVoiceStatus("unsupported");
+      return;
+    }
+    try {
+      const recognition = new ctor();
+      recognitionRef.current = recognition;
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event) => {
+        const combinedTranscript = Array.from(event.results)
+          .map((result) => result[0]?.transcript ?? "")
+          .join(" ")
+          .trim();
+        if (!combinedTranscript) {
+          setVoiceStatus("error");
+          setVoiceError("Heard silence. Please try again.");
+        } else {
+          const success = handleVoiceTranscript(combinedTranscript);
+          if (success) {
+            setVoiceStatus("success");
+            setVoiceError("");
+          } else {
+            setVoiceStatus("error");
+            setVoiceError("Couldn't recognize cards. Please try again.");
+          }
+        }
+        try {
+          recognition.stop();
+        } catch {}
+      };
+      recognition.onerror = (event) => {
+        let message = "Couldn't recognize cards. Please try again.";
+        if (event.error === "not-allowed") {
+          message = "Microphone permission denied for voice input.";
+        } else if (event.error === "no-speech") {
+          message = "Heard silence. Please try again.";
+        }
+        setVoiceStatus("error");
+        setVoiceError(message);
+      };
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        setVoiceStatus((prev) => (prev === "listening" ? "idle" : prev));
+      };
+      recognition.start();
+      setVoiceStatus("listening");
+      setVoiceError("");
+    } catch (err) {
+      recognitionRef.current = null;
+      setVoiceStatus("error");
+      setVoiceError("Unable to start voice recognition.");
+    }
+  }, [handleVoiceTranscript, isVoiceSupported, stopVoiceCapture]);
+
+  useEffect(() => {
+    if (!open) {
+      stopVoiceCapture();
+      setVoiceStatus("idle");
+      setVoiceError("");
+      return;
+    }
+    if (!isVoiceSupported) {
+      setVoiceStatus("unsupported");
+      return;
+    }
+    startVoiceCapture();
+    return () => {
+      stopVoiceCapture();
+    };
+  }, [open, isVoiceSupported, startVoiceCapture, stopVoiceCapture]);
+
+  useEffect(() => {
+    return () => {
+      stopVoiceCapture();
+    };
+  }, [stopVoiceCapture]);
 
   const cardStrings = useMemo(() => {
     return effectiveSlots.reduce((acc, slot) => {
@@ -203,8 +348,38 @@ export default function CardSelectorModal({
         </div>
         <div className="modal-body">
           <p className="sub" style={{ marginTop: 0 }}>
-            Choose rank then suit for each card.
+            {isVoiceSupported
+              ? "Speak your cards or choose rank then suit for each slot."
+              : "Choose rank then suit for each card."}
           </p>
+          {isVoiceSupported ? (
+            <div className={`voice-indicator ${voiceStatus}`}>
+              <span>
+                {voiceStatus === "listening"
+                  ? "Listening for cards…"
+                  : voiceStatus === "success"
+                  ? "Voice cards captured. Review before saving."
+                  : voiceStatus === "error"
+                  ? voiceError || "Couldn't recognize cards. Please try again."
+                  : "Use voice input or retry if needed."}
+              </span>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  startVoiceCapture();
+                }}
+                disabled={voiceStatus === "listening"}
+              >
+                {voiceStatus === "listening" ? "Listening…" : "Retry voice"}
+              </button>
+            </div>
+          ) : (
+            <div className="voice-indicator unsupported">
+              Voice input not supported in this browser.
+            </div>
+          )}
           <div className="card-progress">
             {effectiveSlots.map((slot, idx) => {
               const card = formatCard(draft[slot.key]);

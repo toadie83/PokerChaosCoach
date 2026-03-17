@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { applyEvent, initialState } from "./machine.js";
 
 const normalizeCard = (card) =>
@@ -21,7 +21,8 @@ function loadInitialState() {
       flop: [...(initialState.board?.flop || [null, null, null])],
       turn: initialState.board?.turn ?? null,
       river: initialState.board?.river ?? null
-    }
+    },
+    potSizes: { ...initialState.potSizes }
   };
   try {
     if (typeof localStorage !== "undefined") {
@@ -29,6 +30,8 @@ function loadInitialState() {
       if (savedStyle) base.style = savedStyle;
       const savedPersona = localStorage.getItem("pcc_persona");
       if (savedPersona) base.persona = savedPersona;
+      const savedModel = localStorage.getItem("pcc_model");
+      if (savedModel) base.model = savedModel;
       const savedCards = localStorage.getItem("pcc_hero_cards");
       if (savedCards) {
         try {
@@ -53,13 +56,35 @@ function loadInitialState() {
       if (savedVillainType) base.villainType = savedVillainType;
       const savedStakeTier = localStorage.getItem("pcc_stake_tier");
       if (savedStakeTier) base.stakeTier = savedStakeTier;
+      const savedPotSizes = localStorage.getItem("pcc_pot_sizes");
+      if (
+        savedPotSizes &&
+        !Number.isNaN(Number(savedPotSizes)) &&
+        Number(savedPotSizes) > 0
+      ) {
+        base.potSizes.total = Number(savedPotSizes);
+      }
     }
   } catch {}
   return base;
 }
 
+const SNAPSHOT_LIMIT = 25;
+
+function snapshotState(state) {
+  try {
+    if (typeof structuredClone === "function") {
+      return structuredClone(state);
+    }
+    return JSON.parse(JSON.stringify(state));
+  } catch {
+    return JSON.parse(JSON.stringify(state));
+  }
+}
+
 export function useGameState() {
   const [state, setState] = useState(loadInitialState);
+  const historyRef = useRef([]);
 
   const setField = useCallback((key, value) => {
     if (key === "style") {
@@ -70,6 +95,11 @@ export function useGameState() {
     if (key === "persona") {
       try {
         if (typeof localStorage !== "undefined") localStorage.setItem("pcc_persona", String(value));
+      } catch {}
+    }
+    if (key === "model") {
+      try {
+        if (typeof localStorage !== "undefined") localStorage.setItem("pcc_model", String(value));
       } catch {}
     }
     if (key === "heroCards") {
@@ -84,6 +114,19 @@ export function useGameState() {
           );
         }
       } catch {}
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("pcc_pot_sizes", "");
+        }
+      } catch {}
+      setState((s) => ({
+        ...s,
+        heroCards: value
+          ? { card1: value.card1 || null, card2: value.card2 || null }
+          : { card1: null, card2: null },
+        potSizes: { total: null }
+      }));
+      return;
     }
     if (key === "board") {
       setState((s) => ({
@@ -120,6 +163,21 @@ export function useGameState() {
         }
       } catch {}
     }
+    if (key === "potSizes") {
+      const numericValue = Number(value?.total);
+      const nextValue =
+        Number.isFinite(numericValue) && numericValue > 0 ? numericValue : null;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("pcc_pot_sizes", nextValue ?? "");
+        }
+      } catch {}
+      setState((s) => ({
+        ...s,
+        potSizes: { total: nextValue }
+      }));
+      return;
+    }
     setState((s) => ({
       ...s,
       [key]:
@@ -130,10 +188,27 @@ export function useGameState() {
   }, []);
 
   const dispatch = useCallback((event) => {
-    setState((s) => applyEvent(s, event));
+    if (event === "undo") {
+      setState((s) => {
+        const history = historyRef.current;
+        if (!history.length) return s;
+        const previous = history.pop();
+        return previous || s;
+      });
+      return;
+    }
+    setState((s) => {
+      const history = historyRef.current;
+      history.push(snapshotState(s));
+      if (history.length > SNAPSHOT_LIMIT) {
+        history.shift();
+      }
+      return applyEvent(s, event);
+    });
   }, []);
 
   const clearActions = useCallback(() => {
+    historyRef.current = [];
     setState((s) => ({
       ...s,
       actions: [],
@@ -149,7 +224,12 @@ export function useGameState() {
       setField,
       dispatch,
       clearActions,
-      reset: () =>
+      reset: () => {
+        try {
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem("pcc_pot_sizes", "");
+          }
+        } catch {}
         setState((s) => ({
           ...initialState,
           heroSeat: s.heroSeat,
@@ -166,8 +246,11 @@ export function useGameState() {
           heroStackBB: s.heroStackBB,
           villainStackBB: s.villainStackBB,
           villainType: s.villainType,
-          stakeTier: s.stakeTier
-        }))
+          stakeTier: s.stakeTier,
+          model: s.model,
+          potSizes: { total: null }
+        }));
+      }
     }),
     [state, setField, dispatch, clearActions]
   );
