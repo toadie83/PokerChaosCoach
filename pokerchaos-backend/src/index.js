@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { z } from "zod";
+import { verifyToken } from "@clerk/backend";
 import { getAggressionPrompt } from "./openaiService.js";
 
 dotenv.config();
@@ -15,6 +16,9 @@ const allowedOrigins = FRONTEND_ORIGIN.length > 0 ? FRONTEND_ORIGIN : undefined;
 if (!process.env.OPENAI_API_KEY) {
   console.warn("[pokerchaos-backend] OPENAI_API_KEY is not set.");
 }
+
+const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+const clerkIssuer = process.env.CLERK_ISSUER;
 
 const app = express();
 
@@ -30,12 +34,38 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true, service: "pokerchaos-backend" });
 });
 
+async function requireAuth(req, res, next) {
+  if (!clerkSecretKey) {
+    return res
+      .status(500)
+      .json({ error: "Authentication is not configured on the server." });
+  }
+
+  const header = req.headers.authorization || "";
+  const token = header.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    return res.status(401).json({ error: "Missing authentication token." });
+  }
+
+  try {
+    const session = await verifyToken(token, {
+      secretKey: clerkSecretKey,
+      issuer: clerkIssuer,
+    });
+    req.auth = { userId: session.sub };
+    return next();
+  } catch (error) {
+    console.warn("[pokerchaos-backend] Auth failed", error);
+    return res.status(401).json({ error: "Invalid or expired token." });
+  }
+}
+
 const promptSchema = z.object({
   context: z.record(z.any()).optional().default({}),
   instruction: z.string().trim().max(500).optional(),
 });
 
-app.post("/prompts", async (req, res) => {
+app.post("/prompts", requireAuth, async (req, res) => {
   const parsed = promptSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
