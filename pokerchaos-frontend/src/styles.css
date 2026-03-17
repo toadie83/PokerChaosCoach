@@ -137,6 +137,63 @@ body {
   transform: translateY(-1px);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
 }
+
+.wake-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: 90px;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.wake-card {
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 12px 16px;
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  box-shadow: 0 18px 35px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.wake-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6);
+  animation: pulse 1.3s infinite;
+}
+
+.wake-title {
+  margin: 0;
+  font-weight: 700;
+}
+.wake-sub {
+  margin: 2px 0 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 12px rgba(245, 158, 11, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
 .seat-grid.columns-1 {
   grid-template-columns: repeat(1, minmax(0, 1fr));
 }
