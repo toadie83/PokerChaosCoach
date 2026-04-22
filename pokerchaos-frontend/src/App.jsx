@@ -5,6 +5,7 @@ import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
 import DecisionCard from "./components/DecisionCard.jsx";
 import HistoryStrip from "./components/HistoryStrip.jsx";
+import HandReviewPanel from "./components/HandReviewPanel.jsx";
 import PlayHandModal from "./components/PlayHandModal.jsx";
 import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
@@ -45,6 +46,7 @@ export default function App() {
   const [previewSizing, setPreviewSizing] = useState(null);
   const [stackModalOpen, setStackModalOpen] = useState(false);
   const [playHandOpen, setPlayHandOpen] = useState(false);
+  const [handReviewOpen, setHandReviewOpen] = useState(false);
   const handlePlayHandOpen = useCallback(() => {
     setField("heroSeat", "");
     setField("heroCards", { card1: null, card2: null });
@@ -107,18 +109,32 @@ export default function App() {
     clearActions();
   }, [clearActions]);
 
+  const handleResetPreserveSeat = useCallback(() => {
+    const currentSeat = state.heroSeat || "";
+    handleReset();
+    if (currentSeat) {
+      setTimeout(() => {
+        setField("heroSeat", currentSeat);
+      }, 0);
+    }
+  }, [state.heroSeat, handleReset, setField]);
+
   const handleSaveHeroCards = useCallback(
     (cards) => {
       const normalized = {
         card1: cards?.card1 || null,
         card2: cards?.card2 || null,
       };
+      const currentSeat = state.heroSeat || "";
       handleReset();
       setTimeout(() => {
+        if (currentSeat) {
+          setField("heroSeat", currentSeat);
+        }
         setField("heroCards", normalized);
       }, 0);
     },
-    [handleReset, setField]
+    [handleReset, setField, state.heroSeat]
   );
 
   const onAction = useCallback(
@@ -393,9 +409,9 @@ export default function App() {
 
   const prepareForCardChange = useCallback(() => {
     if (heroCardsReady) {
-      handleReset();
+      handleResetPreserveSeat();
     }
-  }, [heroCardsReady, handleReset]);
+  }, [heroCardsReady, handleResetPreserveSeat]);
 
   const handleManualCardEntry = useCallback(() => {
     prepareForCardChange();
@@ -992,6 +1008,14 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className={`pill-toggle ${handReviewOpen ? "active" : ""}`}
+                onClick={() => setHandReviewOpen((value) => !value)}
+                title="Open parsed hand-history review tools"
+              >
+                Hand Review
+              </button>
+              <button
+                type="button"
                 className="pill-toggle"
                 onClick={() => setSetupOpen((value) => !value)}
               >
@@ -1000,6 +1024,7 @@ export default function App() {
             </div>
           </div>
           <ChaosHud mood={mood} />
+          {handReviewOpen ? <HandReviewPanel /> : null}
           <div className="quick-pills">
             <div
               className="pill-field persona-field"
@@ -1067,6 +1092,15 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                className="seat-reset-btn"
+                onClick={handleReset}
+                title="Reset session"
+                aria-label="Reset session"
+              >
+                ↻
+              </button>
             </div>
           </div>
 
@@ -1162,9 +1196,6 @@ export default function App() {
           {/* --- SECONDARY ACTIONS (stay below guidance/history) --- */}
           <div className="actions-block actions-bottom">
             <div className="secondary-actions">
-              <button type="button" className="link-btn" onClick={handleReset}>
-                Reset session
-              </button>
               <button
                 type="button"
                 className="link-btn"
