@@ -655,6 +655,380 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.hand-review-panel {
+  margin: 16px 0 20px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 12px;
+}
+
+.hand-review-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.hand-review-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hand-review-controls {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.hand-review-controls label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.hand-review-controls input,
+.hand-review-controls select,
+.hand-review-inputs textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.hand-review-inputs {
+  display: grid;
+  gap: 10px;
+}
+
+.hand-review-file {
+  border: 1px dashed rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.hand-review-file input[type="file"] {
+  width: 100%;
+}
+
+.hand-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hand-review-actions button {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hand-review-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hand-review-error {
+  margin: 0;
+  color: #fca5a5;
+}
+
+.hand-review-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.hand-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hand-review-summary span {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.tournament-summary {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.tournament-summary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tournament-summary-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.tournament-summary-head span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.tournament-summary-metrics {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.tournament-summary-metrics span {
+  font-size: 0.82rem;
+  color: #d1d5db;
+}
+
+.tournament-summary-flags {
+  display: grid;
+  gap: 6px;
+}
+
+.trend-flag {
+  margin: 0;
+  font-size: 0.82rem;
+  border-radius: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+}
+
+.trend-flag.watch {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.trend-flag.good {
+  background: rgba(34, 197, 94, 0.16);
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.tournament-summary-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tournament-summary-statuses span {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.76rem;
+}
+
+.hand-review-selection-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hand-review-selection-tools button {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.hand-review-list,
+.hand-review-results {
+  display: grid;
+  gap: 8px;
+}
+
+.hand-row,
+.hand-review-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.hand-row.selected {
+  border-color: rgba(240, 162, 28, 0.55);
+  box-shadow: 0 0 0 1px rgba(240, 162, 28, 0.28);
+}
+
+.hand-row-head,
+.hand-review-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.hand-row-head span,
+.hand-review-card-head span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.hand-row-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hand-row-select input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.hand-row-meta {
+  display: grid;
+  gap: 4px;
+  color: #d1d5db;
+  font-size: 0.84rem;
+}
+
+.hand-row-review {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+.hand-row-review p {
+  margin: 6px 0;
+  font-size: 0.82rem;
+}
+
+.hand-breakdown {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+}
+
+.hand-breakdown summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: #d1d5db;
+  user-select: none;
+}
+
+.hand-breakdown-body {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.hand-breakdown-body p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.hand-breakdown-street {
+  display: grid;
+  gap: 4px;
+}
+
+.hand-breakdown-street strong {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hand-breakdown-street span {
+  font-size: 0.8rem;
+  color: #d1d5db;
+}
+
+.outcome-pill {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.76rem;
+  border: 1px solid transparent;
+}
+
+.outcome-pill.won {
+  background: rgba(34, 197, 94, 0.18);
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.outcome-pill.folded {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.outcome-pill.lost {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.outcome-pill.unknown {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.hand-review-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.hand-review-scores span {
+  font-size: 0.78rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.score-pill.good {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.score-pill.neutral {
+  background: rgba(96, 165, 250, 0.16);
+  color: #bfdbfe;
+}
+
+.score-pill.bad {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fca5a5;
+}
+
+.hand-review-card p {
+  margin: 6px 0;
+  font-size: 0.84rem;
+}
+
 .pill-field {
   display: flex;
   flex-direction: column;
@@ -904,6 +1278,29 @@ button {
   border-color: var(--accent);
   color: var(--accent);
   background: rgba(240, 162, 28, 0.22);
+}
+
+.seat-reset-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s, color 0.2s;
+}
+
+.seat-reset-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(240, 162, 28, 0.16);
 }
 
 .tone-slider {

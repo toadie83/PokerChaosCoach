@@ -16,7 +16,7 @@ This project mirrors the SickDayGPT split frontend/backend structure and convent
 - Create `.env` from `.env.example`
 - Install deps and run:
 
-```
+```bash
 cd pokerchaos-backend
 npm install
 npm run dev
@@ -28,7 +28,7 @@ npm run dev
 - Optionally create `.env` to set `VITE_API_BASE_URL`
 - Install deps and run:
 
-```
+```bash
 cd pokerchaos-frontend
 npm install
 npm run dev
@@ -36,5 +36,6 @@ npm run dev
 
 ## API Overview
 
-- `POST /prompts` accepts `{ context: { ... } }` and returns a short, swagger-filled poker “ChaosCoach” line from OpenAI.
-
+- `POST /prompts` accepts `{ context: { ... } }` and returns a short ChaosCoach line from OpenAI.
+- `POST /hand-history/parse` accepts GG hand-history text and returns parsed hands with Hero preflop filtering.
+- `POST /hand-history/review` accepts selected parsed hands and returns AI hand reviews with per-street scoring.

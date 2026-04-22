@@ -228,16 +228,18 @@ export function useGameState() {
         try {
           if (typeof localStorage !== "undefined") {
             localStorage.setItem("pcc_pot_sizes", "");
+            localStorage.setItem(
+              "pcc_hero_cards",
+              JSON.stringify({ card1: null, card2: null })
+            );
           }
         } catch {}
         setState((s) => ({
           ...initialState,
-          heroSeat: s.heroSeat,
           tableSize: s.tableSize,
           style: s.style,
           openSize: s.openSize,
           persona: s.persona,
-          heroCards: { ...s.heroCards },
           board: {
             flop: [...(initialState.board?.flop || [null, null, null])],
             turn: initialState.board?.turn ?? null,

@@ -893,6 +893,61 @@ function buildResponse(
   return { hero_action, sizing, flavor_text, usage };
 }
 
+function clampStreetScore(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const rounded = Math.round(numeric);
+  return Math.max(-2, Math.min(2, rounded));
+}
+
+function normalizeReviewResponse(parsed, completion, handContext = {}) {
+  const confidenceRaw = String(parsed?.confidence || "medium")
+    .trim()
+    .toLowerCase();
+  const confidence = ["low", "medium", "high"].includes(confidenceRaw)
+    ? confidenceRaw
+    : "medium";
+  const usage = completion?.usage
+    ? {
+        prompt_tokens: completion.usage.prompt_tokens ?? null,
+        completion_tokens: completion.usage.completion_tokens ?? null,
+        total_tokens: completion.usage.total_tokens ?? null,
+      }
+    : null;
+
+  const response = {
+    overall_score: clampStreetScore(parsed?.overall_score) ?? 0,
+    preflop_score: clampStreetScore(parsed?.preflop_score),
+    flop_score: clampStreetScore(parsed?.flop_score),
+    turn_score: clampStreetScore(parsed?.turn_score),
+    river_score: clampStreetScore(parsed?.river_score),
+    confidence,
+    what_was_good: String(parsed?.what_was_good || "").trim() || "No clear strengths identified.",
+    primary_leak: String(parsed?.primary_leak || "").trim() || "No major leak flagged.",
+    better_line: String(parsed?.better_line || "").trim() || "No alternative line suggested.",
+    reasoning:
+      String(parsed?.reasoning || "").trim() ||
+      "Review was inconclusive with the available hand details.",
+    usage,
+  };
+
+  const foldedStreet = String(handContext?.reviewContext?.heroFoldedStreet || "")
+    .trim()
+    .toLowerCase();
+  if (foldedStreet === "preflop") {
+    response.flop_score = null;
+    response.turn_score = null;
+    response.river_score = null;
+  } else if (foldedStreet === "flop") {
+    response.turn_score = null;
+    response.river_score = null;
+  } else if (foldedStreet === "turn") {
+    response.river_score = null;
+  }
+
+  return response;
+}
+
 export async function getAggressionPrompt(context = {}, instruction) {
   const persona = String(context?.persona || "chaos_shark");
   const requestedModel =
@@ -916,6 +971,62 @@ export async function getAggressionPrompt(context = {}, instruction) {
     return runShortStackNinja(context, instruction, model);
   }
   return runChaosCoach(context, instruction, model);
+}
+
+export async function reviewTournamentHand(
+  handContext = {},
+  instruction,
+  requestedModel
+) {
+  const model =
+    typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
+
+  const system = `You are a tournament poker hand reviewer.
+Grade decisions using sound GTO principles with practical exploit awareness.
+Do not claim solver precision. If data is missing, reduce confidence.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "overall_score": -2,
+  "preflop_score": -2,
+  "flop_score": -2,
+  "turn_score": -2,
+  "river_score": -2,
+  "confidence": "low|medium|high",
+  "what_was_good": "string",
+  "primary_leak": "string",
+  "better_line": "string",
+  "reasoning": "string"
+}
+
+Scoring rubric:
+-2 major mistake, -1 slight mistake, 0 neutral, +1 good, +2 excellent.
+Keep feedback concise and actionable.
+- Evaluate each street only with information available at that street.
+- Never use future cards/actions to justify earlier decisions.
+- If hero folded on a street, later streets must not be scored or used for leak claims.`;
+
+  const user = `Hand context:
+${JSON.stringify(handContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Review this hand street-by-street and score hero's line with practical GTO-informed reasoning."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.25,
+    top_p: 0.7,
+    max_tokens: 420,
+    model,
+  });
+
+  return normalizeReviewResponse(parsed, completion, handContext);
 }
 
 async function runChaosCoach(context = {}, instruction, model) {
