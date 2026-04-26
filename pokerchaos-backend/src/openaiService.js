@@ -983,6 +983,43 @@ export async function reviewTournamentHand(
       ? requestedModel
       : DEFAULT_MODEL;
 
+  const opponentsInHand = Array.isArray(
+    handContext?.opponentContext?.opponentsInHand
+  )
+    ? handContext.opponentContext.opponentsInHand
+    : [];
+  const opponentLines = opponentsInHand.slice(0, 6).map((opponent) => {
+    const parts = [];
+    const player = String(opponent?.player || "").trim() || "Unknown";
+    const handsSeen = Number(opponent?.handsSeen) || 0;
+    parts.push(`${player} (${handsSeen} hands)`);
+    const seatNumber = Number(opponent?.latestSeat?.number);
+    const seatPosition = String(opponent?.latestSeat?.position || "").trim();
+    if (Number.isFinite(seatNumber) || seatPosition) {
+      const seatBits = [];
+      if (Number.isFinite(seatNumber)) seatBits.push(`Seat ${seatNumber}`);
+      if (seatPosition) seatBits.push(seatPosition);
+      parts.push(seatBits.join(" "));
+    }
+    if (Number.isFinite(Number(opponent?.enteredPotPct))) {
+      parts.push(`VPIP ${Number(opponent.enteredPotPct).toFixed(1)}%`);
+    }
+    if (Number.isFinite(Number(opponent?.foldedPreflopPct))) {
+      parts.push(`Fold pre ${Number(opponent.foldedPreflopPct).toFixed(1)}%`);
+    }
+    if (Number.isFinite(Number(opponent?.preflopRaisePct))) {
+      parts.push(`PFR ${Number(opponent.preflopRaisePct).toFixed(1)}%`);
+    }
+    if (Array.isArray(opponent?.tags) && opponent.tags.length > 0) {
+      parts.push(`Tags: ${opponent.tags.join(", ")}`);
+    }
+    const playNote = String(opponent?.playNote?.text || "").trim();
+    if (playNote) {
+      parts.push(`Play note: ${playNote}`);
+    }
+    return `- ${parts.join(" | ")}`;
+  });
+
   const system = `You are a tournament poker hand reviewer.
 Grade decisions using sound GTO principles with practical exploit awareness.
 Do not claim solver precision. If data is missing, reduce confidence.
@@ -1007,10 +1044,15 @@ Scoring rubric:
 Keep feedback concise and actionable.
 - Evaluate each street only with information available at that street.
 - Never use future cards/actions to justify earlier decisions.
-- If hero folded on a street, later streets must not be scored or used for leak claims.`;
+- If hero folded on a street, later streets must not be scored or used for leak claims.
+- If opponentContext is present, use it only as exploit context for those specific opponents in this hand.
+- Reliability by sample size: <12 hands low confidence, 12-30 medium, >30 stronger.
+- Do not make claims about hidden cards from opponent tags; keep uncertainty explicit.`;
 
   const user = `Hand context:
 ${JSON.stringify(handContext, null, 2)}
+
+${opponentLines.length ? `Opponent tendencies:\n${opponentLines.join("\n")}\n` : ""}
 
 Instruction: ${
     instruction ||

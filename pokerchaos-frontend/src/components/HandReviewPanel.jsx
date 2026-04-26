@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   requestHandHistoryParse,
   requestHandHistoryReview,
@@ -49,6 +49,67 @@ function safePercent(numerator, denominator) {
 
 function percentLabel(value) {
   return `${value.toFixed(1)}%`;
+}
+
+function formatPercentCount(stat) {
+  if (!stat || !Number.isFinite(Number(stat.pct)) || Number(stat.total) <= 0) {
+    return "n/a";
+  }
+  return `${percentLabel(Number(stat.pct))} (${Number(stat.count)}/${Number(
+    stat.total
+  )})`;
+}
+
+function formatAggression(aggression) {
+  const hasFrequency = Number.isFinite(Number(aggression?.frequencyPct));
+  const frequency = hasFrequency
+    ? percentLabel(Number(aggression.frequencyPct))
+    : "n/a";
+  const calls = Number(aggression?.calls) || 0;
+  const aggressiveActions = Number(aggression?.aggressiveActions) || 0;
+  const factorRaw = aggression?.factor;
+  const factor =
+    Number.isFinite(Number(factorRaw)) && calls > 0
+      ? Number(factorRaw).toFixed(2)
+      : calls === 0 && aggressiveActions > 0
+      ? "inf"
+      : "n/a";
+  return `Freq ${frequency} | AF ${factor}`;
+}
+
+function formatLatestSeat(latestSeat) {
+  const number = Number(latestSeat?.number);
+  const position = String(latestSeat?.position || "").trim();
+  const hasNumber = Number.isFinite(number) && number > 0;
+  if (hasNumber && position) return `Seat ${number} (${position})`;
+  if (hasNumber) return `Seat ${number}`;
+  if (position) return position;
+  return "Seat unknown";
+}
+
+function formatChipStack(chips) {
+  const value = Number(chips);
+  if (!Number.isFinite(value) || value < 0) return "Stack n/a";
+  return `Stack ~${Math.round(value).toLocaleString()}`;
+}
+
+function extractTendencyLabels(player) {
+  if (!Array.isArray(player?.tags)) return [];
+  return player.tags
+    .map((tag) => String(tag?.label || "").trim())
+    .filter(Boolean);
+}
+
+function formatPlayNote(player) {
+  const text = String(player?.playNote?.text || "").trim();
+  if (!text) return null;
+  const confidence = String(player?.playNote?.confidence || "")
+    .trim()
+    .toLowerCase();
+  if (confidence === "high" || confidence === "medium" || confidence === "low") {
+    return `${text} (${confidence} confidence)`;
+  }
+  return text;
 }
 
 function seatCategory(position) {
@@ -143,9 +204,66 @@ export default function HandReviewPanel() {
   const [parseResult, setParseResult] = useState(null);
   const [reviewsByHandKey, setReviewsByHandKey] = useState({});
   const [selectedHandKeys, setSelectedHandKeys] = useState(() => new Set());
+  const [insightsTab, setInsightsTab] = useState("tournament");
+  const [opponentFilter, setOpponentFilter] = useState("all");
+  const [copiedOpponentKey, setCopiedOpponentKey] = useState("");
+  const copyTimeoutRef = useRef(null);
 
   const canSubmit = historyText.trim().length > 0;
   const parsedHands = Array.isArray(parseResult?.hands) ? parseResult.hands : [];
+  const opponentSnapshot = parseResult?.opponents || null;
+  const opponentPlayers = Array.isArray(opponentSnapshot?.players)
+    ? opponentSnapshot.players
+    : [];
+  const currentTableGuess = opponentSnapshot?.currentTableGuess || null;
+  const currentTableGuessPlayers = Array.isArray(currentTableGuess?.players)
+    ? currentTableGuess.players
+    : [];
+  const currentTablePlayerSet = useMemo(
+    () =>
+      new Set(
+        currentTableGuessPlayers
+          .map((seat) => String(seat?.player || "").trim())
+          .filter(Boolean)
+      ),
+    [currentTableGuessPlayers]
+  );
+  const currentTableSeatByPlayer = useMemo(() => {
+    const map = new Map();
+    for (const seat of currentTableGuessPlayers) {
+      const player = String(seat?.player || "").trim();
+      const number = Number(seat?.seat);
+      if (!player || !Number.isFinite(number)) continue;
+      map.set(player, number);
+    }
+    return map;
+  }, [currentTableGuessPlayers]);
+  const visibleOpponentPlayers = useMemo(() => {
+    if (opponentFilter !== "current_table") return opponentPlayers;
+    return opponentPlayers
+      .filter((player) => {
+        const id = String(player?.player || "").trim();
+        return id && currentTablePlayerSet.has(id);
+      })
+      .sort((a, b) => {
+        const aId = String(a?.player || "").trim();
+        const bId = String(b?.player || "").trim();
+        const aSeat = Number(currentTableSeatByPlayer.get(aId));
+        const bSeat = Number(currentTableSeatByPlayer.get(bId));
+        const aHasSeat = Number.isFinite(aSeat);
+        const bHasSeat = Number.isFinite(bSeat);
+
+        if (aHasSeat && bHasSeat && aSeat !== bSeat) return aSeat - bSeat;
+        if (aHasSeat && !bHasSeat) return -1;
+        if (!aHasSeat && bHasSeat) return 1;
+        return aId.localeCompare(bId);
+      });
+  }, [
+    opponentFilter,
+    opponentPlayers,
+    currentTablePlayerSet,
+    currentTableSeatByPlayer,
+  ]);
   const outcomeOptions = useMemo(() => {
     const byCode = new Map();
     for (const hand of parsedHands) {
@@ -335,6 +453,62 @@ export default function HandReviewPanel() {
     }),
     [historyText, heroName, sortOrder, handLimit]
   );
+  const hasTournamentSummary = Boolean(tournamentSummary);
+  const hasOpponentSnapshot = opponentPlayers.length > 0;
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (insightsTab === "tournament" && hasTournamentSummary) return;
+    if (insightsTab === "opponents" && hasOpponentSnapshot) return;
+    if (hasTournamentSummary) {
+      setInsightsTab("tournament");
+      return;
+    }
+    if (hasOpponentSnapshot) {
+      setInsightsTab("opponents");
+    }
+  }, [insightsTab, hasTournamentSummary, hasOpponentSnapshot]);
+
+  const copyOpponentTendencies = async (playerKey, tendencyLabels, playNoteLine) => {
+    const labels = Array.isArray(tendencyLabels)
+      ? tendencyLabels.filter(Boolean)
+      : [];
+    const note = String(playNoteLine || "").trim();
+    const lines = [...labels];
+    if (note) lines.push(`Play note: ${note}`);
+    if (lines.length === 0) return;
+    const text = lines.join("\n");
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = text;
+        input.setAttribute("readonly", "readonly");
+        input.style.position = "absolute";
+        input.style.left = "-9999px";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      }
+      setCopiedOpponentKey(playerKey);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = setTimeout(() => {
+        setCopiedOpponentKey("");
+      }, 1600);
+    } catch {
+      setError("Failed to copy tendencies to clipboard.");
+    }
+  };
 
   const handleFileChange = async (event) => {
     const file = event.target.files?.[0];
@@ -347,6 +521,9 @@ export default function HandReviewPanel() {
     setReviewsByHandKey({});
     setOutcomeFilter("all");
     setSelectedHandKeys(new Set());
+    setInsightsTab("tournament");
+    setOpponentFilter("all");
+    setCopiedOpponentKey("");
   };
 
   const runParse = async () => {
@@ -359,6 +536,9 @@ export default function HandReviewPanel() {
       setParseResult(res);
       setOutcomeFilter("all");
       setSelectedHandKeys(new Set());
+      setInsightsTab("tournament");
+      setOpponentFilter("all");
+      setCopiedOpponentKey("");
     } catch (err) {
       setError(err?.message || "Failed to parse hand history.");
     } finally {
@@ -374,9 +554,13 @@ export default function HandReviewPanel() {
     setError("");
     setLoadingReview(true);
     try {
-      const res = await requestHandHistoryReview({
+      const reviewPayload = {
         selectedHands,
-      });
+      };
+      if (opponentSnapshot && typeof opponentSnapshot === "object") {
+        reviewPayload.opponentSnapshot = opponentSnapshot;
+      }
+      const res = await requestHandHistoryReview(reviewPayload);
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
@@ -469,6 +653,9 @@ export default function HandReviewPanel() {
             setReviewsByHandKey({});
             setOutcomeFilter("all");
             setSelectedHandKeys(new Set());
+            setInsightsTab("tournament");
+            setOpponentFilter("all");
+            setCopiedOpponentKey("");
           }}
           rows={10}
           placeholder="Paste GG hand history text here"
@@ -494,79 +681,209 @@ export default function HandReviewPanel() {
         </div>
       ) : null}
 
-      {tournamentSummary ? (
-        <div className="tournament-summary">
-          <div className="tournament-summary-head">
-            <h3>Tournament Summary</h3>
-            <span>
-              Sample: {tournamentSummary.sampleHands} returned hands
-            </span>
+      {hasTournamentSummary || hasOpponentSnapshot ? (
+        <div className="hand-insights">
+          <div className="hand-insights-tabs" role="tablist" aria-label="Insights tabs">
+            {hasTournamentSummary ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={insightsTab === "tournament"}
+                className={`hand-insights-tab ${
+                  insightsTab === "tournament" ? "active" : ""
+                }`}
+                onClick={() => setInsightsTab("tournament")}
+              >
+                Tournament Summary
+              </button>
+            ) : null}
+            {hasOpponentSnapshot ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={insightsTab === "opponents"}
+                className={`hand-insights-tab ${
+                  insightsTab === "opponents" ? "active" : ""
+                }`}
+                onClick={() => setInsightsTab("opponents")}
+              >
+                Opponent Snapshot
+              </button>
+            ) : null}
           </div>
-          <div className="tournament-summary-metrics">
-            <span>
-              Entered pot: {percentLabel(tournamentSummary.enteredPct)} (
-              {tournamentSummary.enteredHands}/{tournamentSummary.totalHands})
-            </span>
-            <span>
-              Folded preflop:{" "}
-              {percentLabel(tournamentSummary.preflopFoldPct)} (
-              {tournamentSummary.preflopFolds}/{tournamentSummary.totalHands})
-            </span>
-            <span>
-              Preflop fold warning threshold:{" "}
-              {percentLabel(tournamentSummary.preflopFoldWarnThreshold)}
-              {tournamentSummary.totalHands < 40
-                ? " (inactive under 40-hand sample)"
-                : ""}
-            </span>
-            <span>
-              Won without showdown:{" "}
-              {percentLabel(tournamentSummary.noShowdownWinPct)} of entered
-            </span>
-            <span>
-              Postflop no-showdown wins:{" "}
-              {percentLabel(tournamentSummary.postflopNoShowdownPct)} of entered
-            </span>
-            <span>
-              Showdown win rate:{" "}
-              {tournamentSummary.showdownSamples > 0
-                ? percentLabel(tournamentSummary.showdownWinPct)
-                : "n/a"}
-            </span>
-            <span>
-              Late-street fold share:{" "}
-              {tournamentSummary.foldedFlop +
-                tournamentSummary.foldedTurn +
-                tournamentSummary.foldedRiver >
-              0
-                ? percentLabel(tournamentSummary.lateStreetFoldPct)
-                : "n/a"}
-            </span>
-            <span>
-              Entered positions (late/early/blinds): {tournamentSummary.enteredLate}/
-              {tournamentSummary.enteredEarly}/{tournamentSummary.enteredBlind}
-            </span>
-            <span>
-              Avg entry stack:{" "}
-              {tournamentSummary.avgEntryStackBb !== null
-                ? `${tournamentSummary.avgEntryStackBb.toFixed(1)} BB`
-                : "n/a"}
-            </span>
-          </div>
-          <div className="tournament-summary-flags">
-            {tournamentSummary.flags.map((flag, idx) => (
-              <p key={`flag-${idx}`} className={`trend-flag ${flag.level}`}>
-                {flag.text}
-              </p>
-            ))}
-          </div>
-          {tournamentSummary.topStatuses.length > 0 ? (
-            <div className="tournament-summary-statuses">
-              {tournamentSummary.topStatuses.map(([status, count]) => (
-                <span key={status}>
-                  {status}: {count}
+
+          {insightsTab === "tournament" && hasTournamentSummary ? (
+            <div className="tournament-summary">
+              <div className="tournament-summary-head">
+                <h3>Tournament Summary</h3>
+                <span>
+                  Sample: {tournamentSummary.sampleHands} returned hands
                 </span>
-              ))}
+              </div>
+              <div className="tournament-summary-metrics">
+                <span>
+                  Entered pot: {percentLabel(tournamentSummary.enteredPct)} (
+                  {tournamentSummary.enteredHands}/{tournamentSummary.totalHands})
+                </span>
+                <span>
+                  Folded preflop:{" "}
+                  {percentLabel(tournamentSummary.preflopFoldPct)} (
+                  {tournamentSummary.preflopFolds}/{tournamentSummary.totalHands})
+                </span>
+                <span>
+                  Preflop fold warning threshold:{" "}
+                  {percentLabel(tournamentSummary.preflopFoldWarnThreshold)}
+                  {tournamentSummary.totalHands < 40
+                    ? " (inactive under 40-hand sample)"
+                    : ""}
+                </span>
+                <span>
+                  Won without showdown:{" "}
+                  {percentLabel(tournamentSummary.noShowdownWinPct)} of entered
+                </span>
+                <span>
+                  Postflop no-showdown wins:{" "}
+                  {percentLabel(tournamentSummary.postflopNoShowdownPct)} of entered
+                </span>
+                <span>
+                  Showdown win rate:{" "}
+                  {tournamentSummary.showdownSamples > 0
+                    ? percentLabel(tournamentSummary.showdownWinPct)
+                    : "n/a"}
+                </span>
+                <span>
+                  Late-street fold share:{" "}
+                  {tournamentSummary.foldedFlop +
+                    tournamentSummary.foldedTurn +
+                    tournamentSummary.foldedRiver >
+                  0
+                    ? percentLabel(tournamentSummary.lateStreetFoldPct)
+                    : "n/a"}
+                </span>
+                <span>
+                  Entered positions (late/early/blinds): {tournamentSummary.enteredLate}/
+                  {tournamentSummary.enteredEarly}/{tournamentSummary.enteredBlind}
+                </span>
+                <span>
+                  Avg entry stack:{" "}
+                  {tournamentSummary.avgEntryStackBb !== null
+                    ? `${tournamentSummary.avgEntryStackBb.toFixed(1)} BB`
+                    : "n/a"}
+                </span>
+              </div>
+              <div className="tournament-summary-flags">
+                {tournamentSummary.flags.map((flag, idx) => (
+                  <p key={`flag-${idx}`} className={`trend-flag ${flag.level}`}>
+                    {flag.text}
+                  </p>
+                ))}
+              </div>
+              {tournamentSummary.topStatuses.length > 0 ? (
+                <div className="tournament-summary-statuses">
+                  {tournamentSummary.topStatuses.map(([status, count]) => (
+                    <span key={status}>
+                      {status}: {count}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {insightsTab === "opponents" && hasOpponentSnapshot ? (
+            <div className="opponent-snapshot">
+              <div className="opponent-snapshot-head">
+                <h3>Opponent Snapshot</h3>
+                <span>
+                  {visibleOpponentPlayers.length}/
+                  {opponentSnapshot?.totalOpponents || opponentPlayers.length} players
+                  across {opponentSnapshot?.totalHandsTracked || 0} hands
+                </span>
+              </div>
+              <div className="opponent-snapshot-toolbar">
+                <label>
+                  View
+                  <select
+                    value={opponentFilter}
+                    onChange={(event) => setOpponentFilter(event.target.value)}
+                  >
+                    <option value="all">All opponents</option>
+                    <option value="current_table">Current table (best guess)</option>
+                  </select>
+                </label>
+                <p className="opponent-snapshot-note">
+                  Best guess uses latest hand
+                  {currentTableGuess?.playedAt ? ` (${currentTableGuess.playedAt})` : ""}.
+                </p>
+              </div>
+              <div className="opponent-snapshot-list">
+                {visibleOpponentPlayers.map((player) => {
+                  const tendencyLabels = extractTendencyLabels(player);
+                  const playNoteLine = formatPlayNote(player);
+                  return (
+                    <article key={player.player} className="opponent-snapshot-row">
+                      <div className="opponent-snapshot-row-head">
+                        <strong>{player.player}</strong>
+                        <span>{player.handsSeen} hands</span>
+                        <span>{formatLatestSeat(player.latestSeat)}</span>
+                        <span>{formatChipStack(player.latestStack)}</span>
+                        {player.lastSeenAt ? <span>Last: {player.lastSeenAt}</span> : null}
+                        <button
+                          type="button"
+                          className="opponent-copy-button"
+                          onClick={() =>
+                            copyOpponentTendencies(
+                              player.player,
+                              tendencyLabels,
+                              playNoteLine
+                            )
+                          }
+                          disabled={tendencyLabels.length === 0 && !playNoteLine}
+                        >
+                          {copiedOpponentKey === player.player
+                            ? "Copied"
+                            : "Copy tendencies"}
+                        </button>
+                      </div>
+                      <div className="opponent-snapshot-metrics">
+                        <span>Entered pot: {formatPercentCount(player.enteredPot)}</span>
+                        <span>
+                          Folded preflop: {formatPercentCount(player.foldedPreflop)}
+                        </span>
+                        <span>
+                          Raised preflop: {formatPercentCount(player.preflopRaise)}
+                        </span>
+                        <span>
+                          Fold to preflop raise:{" "}
+                          {formatPercentCount(player.foldToPreflopRaise)}
+                        </span>
+                        <span>
+                          Postflop aggression: {formatAggression(player.postflopAggression)}
+                        </span>
+                      </div>
+                      {playNoteLine ? (
+                        <p className="opponent-play-note">
+                          <strong>Play note:</strong> {playNoteLine}
+                        </p>
+                      ) : null}
+                      {tendencyLabels.length > 0 ? (
+                        <div className="opponent-snapshot-tags">
+                          {tendencyLabels.map((label) => (
+                            <span key={`${player.player}-${label}`} className="opponent-tag">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+                {visibleOpponentPlayers.length === 0 ? (
+                  <p className="hand-review-empty">
+                    No opponents match the current filter.
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>

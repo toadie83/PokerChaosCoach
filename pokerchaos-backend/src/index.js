@@ -5,6 +5,7 @@ import { z } from "zod";
 import { verifyToken } from "@clerk/backend";
 import { getAggressionPrompt, reviewTournamentHand } from "./openaiService.js";
 import {
+  buildOpponentSnapshot,
   compactHandForApi,
   filterHandsForReview,
   parseGgTournamentHistory,
@@ -81,6 +82,7 @@ const handHistorySchema = z.object({
 
 const handReviewSchema = z.object({
   selectedHands: z.array(z.record(z.any())).min(1).max(30),
+  opponentSnapshot: z.record(z.any()).optional(),
   instruction: z.string().trim().max(700).optional(),
   model: z.string().trim().optional(),
 });
@@ -149,6 +151,111 @@ function sanitizeHandForStreetFairness(hand) {
   return clone;
 }
 
+function toFiniteNumberOrNull(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildOpponentLookup(opponentSnapshot) {
+  const lookup = new Map();
+  const players = Array.isArray(opponentSnapshot?.players)
+    ? opponentSnapshot.players
+    : [];
+  for (const item of players) {
+    const player = String(item?.player || "").trim();
+    if (!player) continue;
+
+    const tagLabels = Array.isArray(item?.tags)
+      ? item.tags
+          .map((tag) => String(tag?.label || tag?.code || "").trim())
+          .filter(Boolean)
+      : [];
+
+    lookup.set(player, {
+      player,
+      handsSeen: toFiniteNumberOrNull(item?.handsSeen) ?? 0,
+      latestStack: toFiniteNumberOrNull(item?.latestStack),
+      latestTableId:
+        typeof item?.latestTableId === "string" && item.latestTableId.trim()
+          ? item.latestTableId.trim()
+          : null,
+      latestSeat: {
+        number: toFiniteNumberOrNull(item?.latestSeat?.number),
+        position:
+          typeof item?.latestSeat?.position === "string" &&
+          item.latestSeat.position.trim()
+            ? item.latestSeat.position.trim()
+            : null,
+      },
+      isCurrentTablePlayer: Boolean(item?.isCurrentTablePlayer),
+      enteredPotPct: toFiniteNumberOrNull(item?.enteredPot?.pct),
+      foldedPreflopPct: toFiniteNumberOrNull(item?.foldedPreflop?.pct),
+      preflopRaisePct: toFiniteNumberOrNull(item?.preflopRaise?.pct),
+      foldToPreflopRaisePct: toFiniteNumberOrNull(item?.foldToPreflopRaise?.pct),
+      postflopAggressionFrequencyPct: toFiniteNumberOrNull(
+        item?.postflopAggression?.frequencyPct
+      ),
+        postflopAggressionFactor: toFiniteNumberOrNull(
+          item?.postflopAggression?.factor
+        ),
+        tags: tagLabels,
+        playNote: {
+          text:
+            typeof item?.playNote?.text === "string" && item.playNote.text.trim()
+              ? item.playNote.text.trim()
+              : null,
+          confidence:
+            typeof item?.playNote?.confidence === "string" &&
+            item.playNote.confidence.trim()
+              ? item.playNote.confidence.trim()
+              : null,
+        },
+      });
+  }
+  return lookup;
+}
+
+function attachOpponentContextToHand(hand, opponentLookup) {
+  const heroName = String(hand?.heroName || "Hero").trim();
+  const seats = Array.isArray(hand?.seats) ? hand.seats : [];
+  const opponentsInHand = [];
+  const seenPlayers = new Set();
+  for (const seat of seats) {
+    const player = String(seat?.player || "").trim();
+    if (!player || player === heroName || seenPlayers.has(player)) continue;
+    seenPlayers.add(player);
+    const stats = opponentLookup.get(player);
+    if (!stats) continue;
+    opponentsInHand.push(stats);
+  }
+
+  opponentsInHand.sort((a, b) => {
+    if (b.handsSeen !== a.handsSeen) return b.handsSeen - a.handsSeen;
+    return a.player.localeCompare(b.player);
+  });
+
+  const tagCounts = new Map();
+  for (const opponent of opponentsInHand) {
+    for (const tag of opponent.tags || []) {
+      tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+    }
+  }
+  const topTagHints = Array.from(tagCounts.entries())
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    })
+    .slice(0, 5)
+    .map(([tag, count]) => `${tag}${count > 1 ? ` x${count}` : ""}`);
+
+  hand.opponentContext = {
+    snapshotIncluded: opponentsInHand.length > 0,
+    opponentsInHand,
+    topTagHints,
+  };
+  return hand;
+}
+
 app.post("/prompts", requireAuth, async (req, res) => {
   const parsed = promptSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -195,6 +302,10 @@ app.post("/hand-history/parse", requireAuth, async (req, res) => {
     });
     const sorted = sortHands(filtered, parsed.data.sort);
     const limited = sorted.slice(0, parsed.data.limit);
+    const opponents = buildOpponentSnapshot(allHands, {
+      heroName: parsed.data.heroName,
+      minHands: 1,
+    });
 
     return res.json({
       summary: {
@@ -204,6 +315,7 @@ app.post("/hand-history/parse", requireAuth, async (req, res) => {
         returnedHands: limited.length,
         sort: parsed.data.sort,
       },
+      opponents,
       hands: limited.map(compactHandForApi),
     });
   } catch (error) {
@@ -228,11 +340,13 @@ app.post("/hand-history/review", requireAuth, async (req, res) => {
   }
 
   try {
+    const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
     const reviews = [];
     for (const hand of parsed.data.selectedHands) {
       const compactHand = sanitizeHandForStreetFairness(hand);
+      const reviewHand = attachOpponentContextToHand(compactHand, opponentLookup);
       const review = await reviewTournamentHand(
-        compactHand,
+        reviewHand,
         parsed.data.instruction,
         parsed.data.model
       );

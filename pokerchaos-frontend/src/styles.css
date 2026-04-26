@@ -764,11 +764,42 @@ button {
   font-size: 0.8rem;
 }
 
-.tournament-summary {
+.hand-insights {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.18);
   padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.hand-insights-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hand-insights-tab {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 3px 10px;
+}
+
+.hand-insights-tab.active {
+  border-color: rgba(240, 162, 28, 0.55);
+  background: rgba(240, 162, 28, 0.18);
+  color: #fde68a;
+}
+
+.tournament-summary {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   display: grid;
   gap: 10px;
 }
@@ -838,6 +869,145 @@ button {
   border-radius: 999px;
   padding: 3px 9px;
   font-size: 0.76rem;
+}
+
+.opponent-snapshot {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.opponent-snapshot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.opponent-snapshot-head h3 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.opponent-snapshot-head span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.opponent-snapshot-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.opponent-snapshot-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.opponent-snapshot-toolbar select {
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  padding: 4px 8px;
+}
+
+.opponent-snapshot-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.opponent-snapshot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.opponent-snapshot-row {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.16);
+  display: grid;
+  gap: 8px;
+}
+
+.opponent-snapshot-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.opponent-snapshot-row-head strong {
+  font-size: 0.9rem;
+}
+
+.opponent-snapshot-row-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.opponent-copy-button {
+  margin-left: auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 2px 8px;
+}
+
+.opponent-copy-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.opponent-snapshot-metrics {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.opponent-snapshot-metrics span {
+  color: #d1d5db;
+  font-size: 0.8rem;
+}
+
+.opponent-play-note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #e5e7eb;
+}
+
+.opponent-play-note strong {
+  color: #f3f4f6;
+}
+
+.opponent-snapshot-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.opponent-tag {
+  border-radius: 999px;
+  border: 1px solid rgba(240, 162, 28, 0.45);
+  background: rgba(240, 162, 28, 0.16);
+  color: #fcd34d;
+  padding: 2px 8px;
+  font-size: 0.74rem;
 }
 
 .hand-review-selection-tools {
