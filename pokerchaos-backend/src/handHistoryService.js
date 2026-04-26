@@ -19,6 +19,20 @@ function toNumber(raw) {
   return Number.isFinite(value) ? value : null;
 }
 
+function toPercent(numerator, denominator) {
+  const n = Number(numerator);
+  const d = Number(denominator);
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return 0;
+  return Number(((n / d) * 100).toFixed(1));
+}
+
+function toDecimal(value, precision = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const factor = 10 ** Math.max(0, Number(precision) || 0);
+  return Math.round(num * factor) / factor;
+}
+
 function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -141,6 +155,178 @@ function parsePlayedAtEpoch(raw) {
   const minute = Number(match[5]);
   const second = Number(match[6]);
   return Date.UTC(year, month - 1, day, hour, minute, second);
+}
+
+const VPIP_ACTION_TYPES = new Set(["call", "raise", "bet", "jam"]);
+const PREFLOP_RAISE_ACTION_TYPES = new Set(["raise", "bet", "jam"]);
+const POSTFLOP_AGGRESSIVE_TYPES = new Set(["bet", "raise", "jam"]);
+const DECISION_ACTION_TYPES = new Set([
+  "fold",
+  "check",
+  "call",
+  "bet",
+  "raise",
+  "jam",
+]);
+
+function isDecisionAction(action) {
+  const type = String(action?.type || "").toLowerCase();
+  if (!type) return false;
+  if (type === "collect" || type.startsWith("post_")) return false;
+  return DECISION_ACTION_TYPES.has(type);
+}
+
+function buildOpponentTags({
+  handsSeen,
+  enteredPotPct,
+  foldedPreflopPct,
+  preflopRaisePct,
+  foldToPreflopRaisePct,
+  facedPreflopRaiseCount,
+  postflopAggressionFrequencyPct,
+  postflopDecisionCount,
+}) {
+  const tags = [];
+  const pushTag = (code, label) => {
+    if (!tags.some((item) => item.code === code)) {
+      tags.push({ code, label });
+    }
+  };
+
+  if (handsSeen < 8) pushTag("small_sample", "Small sample");
+
+  const vpip = Number(enteredPotPct) || 0;
+  const pfr = Number(preflopRaisePct) || 0;
+  const vpipPfrGap = vpip - pfr;
+  const reliablePreflopSample = handsSeen >= 10;
+  const reliableFacingOpenSample = facedPreflopRaiseCount >= 6;
+  const reliablePostflopSample = postflopDecisionCount >= 10;
+
+  if (reliablePreflopSample) {
+    if (vpip >= 45 && pfr >= 28) {
+      pushTag("maniac_preflop", "Maniac preflop");
+    } else if (vpip >= 32 && pfr >= 22 && vpipPfrGap <= 12) {
+      pushTag("lag_preflop", "LAG preflop");
+    } else if (vpip >= 34 && pfr <= 16) {
+      pushTag("loose_passive", "Loose-passive");
+    } else if (vpip <= 16 && pfr <= 12) {
+      pushTag("nit_preflop", "Nit preflop");
+    } else if (vpip >= 18 && vpip <= 30 && pfr >= 14 && pfr <= 24 && vpipPfrGap <= 10) {
+      pushTag("tag_preflop", "TAG preflop");
+    } else if (vpip <= 22 && pfr >= 18 && vpipPfrGap <= 6) {
+      pushTag("tight_aggressive_preflop", "Tight-aggressive preflop");
+    }
+  } else if (vpip >= 45) {
+    pushTag("loose_preflop_tentative", "Loose preflop (tentative)");
+  } else if (vpip <= 12) {
+    pushTag("tight_preflop_tentative", "Tight preflop (tentative)");
+  }
+
+  if (handsSeen >= 12 && foldedPreflopPct >= 74) {
+    pushTag("overfolding_preflop", "Overfolding preflop");
+  }
+  if (reliableFacingOpenSample && foldToPreflopRaisePct !== null) {
+    if (foldToPreflopRaisePct >= 68) {
+      pushTag("folds_to_opens", "Folds too much vs opens");
+    } else if (foldToPreflopRaisePct <= 38) {
+      pushTag("defends_vs_opens_wide", "Defends vs opens wide");
+    }
+  }
+
+  if (reliablePostflopSample) {
+    if (postflopAggressionFrequencyPct >= 45) {
+      pushTag("aggressive_postflop", "Aggressive postflop");
+    } else if (postflopAggressionFrequencyPct <= 22) {
+      pushTag("passive_postflop", "Passive postflop");
+    }
+    if (postflopAggressionFrequencyPct <= 26 && vpip >= 35) {
+      pushTag("call_heavy_postflop", "Call-heavy postflop");
+    }
+  }
+
+  if (tags.length === 0 || (tags.length === 1 && tags[0].code === "small_sample")) {
+    if (vpip >= 34) pushTag("vpip_high", "VPIP high");
+    else if (vpip <= 18) pushTag("vpip_low", "VPIP low");
+  }
+
+  return tags;
+}
+
+function opponentNoteConfidence(handsSeen) {
+  const sample = Number(handsSeen) || 0;
+  if (sample >= 30) return "high";
+  if (sample >= 12) return "medium";
+  return "low";
+}
+
+function buildOpponentPlayNote({
+  handsSeen,
+  enteredPotPct,
+  foldedPreflopPct,
+  preflopRaisePct,
+  foldToPreflopRaisePct,
+  facedPreflopRaiseCount,
+  postflopAggressionFrequencyPct,
+  postflopDecisionCount,
+  tags,
+}) {
+  const confidence = opponentNoteConfidence(handsSeen);
+  const tagCodes = new Set(
+    (Array.isArray(tags) ? tags : [])
+      .map((tag) => String(tag?.code || "").trim())
+      .filter(Boolean)
+  );
+
+  let text = "Use baseline ranges; no strong exploit read yet.";
+  if (
+    tagCodes.has("overfolding_preflop") ||
+    tagCodes.has("folds_to_opens") ||
+    (foldedPreflopPct >= 74 && handsSeen >= 12) ||
+    (facedPreflopRaiseCount >= 6 &&
+      foldToPreflopRaisePct !== null &&
+      foldToPreflopRaisePct >= 68)
+  ) {
+    text = "Steal wider in late position; small opens and c-bets should show profit.";
+  } else if (
+    tagCodes.has("call_heavy_postflop") ||
+    tagCodes.has("passive_postflop") ||
+    tagCodes.has("loose_passive") ||
+    (postflopDecisionCount >= 8 &&
+      postflopAggressionFrequencyPct !== null &&
+      postflopAggressionFrequencyPct <= 22)
+  ) {
+    text = "Value bet thinner and bigger; reduce pure bluffs, especially on later streets.";
+  } else if (
+    tagCodes.has("maniac_preflop") ||
+    tagCodes.has("lag_preflop") ||
+    tagCodes.has("aggressive_postflop") ||
+    tagCodes.has("defends_vs_opens_wide") ||
+    (enteredPotPct >= 38 && preflopRaisePct >= 22)
+  ) {
+    text = "Tighten marginal continues out of position; trap stronger hands and bluff-catch selectively.";
+  } else if (
+    tagCodes.has("nit_preflop") ||
+    tagCodes.has("tight_preflop_tentative") ||
+    tagCodes.has("vpip_low")
+  ) {
+    text = "Pressure unopened pots and attack capped checking lines from position.";
+  } else if (
+    tagCodes.has("tag_preflop") ||
+    tagCodes.has("tight_aggressive_preflop")
+  ) {
+    text = "Respect their stronger ranges; take thinner edges in position and avoid punt bluffs.";
+  } else if (tagCodes.has("loose_preflop_tentative")) {
+    text = "Isolate preflop and play straightforward value-heavy postflop lines.";
+  }
+
+  if (confidence === "low") {
+    text = `Low confidence: ${text}`;
+  }
+
+  return {
+    text,
+    confidence,
+  };
 }
 
 function seatOrderFromButton(seatNumbers = [], buttonSeat) {
@@ -633,6 +819,310 @@ export function sortHands(hands, sortDirection = "newest") {
   return list;
 }
 
+export function buildOpponentSnapshot(hands, options = {}) {
+  const list = Array.isArray(hands) ? hands : [];
+  const minHands =
+    Number.isFinite(Number(options.minHands)) && Number(options.minHands) >= 1
+      ? Math.floor(Number(options.minHands))
+      : 1;
+  const fallbackHeroName =
+    typeof options.heroName === "string" && options.heroName.trim()
+      ? options.heroName.trim()
+      : "Hero";
+  const latestHand = list.reduce((best, hand) => {
+    if (!best) return hand;
+    const bestEpoch = Number(best?.playedAtEpoch);
+    const handEpoch = Number(hand?.playedAtEpoch);
+    if (!Number.isFinite(handEpoch)) return best;
+    if (!Number.isFinite(bestEpoch) || handEpoch > bestEpoch) return hand;
+    return best;
+  }, null);
+  const latestHeroName =
+    typeof latestHand?.heroName === "string" && latestHand.heroName.trim()
+      ? latestHand.heroName.trim()
+      : fallbackHeroName;
+  const currentTableSeats = Array.isArray(latestHand?.seats)
+    ? latestHand.seats
+    : [];
+  const currentTablePlayers = currentTableSeats
+    .filter((seat) => String(seat?.player || "").trim() !== latestHeroName)
+    .map((seat) => ({
+      player: String(seat?.player || "").trim() || null,
+      seat: Number.isFinite(Number(seat?.seat)) ? Number(seat.seat) : null,
+      position:
+        typeof seat?.position === "string" && seat.position.trim()
+          ? seat.position.trim()
+          : null,
+      chips: Number.isFinite(Number(seat?.chips)) ? Number(seat.chips) : null,
+    }))
+    .filter((seat) => seat.player);
+  const currentTablePlayerSet = new Set(
+    currentTablePlayers.map((seat) => seat.player)
+  );
+
+  const players = new Map();
+  const ensurePlayer = (player) => {
+    if (!players.has(player)) {
+      players.set(player, {
+        player,
+        handsSeen: 0,
+        enteredPotCount: 0,
+        foldedPreflopCount: 0,
+        preflopRaiseCount: 0,
+        facedPreflopRaiseCount: 0,
+        foldToPreflopRaiseCount: 0,
+        postflopDecisionCount: 0,
+        postflopAggressiveCount: 0,
+        postflopCallCount: 0,
+        lastSeenAt: null,
+        lastSeenAtEpoch: null,
+        latestSeatNumber: null,
+        latestSeatPosition: null,
+        latestStack: null,
+        latestTableId: null,
+      });
+    }
+    return players.get(player);
+  };
+
+  for (const hand of list) {
+    const heroName =
+      typeof hand?.heroName === "string" && hand.heroName.trim()
+        ? hand.heroName.trim()
+        : fallbackHeroName;
+    const seats = Array.isArray(hand?.seats) ? hand.seats : [];
+    const preflopActions = Array.isArray(hand?.actionsByStreet?.preflop)
+      ? hand.actionsByStreet.preflop
+      : [];
+    const postflopActions = [
+      ...(Array.isArray(hand?.actionsByStreet?.flop)
+        ? hand.actionsByStreet.flop
+        : []),
+      ...(Array.isArray(hand?.actionsByStreet?.turn)
+        ? hand.actionsByStreet.turn
+        : []),
+      ...(Array.isArray(hand?.actionsByStreet?.river)
+        ? hand.actionsByStreet.river
+        : []),
+    ];
+
+    for (const seat of seats) {
+      const player = String(seat?.player || "").trim();
+      if (!player || player === heroName) continue;
+
+      const state = ensurePlayer(player);
+      state.handsSeen += 1;
+
+      const playedAtEpoch = Number(hand?.playedAtEpoch);
+      if (
+        Number.isFinite(playedAtEpoch) &&
+        (!Number.isFinite(Number(state.lastSeenAtEpoch)) ||
+          playedAtEpoch > Number(state.lastSeenAtEpoch))
+      ) {
+        state.lastSeenAtEpoch = playedAtEpoch;
+        state.lastSeenAt = String(hand?.playedAt || "") || null;
+        state.latestSeatNumber = Number.isFinite(Number(seat?.seat))
+          ? Number(seat.seat)
+          : null;
+        state.latestSeatPosition =
+          typeof seat?.position === "string" && seat.position.trim()
+            ? seat.position.trim()
+            : null;
+        state.latestStack = Number.isFinite(Number(seat?.chips))
+          ? Number(seat.chips)
+          : null;
+        state.latestTableId =
+          typeof hand?.table?.id === "string" && hand.table.id.trim()
+            ? hand.table.id.trim()
+            : null;
+      }
+
+      const playerPreflopActions = preflopActions.filter(
+        (action) => String(action?.player || "").trim() === player
+      );
+      const playerPreflopDecisions = playerPreflopActions.filter((action) =>
+        isDecisionAction(action)
+      );
+
+      if (
+        playerPreflopDecisions.some((action) =>
+          VPIP_ACTION_TYPES.has(String(action?.type || "").toLowerCase())
+        )
+      ) {
+        state.enteredPotCount += 1;
+      }
+      if (
+        playerPreflopDecisions.some(
+          (action) => String(action?.type || "").toLowerCase() === "fold"
+        )
+      ) {
+        state.foldedPreflopCount += 1;
+      }
+      if (
+        playerPreflopDecisions.some((action) =>
+          PREFLOP_RAISE_ACTION_TYPES.has(String(action?.type || "").toLowerCase())
+        )
+      ) {
+        state.preflopRaiseCount += 1;
+      }
+
+      const firstPreflopDecisionIndex = preflopActions.findIndex(
+        (action) =>
+          String(action?.player || "").trim() === player && isDecisionAction(action)
+      );
+      if (firstPreflopDecisionIndex >= 0) {
+        const facedRaise = preflopActions
+          .slice(0, firstPreflopDecisionIndex)
+          .some(
+            (action) =>
+              String(action?.player || "").trim() !== player &&
+              PREFLOP_RAISE_ACTION_TYPES.has(
+                String(action?.type || "").toLowerCase()
+              )
+          );
+        if (facedRaise) {
+          state.facedPreflopRaiseCount += 1;
+          const firstDecision = preflopActions[firstPreflopDecisionIndex];
+          if (String(firstDecision?.type || "").toLowerCase() === "fold") {
+            state.foldToPreflopRaiseCount += 1;
+          }
+        }
+      }
+
+      for (const action of postflopActions) {
+        if (String(action?.player || "").trim() !== player) continue;
+        const type = String(action?.type || "").toLowerCase();
+        if (!isDecisionAction(action)) continue;
+
+        state.postflopDecisionCount += 1;
+        if (type === "call") state.postflopCallCount += 1;
+        if (POSTFLOP_AGGRESSIVE_TYPES.has(type)) {
+          state.postflopAggressiveCount += 1;
+        }
+      }
+    }
+  }
+
+  const result = Array.from(players.values())
+    .filter((state) => state.handsSeen >= minHands)
+    .map((state) => {
+      const enteredPotPct = toPercent(state.enteredPotCount, state.handsSeen);
+      const foldedPreflopPct = toPercent(
+        state.foldedPreflopCount,
+        state.handsSeen
+      );
+      const preflopRaisePct = toPercent(
+        state.preflopRaiseCount,
+        state.handsSeen
+      );
+      const foldToPreflopRaisePct =
+        state.facedPreflopRaiseCount > 0
+          ? toPercent(state.foldToPreflopRaiseCount, state.facedPreflopRaiseCount)
+          : null;
+      const postflopAggressionFrequencyPct =
+        state.postflopDecisionCount > 0
+          ? toPercent(state.postflopAggressiveCount, state.postflopDecisionCount)
+          : null;
+      const postflopAggressionFactor =
+        state.postflopCallCount > 0
+          ? toDecimal(state.postflopAggressiveCount / state.postflopCallCount, 2)
+          : null;
+      const tagMetrics = {
+        handsSeen: state.handsSeen,
+        enteredPotPct,
+        foldedPreflopPct,
+        preflopRaisePct,
+        foldToPreflopRaisePct,
+        facedPreflopRaiseCount: state.facedPreflopRaiseCount,
+        postflopAggressionFrequencyPct:
+          postflopAggressionFrequencyPct === null
+            ? 0
+            : postflopAggressionFrequencyPct,
+        postflopDecisionCount: state.postflopDecisionCount,
+      };
+      const tags = buildOpponentTags(tagMetrics);
+      const playNote = buildOpponentPlayNote({
+        ...tagMetrics,
+        postflopAggressionFrequencyPct,
+        tags,
+      });
+
+      return {
+        player: state.player,
+        handsSeen: state.handsSeen,
+        lastSeenAt: state.lastSeenAt,
+        latestStack: state.latestStack,
+        latestTableId: state.latestTableId,
+        latestSeat: {
+          number: state.latestSeatNumber,
+          position: state.latestSeatPosition,
+        },
+        isCurrentTablePlayer: currentTablePlayerSet.has(state.player),
+        enteredPot: {
+          pct: enteredPotPct,
+          count: state.enteredPotCount,
+          total: state.handsSeen,
+        },
+        foldedPreflop: {
+          pct: foldedPreflopPct,
+          count: state.foldedPreflopCount,
+          total: state.handsSeen,
+        },
+        preflopRaise: {
+          pct: preflopRaisePct,
+          count: state.preflopRaiseCount,
+          total: state.handsSeen,
+        },
+        foldToPreflopRaise: {
+          pct: foldToPreflopRaisePct,
+          count: state.foldToPreflopRaiseCount,
+          total: state.facedPreflopRaiseCount,
+        },
+        postflopAggression: {
+          frequencyPct: postflopAggressionFrequencyPct,
+          aggressiveActions: state.postflopAggressiveCount,
+          calls: state.postflopCallCount,
+          decisions: state.postflopDecisionCount,
+          factor: postflopAggressionFactor,
+        },
+        tags,
+        playNote,
+      };
+    })
+    .sort((a, b) => {
+      if (b.handsSeen !== a.handsSeen) return b.handsSeen - a.handsSeen;
+      if (b.enteredPot.pct !== a.enteredPot.pct) {
+        return b.enteredPot.pct - a.enteredPot.pct;
+      }
+      return a.player.localeCompare(b.player);
+    });
+
+  return {
+    heroName: fallbackHeroName,
+    totalHandsTracked: list.length,
+    totalOpponents: result.length,
+    minHands,
+    currentTableGuess: {
+      tableId:
+        typeof latestHand?.table?.id === "string" && latestHand.table.id.trim()
+          ? latestHand.table.id.trim()
+          : null,
+      maxPlayers: Number.isFinite(Number(latestHand?.table?.maxPlayers))
+        ? Number(latestHand.table.maxPlayers)
+        : null,
+      playedAt:
+        typeof latestHand?.playedAt === "string" && latestHand.playedAt.trim()
+          ? latestHand.playedAt.trim()
+          : null,
+      playedAtEpoch: Number.isFinite(Number(latestHand?.playedAtEpoch))
+        ? Number(latestHand.playedAtEpoch)
+        : null,
+      players: currentTablePlayers,
+    },
+    players: result,
+  };
+}
+
 export function compactHandForApi(hand) {
   const heroStreetActions = {};
   for (const street of ["preflop", "flop", "turn", "river"]) {
@@ -649,6 +1139,12 @@ export function compactHandForApi(hand) {
     handId: hand.handId,
     tournamentId: hand.tournamentId,
     playedAt: hand.playedAt,
+    seats: (Array.isArray(hand.seats) ? hand.seats : []).map((seat) => ({
+      seat: seat?.seat ?? null,
+      player: seat?.player ?? null,
+      position: seat?.position ?? null,
+      chips: seat?.chips ?? null,
+    })),
     heroName: hand.heroName,
     heroPosition: hand.heroPosition,
     heroStack: hand.heroStack,
