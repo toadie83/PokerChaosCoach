@@ -914,6 +914,47 @@ button {
   color: #d1d5db;
 }
 
+.coach-drags-pill {
+  margin: 0;
+  border: 0;
+}
+
+.coach-drags-pill > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  outline: none;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.coach-drags-pill > summary::-webkit-details-marker {
+  display: none;
+}
+
+.coach-drags-pill > summary::after {
+  content: "\25BE";
+  color: #fde68a;
+  font-size: 0.7rem;
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+}
+
+.coach-drags-pill[open] > summary::after {
+  transform: rotate(0deg);
+}
+
+.coach-drags-pill .tournament-summary-flags {
+  margin-top: 8px;
+}
+
 .tournament-ai-paragraph {
   line-height: 1.5;
 }
@@ -931,6 +972,9 @@ button {
 }
 
 .summary-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   cursor: pointer;
   font-size: 0.82rem;
   font-weight: 700;
@@ -939,12 +983,24 @@ button {
   outline: none;
 }
 
+.summary-section > summary::after {
+  content: "▾";
+  color: #9ca3af;
+  font-size: 0.78rem;
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+}
+
 .summary-section > summary::-webkit-details-marker {
   display: none;
 }
 
 .summary-section[open] > summary {
   margin-bottom: 8px;
+}
+
+.summary-section[open] > summary::after {
+  transform: rotate(0deg);
 }
 
 .tournament-summary-head {

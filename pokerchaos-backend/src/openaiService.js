@@ -991,10 +991,13 @@ function dedupeList(items = [], max = 8) {
 
 function deriveSummaryHeuristic(summaryContext = {}) {
   const pre = summaryContext?.preflopBreakdown || {};
+  const post = summaryContext?.postflopIpAudit || {};
+  const postFindings = post?.findings || {};
   const candidates = [];
 
   const addCandidate = ({
     key,
+    area = "preflop",
     severity,
     sample,
     label,
@@ -1003,6 +1006,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   }) => {
     candidates.push({
       key,
+      area,
       severity: toFinite(severity, 0),
       sample: toFinite(sample, 0),
       label: String(label || "").trim(),
@@ -1017,6 +1021,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (openSpots >= 12 && openPct < 28) {
     addCandidate({
       key: "opening_low",
+      area: "preflop",
       severity: 28 - openPct,
       sample: openSpots,
       label: "Under-opening in first-in spots",
@@ -1032,6 +1037,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (defendSpots >= 12 && defendPct < 32) {
     addCandidate({
       key: "defend_low",
+      area: "preflop",
       severity: 32 - defendPct,
       sample: defendSpots,
       label: "Overfolding when facing opens",
@@ -1047,6 +1053,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (blindSpots >= 12 && blindFoldPct > 66) {
     addCandidate({
       key: "blind_overfold",
+      area: "preflop",
       severity: blindFoldPct - 66,
       sample: blindSpots,
       label: "Blinds fold too often versus opens",
@@ -1062,6 +1069,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (reraiseSpots >= 8 && reraiseFoldPct > 78) {
     addCandidate({
       key: "reraise_overfold",
+      area: "preflop",
       severity: reraiseFoldPct - 78,
       sample: reraiseSpots,
       label: "Likely overfolding after facing reraises",
@@ -1083,6 +1091,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (candidates.length === 0 && totalHands >= 40 && preflopFoldPct > preflopFoldThreshold) {
     addCandidate({
       key: "preflop_fold_high",
+      area: "preflop",
       severity: preflopFoldPct - preflopFoldThreshold,
       sample: totalHands,
       label: "Overall preflop fold rate is high",
@@ -1094,7 +1103,117 @@ function deriveSummaryHeuristic(summaryContext = {}) {
     });
   }
 
-  candidates.sort((a, b) => b.severity - a.severity);
+  const postMetric = (key) => {
+    const metric = postFindings?.[key] || {};
+    const count = toFinite(metric?.count, 0);
+    const opportunities = toFinite(metric?.opportunities, 0);
+    const metricPct = pct(count, opportunities);
+    return { count, opportunities, metricPct };
+  };
+
+  const missedIpCbet = postMetric("missedIpCbetFavorable");
+  if (missedIpCbet.opportunities >= 8 && missedIpCbet.metricPct >= 35) {
+    addCandidate({
+      key: "postflop_ip_cbet_missed",
+      area: "postflop",
+      severity: missedIpCbet.metricPct - 35,
+      sample: missedIpCbet.opportunities,
+      label: "Missing profitable in-position flop c-bets",
+      evidence: `Missed IP c-bets on favorable flops: ${rateLabel(
+        missedIpCbet.count,
+        missedIpCbet.opportunities
+      )}.`,
+      action:
+        "C-bet favorable flop textures more often in position when preflop aggressor.",
+    });
+  }
+
+  const missedIpStab = postMetric("missedIpStabFavorable");
+  if (missedIpStab.opportunities >= 8 && missedIpStab.metricPct >= 35) {
+    addCandidate({
+      key: "postflop_ip_stab_missed",
+      area: "postflop",
+      severity: missedIpStab.metricPct - 35,
+      sample: missedIpStab.opportunities,
+      label: "Under-stabbing in position after checks",
+      evidence: `Missed IP stabs on favorable flops: ${rateLabel(
+        missedIpStab.count,
+        missedIpStab.opportunities
+      )}.`,
+      action:
+        "Attack capped check lines more frequently in position on favorable boards.",
+    });
+  }
+
+  const lightIpTurnFold = postMetric("lightIpFoldTurn");
+  if (lightIpTurnFold.opportunities >= 8 && lightIpTurnFold.metricPct >= 22) {
+    addCandidate({
+      key: "postflop_ip_turn_overfold",
+      area: "postflop",
+      severity: lightIpTurnFold.metricPct - 22,
+      sample: lightIpTurnFold.opportunities,
+      label: "Likely overfolding turn bets in position",
+      evidence: `Likely light IP turn folds: ${rateLabel(
+        lightIpTurnFold.count,
+        lightIpTurnFold.opportunities
+      )}.`,
+      action:
+        "Continue more turn bets in position with pair-plus and draw-heavy holdings.",
+    });
+  }
+
+  const lightIpRiverFold = postMetric("lightIpFoldRiver");
+  if (lightIpRiverFold.opportunities >= 8 && lightIpRiverFold.metricPct >= 20) {
+    addCandidate({
+      key: "postflop_ip_river_overfold",
+      area: "postflop",
+      severity: lightIpRiverFold.metricPct - 20,
+      sample: lightIpRiverFold.opportunities,
+      label: "Likely overfolding rivers in position",
+      evidence: `Likely light IP river folds: ${rateLabel(
+        lightIpRiverFold.count,
+        lightIpRiverFold.opportunities
+      )}.`,
+      action:
+        "Review river bluff-catch thresholds in position before defaulting to folds.",
+    });
+  }
+
+  const missedIpValueRaise = postMetric("missedIpValueRaise");
+  if (
+    missedIpValueRaise.opportunities >= 8 &&
+    missedIpValueRaise.metricPct >= 30
+  ) {
+    addCandidate({
+      key: "postflop_ip_value_raise_missed",
+      area: "postflop",
+      severity: missedIpValueRaise.metricPct - 30,
+      sample: missedIpValueRaise.opportunities,
+      label: "Missing turn/river value-raise opportunities in position",
+      evidence: `Missed IP value-raises (turn/river): ${rateLabel(
+        missedIpValueRaise.count,
+        missedIpValueRaise.opportunities
+      )}.`,
+      action:
+        "Add selective turn/river value-raises in position when strong made hands face capped bet ranges.",
+    });
+  }
+
+  const hasStrongPreflopSignal = candidates.some(
+    (item) => item.area === "preflop" && item.sample >= 12 && item.severity >= 3
+  );
+
+  candidates.sort((a, b) => {
+    const aAdjusted =
+      hasStrongPreflopSignal && a.area === "postflop"
+        ? a.severity * 0.75
+        : a.severity;
+    const bAdjusted =
+      hasStrongPreflopSignal && b.area === "postflop"
+        ? b.severity * 0.75
+        : b.severity;
+    return bAdjusted - aAdjusted;
+  });
   const primary = candidates[0] || null;
   const secondary = candidates[1] || null;
 
@@ -1109,6 +1228,30 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   }
   if (blindSpots > 0) {
     evidence.push(`Blind fold vs open baseline: ${rateLabel(blindFolds, blindSpots)}.`);
+  }
+  if (missedIpCbet.opportunities > 0) {
+    evidence.push(
+      `Missed IP c-bets (favorable flop): ${rateLabel(
+        missedIpCbet.count,
+        missedIpCbet.opportunities
+      )}.`
+    );
+  }
+  if (lightIpTurnFold.opportunities > 0) {
+    evidence.push(
+      `Likely light IP turn folds: ${rateLabel(
+        lightIpTurnFold.count,
+        lightIpTurnFold.opportunities
+      )}.`
+    );
+  }
+  if (missedIpValueRaise.opportunities > 0) {
+    evidence.push(
+      `Missed IP value-raises (turn/river): ${rateLabel(
+        missedIpValueRaise.count,
+        missedIpValueRaise.opportunities
+      )}.`
+    );
   }
 
   const actions = [];
@@ -1134,6 +1277,11 @@ function deriveSummaryHeuristic(summaryContext = {}) {
     "Call then faced raise",
     toFinite(pre.callThenFacedRaiseSpots, 0)
   );
+  warnIfSmall("Missed IP c-bets", missedIpCbet.opportunities);
+  warnIfSmall("Missed IP stabs", missedIpStab.opportunities);
+  warnIfSmall("Likely light IP turn folds", lightIpTurnFold.opportunities);
+  warnIfSmall("Likely light IP river folds", lightIpRiverFold.opportunities);
+  warnIfSmall("Missed IP value-raises", missedIpValueRaise.opportunities);
 
   const confidence = primary
     ? sampleConfidence(primary.sample)
@@ -1370,6 +1518,8 @@ Output JSON:
 Rules:
 - Every evidence line must include denominator context (e.g. 12/58).
 - Prefer actionable advice tied to opening, defending, and blind play before postflop leaks when preflop stats are clearly worse.
+- When "postflopIpAudit" is present with adequate samples, include it in leak selection and evidence.
+- When "tournamentRating" is present, keep the leak narrative aligned with its top penalty drivers.
 - If a metric sample is tiny (<8), call it out as low confidence in warnings instead of overfitting.
 - Keep evidence and actions concise (max 5 each).
 - Do not return generic placeholders like "No major leak flagged" when open/defend/blind metrics show clear deviations with 12+ samples.`;
