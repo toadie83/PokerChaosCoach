@@ -948,6 +948,277 @@ function normalizeReviewResponse(parsed, completion, handContext = {}) {
   return response;
 }
 
+function toFinite(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function pct(numerator, denominator) {
+  const n = Number(numerator);
+  const d = Number(denominator);
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return 0;
+  return (n / d) * 100;
+}
+
+function rateLabel(numerator, denominator) {
+  const d = toFinite(denominator, 0);
+  const n = toFinite(numerator, 0);
+  if (d <= 0) return "n/a";
+  return `${pct(n, d).toFixed(1)}% (${n}/${d})`;
+}
+
+function sampleConfidence(sampleSize) {
+  const n = toFinite(sampleSize, 0);
+  if (n >= 30) return "high";
+  if (n >= 12) return "medium";
+  return "low";
+}
+
+function dedupeList(items = [], max = 8) {
+  const unique = [];
+  const seen = new Set();
+  for (const raw of items) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+    if (unique.length >= max) break;
+  }
+  return unique;
+}
+
+function deriveSummaryHeuristic(summaryContext = {}) {
+  const pre = summaryContext?.preflopBreakdown || {};
+  const candidates = [];
+
+  const addCandidate = ({
+    key,
+    severity,
+    sample,
+    label,
+    evidence,
+    action,
+  }) => {
+    candidates.push({
+      key,
+      severity: toFinite(severity, 0),
+      sample: toFinite(sample, 0),
+      label: String(label || "").trim(),
+      evidence: String(evidence || "").trim(),
+      action: String(action || "").trim(),
+    });
+  };
+
+  const openSpots = toFinite(pre.noRaiseBeforeHeroSpots, 0);
+  const openCount = toFinite(pre.openedWhenNoRaiseBeforeHero, 0);
+  const openPct = pct(openCount, openSpots);
+  if (openSpots >= 12 && openPct < 28) {
+    addCandidate({
+      key: "opening_low",
+      severity: 28 - openPct,
+      sample: openSpots,
+      label: "Under-opening in first-in spots",
+      evidence: `Open first-in rate is ${rateLabel(openCount, openSpots)}.`,
+      action:
+        "Increase opening frequency first from late and middle positions before widening marginal defenses.",
+    });
+  }
+
+  const defendSpots = toFinite(pre.facingOpenSpots, 0);
+  const defendCount = toFinite(pre.defendedFacingOpen, 0);
+  const defendPct = pct(defendCount, defendSpots);
+  if (defendSpots >= 12 && defendPct < 32) {
+    addCandidate({
+      key: "defend_low",
+      severity: 32 - defendPct,
+      sample: defendSpots,
+      label: "Overfolding when facing opens",
+      evidence: `Defend vs open rate is ${rateLabel(defendCount, defendSpots)}.`,
+      action:
+        "Defend more versus opens, starting with BB continues and selective SB 3-bets versus late opens.",
+    });
+  }
+
+  const blindSpots = toFinite(pre.blindFacingOpenSpots, 0);
+  const blindFolds = toFinite(pre.blindFoldFacingOpen, 0);
+  const blindFoldPct = pct(blindFolds, blindSpots);
+  if (blindSpots >= 12 && blindFoldPct > 66) {
+    addCandidate({
+      key: "blind_overfold",
+      severity: blindFoldPct - 66,
+      sample: blindSpots,
+      label: "Blinds fold too often versus opens",
+      evidence: `Blind fold vs open is ${rateLabel(blindFolds, blindSpots)}.`,
+      action:
+        "Prioritize BB defend expansion first, then add SB defend/3-bet continues with playable suited holdings.",
+    });
+  }
+
+  const reraiseSpots = toFinite(pre.facedReraiseAfterAggressionSpots, 0);
+  const reraiseFolds = toFinite(pre.foldedAfterFacingReraise, 0);
+  const reraiseFoldPct = pct(reraiseFolds, reraiseSpots);
+  if (reraiseSpots >= 8 && reraiseFoldPct > 78) {
+    addCandidate({
+      key: "reraise_overfold",
+      severity: reraiseFoldPct - 78,
+      sample: reraiseSpots,
+      label: "Likely overfolding after facing reraises",
+      evidence: `Fold after facing reraises is ${rateLabel(
+        reraiseFolds,
+        reraiseSpots
+      )}.`,
+      action:
+        "Tighten your aggressive range construction so opens/3-bets do not become automatic folds to reraises.",
+    });
+  }
+
+  const preflopFoldPct = toFinite(summaryContext?.preflopFoldPct, 0);
+  const preflopFoldThreshold = toFinite(
+    summaryContext?.preflopFoldWarnThreshold,
+    999
+  );
+  const totalHands = toFinite(summaryContext?.totalHands, 0);
+  if (candidates.length === 0 && totalHands >= 40 && preflopFoldPct > preflopFoldThreshold) {
+    addCandidate({
+      key: "preflop_fold_high",
+      severity: preflopFoldPct - preflopFoldThreshold,
+      sample: totalHands,
+      label: "Overall preflop fold rate is high",
+      evidence: `Preflop fold rate is ${preflopFoldPct.toFixed(
+        1
+      )}% versus ~${preflopFoldThreshold.toFixed(1)}% threshold.`,
+      action:
+        "Split focus between first-in opens and blind defenses to bring overall preflop fold rate down.",
+    });
+  }
+
+  candidates.sort((a, b) => b.severity - a.severity);
+  const primary = candidates[0] || null;
+  const secondary = candidates[1] || null;
+
+  const evidence = [];
+  if (primary?.evidence) evidence.push(primary.evidence);
+  if (secondary?.evidence) evidence.push(secondary.evidence);
+  if (openSpots > 0) {
+    evidence.push(`Open first-in baseline: ${rateLabel(openCount, openSpots)}.`);
+  }
+  if (defendSpots > 0) {
+    evidence.push(`Defend vs open baseline: ${rateLabel(defendCount, defendSpots)}.`);
+  }
+  if (blindSpots > 0) {
+    evidence.push(`Blind fold vs open baseline: ${rateLabel(blindFolds, blindSpots)}.`);
+  }
+
+  const actions = [];
+  if (primary?.action) actions.push(primary.action);
+  if (secondary?.action) actions.push(secondary.action);
+  if (actions.length === 0) {
+    actions.push(
+      "No dominant leak crossed confidence thresholds. Keep collecting sample and prioritize metrics with 12+ opportunities."
+    );
+  }
+
+  const warnings = [];
+  const warnIfSmall = (label, sample) => {
+    if (toFinite(sample, 0) > 0 && toFinite(sample, 0) < 8) {
+      warnings.push(`${label} sample is small (${toFinite(sample, 0)}); treat as low confidence.`);
+    }
+  };
+  warnIfSmall("Open first-in", openSpots);
+  warnIfSmall("Defend vs open", defendSpots);
+  warnIfSmall("Blind vs open", blindSpots);
+  warnIfSmall("Fold after reraises", reraiseSpots);
+  warnIfSmall(
+    "Call then faced raise",
+    toFinite(pre.callThenFacedRaiseSpots, 0)
+  );
+
+  const confidence = primary
+    ? sampleConfidence(primary.sample)
+    : sampleConfidence(totalHands);
+
+  return {
+    primaryLeak:
+      primary?.label || "No major leak flagged.",
+    secondaryLeak:
+      secondary?.label || "No secondary leak flagged.",
+    evidence: dedupeList(evidence, 6),
+    actions: dedupeList(actions, 6),
+    warnings: dedupeList(warnings, 6),
+    confidence,
+  };
+}
+
+function normalizeSummaryReviewResponse(parsed, completion, summaryContext = {}) {
+  const heuristic = deriveSummaryHeuristic(summaryContext);
+  const confidenceRaw = String(parsed?.confidence || "medium")
+    .trim()
+    .toLowerCase();
+  const confidence = ["low", "medium", "high"].includes(confidenceRaw)
+    ? confidenceRaw
+    : heuristic.confidence;
+  const asStringList = (value, fallback = []) => {
+    if (!Array.isArray(value)) return fallback;
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  };
+  const usage = completion?.usage
+    ? {
+        prompt_tokens: completion.usage.prompt_tokens ?? null,
+        completion_tokens: completion.usage.completion_tokens ?? null,
+        total_tokens: completion.usage.total_tokens ?? null,
+      }
+    : null;
+
+  const modelPrimary = String(parsed?.primary_leak || "").trim();
+  const modelSecondary = String(parsed?.secondary_leak || "").trim();
+  const modelEvidence = asStringList(parsed?.evidence, []);
+  const modelActions = asStringList(parsed?.actions, []);
+  const modelWarnings = asStringList(parsed?.warnings, []);
+  const primaryLooksGeneric =
+    !modelPrimary ||
+    /no major leak flagged|insufficient|no clear leak/i.test(modelPrimary);
+  const secondaryLooksGeneric =
+    !modelSecondary ||
+    /no secondary leak flagged|none/i.test(modelSecondary);
+  const evidenceLooksWeak =
+    modelEvidence.length === 0 ||
+    modelEvidence.every((line) => /insufficient structured evidence/i.test(line));
+  const actionsLookWeak =
+    modelActions.length === 0 ||
+    modelActions.every((line) => /collect a larger sample/i.test(line));
+  const shouldUseHeuristicPrimary =
+    primaryLooksGeneric && !/No major leak flagged\./i.test(heuristic.primaryLeak);
+  const shouldUseHeuristicSecondary =
+    secondaryLooksGeneric && heuristic.secondaryLeak;
+  const shouldUseHeuristicLists = evidenceLooksWeak || actionsLookWeak;
+
+  return {
+    primary_leak: shouldUseHeuristicPrimary
+      ? heuristic.primaryLeak
+      : modelPrimary || heuristic.primaryLeak,
+    secondary_leak: shouldUseHeuristicSecondary
+      ? heuristic.secondaryLeak
+      : modelSecondary || heuristic.secondaryLeak,
+    evidence: shouldUseHeuristicLists
+      ? heuristic.evidence
+      : dedupeList([...modelEvidence, ...heuristic.evidence], 8),
+    actions: shouldUseHeuristicLists
+      ? heuristic.actions
+      : dedupeList([...modelActions, ...heuristic.actions], 8),
+    warnings: dedupeList([...modelWarnings, ...heuristic.warnings], 8),
+    confidence:
+      shouldUseHeuristicPrimary || shouldUseHeuristicLists
+        ? heuristic.confidence
+        : confidence,
+    usage,
+  };
+}
+
 export async function getAggressionPrompt(context = {}, instruction) {
   const persona = String(context?.persona || "chaos_shark");
   const requestedModel =
@@ -1069,6 +1340,58 @@ Instruction: ${
   });
 
   return normalizeReviewResponse(parsed, completion, handContext);
+}
+
+export async function reviewTournamentSummary(
+  summaryContext = {},
+  instruction,
+  requestedModel
+) {
+  const model =
+    typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
+
+  const system = `You are a tournament poker performance analyst.
+Given summary stats from a player's session, identify likely leaks without over-claiming.
+Use sample-size awareness and avoid definitive claims on tiny denominators.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "primary_leak": "string",
+  "secondary_leak": "string",
+  "evidence": ["string"],
+  "actions": ["string"],
+  "warnings": ["string"],
+  "confidence": "low|medium|high"
+}
+
+Rules:
+- Every evidence line must include denominator context (e.g. 12/58).
+- Prefer actionable advice tied to opening, defending, and blind play before postflop leaks when preflop stats are clearly worse.
+- If a metric sample is tiny (<8), call it out as low confidence in warnings instead of overfitting.
+- Keep evidence and actions concise (max 5 each).
+- Do not return generic placeholders like "No major leak flagged" when open/defend/blind metrics show clear deviations with 12+ samples.`;
+
+  const user = `Tournament summary context:
+${JSON.stringify(summaryContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Review this tournament summary and return the most likely leaks with concise, prioritized fixes."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.25,
+    top_p: 0.7,
+    max_tokens: 320,
+    model,
+  });
+
+  return normalizeSummaryReviewResponse(parsed, completion, summaryContext);
 }
 
 async function runChaosCoach(context = {}, instruction, model) {

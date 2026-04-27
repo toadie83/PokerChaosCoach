@@ -36,6 +36,21 @@ npm run dev
 
 ## API Overview
 
-- `POST /prompts` accepts `{ context: { ... } }` and returns a short ChaosCoach line from OpenAI.
-- `POST /hand-history/parse` accepts GG hand-history text and returns parsed hands with Hero preflop filtering.
-- `POST /hand-history/review` accepts selected parsed hands and returns AI hand reviews with per-street scoring.
+- `GET /me/entitlements` returns current feature flags for the signed-in user.
+- `POST /prompts` (requires `coach` entitlement) accepts `{ context: { ... } }` and returns a short ChaosCoach line from OpenAI.
+- `POST /hand-history/parse` (requires `review` entitlement) accepts GG hand-history text and returns parsed hands with Hero preflop filtering.
+- `POST /hand-history/review` (requires `review` entitlement) accepts selected parsed hands and returns AI hand reviews with per-street scoring.
+- `POST /hand-history/summary-review` (requires `review` entitlement) accepts tournament summary stats and returns AI leak diagnosis with prioritized actions.
+
+## Feature Entitlements
+
+Backend feature access is configured by env vars:
+
+- `REVIEW_ALLOW_ALL` (`true` by default): allow all signed-in users to access hand review.
+- `COACH_ALLOW_ALL` (`false` by default): allow all signed-in users to access coach.
+- `REVIEW_ALLOWED_USER_IDS`: comma-separated Clerk user IDs with review access.
+- `COACH_ALLOWED_USER_IDS`: comma-separated Clerk user IDs with coach access.
+- `ADMIN_ALLOWED_USER_IDS`: comma-separated Clerk user IDs with access to all features.
+- `REVIEW_ALLOWED_EMAILS`: comma-separated email addresses with review access.
+- `COACH_ALLOWED_EMAILS`: comma-separated email addresses with coach access.
+- `ADMIN_ALLOWED_EMAILS`: comma-separated email addresses with access to all features.

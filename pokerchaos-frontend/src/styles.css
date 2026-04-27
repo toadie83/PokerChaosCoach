@@ -1,12 +1,18 @@
 :root {
   color-scheme: light;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    sans-serif;
   line-height: 1.5;
   --page-bg: #0b1020;
   --text: #e5e7eb;
   --muted: #9ca3af;
   --panel: #111827;
   --accent: #f0a21c;
+  --content-width: min(960px, 100%);
 }
 
 body {
@@ -17,13 +23,16 @@ body {
 
 #root {
   min-height: 100vh;
-  display: grid;
-  place-items: start center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   padding: 24px 16px 32px;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .wrap {
-  width: min(960px, 100%);
+  width: var(--content-width);
   display: grid;
   gap: 16px;
 }
@@ -95,6 +104,56 @@ body {
   backdrop-filter: blur(6px);
 }
 
+.auth-bar-shell {
+  position: static;
+  left: auto;
+  right: auto;
+  width: var(--content-width);
+  margin: 0 auto 8px;
+  justify-content: space-between;
+  gap: 12px;
+  z-index: 40;
+}
+
+.auth-bar-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.top-nav-link {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.top-nav-link.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(240, 162, 28, 0.16);
+}
+
+.top-nav-link[data-enabled="false"] {
+  color: #d1d5db;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.feature-gate-card {
+  margin-top: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.feature-gate-button {
+  width: fit-content;
+}
+
 .auth-gate {
   width: min(400px, 100%);
   margin-top: 48px;
@@ -124,7 +183,9 @@ body {
   color: #0b1020;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .auth-button.secondary {
@@ -233,9 +294,9 @@ label {
 }
 select,
 input {
-  background: #0b1020;
+  background: #000;
   border: 1px solid #1f2937;
-  color: var(--text);
+  color: #fff;
   border-radius: 10px;
   padding: 8px 12px;
 }
@@ -260,6 +321,12 @@ select {
 .pill-control select option {
   background-color: #111827;
   color: var(--text);
+}
+
+select option,
+select optgroup {
+  background: #000;
+  color: #fff;
 }
 button {
   background: #0bf5744d;
@@ -530,7 +597,7 @@ button {
 @media (max-width: 640px) {
   #root {
     padding: 24px 12px;
-    place-items: stretch;
+    align-items: stretch;
   }
   .wrap {
     width: 100%;
@@ -593,6 +660,24 @@ button {
   .chaos-hud {
     display: none;
   }
+
+  .auth-bar-shell {
+    position: static;
+    left: auto;
+    right: auto;
+    width: var(--content-width);
+    margin: 0 auto 6px;
+    gap: 8px;
+  }
+
+  .top-nav-link {
+    font-size: 0.76rem;
+    padding: 6px 10px;
+  }
+
+  .feature-gate-card {
+    margin-top: 0;
+  }
   .hud-card {
     padding: 12px;
   }
@@ -639,7 +724,9 @@ button {
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 
 .pill-toggle.active {
@@ -696,8 +783,8 @@ button {
   box-sizing: border-box;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.28);
-  color: var(--text);
+  background: #000;
+  color: #fff;
   padding: 8px 10px;
 }
 
@@ -804,6 +891,62 @@ button {
   gap: 10px;
 }
 
+.tournament-coach-summary,
+.tournament-ai-review-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.tournament-coach-summary h4,
+.tournament-ai-review-card h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.tournament-coach-summary p,
+.tournament-ai-review-card p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #d1d5db;
+}
+
+.tournament-ai-paragraph {
+  line-height: 1.5;
+}
+
+.tournament-ai-review {
+  display: grid;
+  gap: 8px;
+}
+
+.summary-section {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 10px 10px;
+}
+
+.summary-section > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #e5e7eb;
+  list-style: none;
+  outline: none;
+}
+
+.summary-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary-section[open] > summary {
+  margin-bottom: 8px;
+}
+
 .tournament-summary-head {
   display: flex;
   align-items: baseline;
@@ -871,6 +1014,33 @@ button {
   font-size: 0.76rem;
 }
 
+.audit-chip-button {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.audit-chip-button:hover:not(:disabled) {
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #fde68a;
+}
+
+.audit-chip-button.active {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.16);
+  color: #fde68a;
+}
+
+.audit-chip-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .opponent-snapshot {
   border: 0;
   border-radius: 0;
@@ -917,8 +1087,8 @@ button {
 .opponent-snapshot-toolbar select {
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.28);
-  color: var(--text);
+  background: #000;
+  color: #fff;
   padding: 4px 8px;
 }
 
@@ -1043,6 +1213,11 @@ button {
   box-shadow: 0 0 0 1px rgba(240, 162, 28, 0.28);
 }
 
+.hand-row.audit-target {
+  border-color: rgba(245, 158, 11, 0.72);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.36);
+}
+
 .hand-row-head,
 .hand-review-card-head {
   display: flex;
@@ -1064,9 +1239,42 @@ button {
   gap: 8px;
 }
 
+.hand-row-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .hand-row-select input[type="checkbox"] {
   width: 14px;
   height: 14px;
+}
+
+.hand-row-quick-review {
+  min-width: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+  color: #facc15;
+  padding: 1px 7px;
+  font-size: 0.78rem;
+  line-height: 1.15;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hand-row-quick-review:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.24);
+  border-color: rgba(245, 158, 11, 0.72);
+}
+
+.hand-row-quick-review.loading {
+  color: #fde68a;
+}
+
+.hand-row-quick-review:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .hand-row-meta {
@@ -1259,7 +1467,10 @@ button {
   padding: 6px 12px;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: border 0.2s, background 0.2s, color 0.2s;
+  transition:
+    border 0.2s,
+    background 0.2s,
+    color 0.2s;
 }
 
 .chip.active {
@@ -1290,7 +1501,9 @@ button {
   cursor: pointer;
   min-width: 110px;
   text-align: left;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .card-pill[data-active="true"] {
@@ -1432,7 +1645,10 @@ button {
   color: var(--muted);
   font-weight: 600;
   cursor: pointer;
-  transition: border 0.2s, background 0.2s, color 0.2s;
+  transition:
+    border 0.2s,
+    background 0.2s,
+    color 0.2s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1464,7 +1680,10 @@ button {
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
-  transition: border 0.2s, background 0.2s, color 0.2s;
+  transition:
+    border 0.2s,
+    background 0.2s,
+    color 0.2s;
 }
 
 .seat-reset-btn:hover {
@@ -1625,7 +1844,9 @@ button {
   color: var(--accent);
   background: rgba(240, 162, 28, 0.16);
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .badge.clickable:hover {
@@ -1911,7 +2132,10 @@ button {
   padding: 4px 12px;
   font-size: 0.75rem;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .hud-toggle.active {
@@ -1950,7 +2174,10 @@ button {
   align-items: center;
   gap: 6px;
   font-size: 0.85rem;
-  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
 }
 
 .command-voice-btn.active {
@@ -2099,7 +2326,10 @@ button {
 
 .board-card.clickable {
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.15s ease;
 }
 
 .board-card.clickable:hover,
@@ -2159,7 +2389,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 }
 
 .play-hand-seat:hover {
@@ -2236,12 +2468,17 @@ button {
 
 .action-btn {
   position: relative;
-  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .action-btn.highlighted {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(240, 162, 28, 0.28), 0 18px 22px rgba(240, 162, 28, 0.12);
+  box-shadow:
+    0 0 0 2px rgba(240, 162, 28, 0.28),
+    0 18px 22px rgba(240, 162, 28, 0.12);
   transform: translateY(-1px);
 }
 
@@ -2298,7 +2535,11 @@ button {
 
 .confidence-fill {
   height: 100%;
-  background: linear-gradient(90deg, rgba(240, 162, 28, 0.9), rgba(56, 189, 248, 0.9));
+  background: linear-gradient(
+    90deg,
+    rgba(240, 162, 28, 0.9),
+    rgba(56, 189, 248, 0.9)
+  );
 }
 
 .confidence-value {
