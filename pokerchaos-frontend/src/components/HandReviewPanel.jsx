@@ -252,9 +252,149 @@ function formatRateWithConfidence(numerator, denominator) {
   )}`;
 }
 
-function buildTournamentCoachSummary(summary) {
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildTournamentRating(summary, postflopDigest) {
   if (!summary?.preflopBreakdown) return null;
   const pre = summary.preflopBreakdown;
+  const penalties = [];
+  const totalHands = Number(summary?.totalHands) || 0;
+  const preflopFoldPct = Number(summary?.preflopFoldPct) || 0;
+  const preflopFoldThreshold = Number(summary?.preflopFoldWarnThreshold) || 78;
+
+  const addPenalty = (label, points, sample) => {
+    const pts = Number(points);
+    if (!Number.isFinite(pts) || pts <= 0) return;
+    penalties.push({
+      label,
+      points: Number(pts.toFixed(1)),
+      sample: Number(sample) || 0,
+    });
+  };
+
+  if (totalHands >= 40 && preflopFoldPct > preflopFoldThreshold) {
+    addPenalty(
+      "High overall preflop fold rate",
+      clamp((preflopFoldPct - preflopFoldThreshold) * 1.2, 0, 20),
+      totalHands
+    );
+  }
+
+  const openSpots = Number(pre.noRaiseBeforeHeroSpots) || 0;
+  const openRate = safePercent(pre.openedWhenNoRaiseBeforeHero, openSpots);
+  if (openSpots >= 12 && openRate < 28) {
+    addPenalty(
+      "Under-opening first-in",
+      clamp((28 - openRate) * 0.65, 0, 14),
+      openSpots
+    );
+  }
+
+  const defendSpots = Number(pre.facingOpenSpots) || 0;
+  const defendRate = safePercent(pre.defendedFacingOpen, defendSpots);
+  if (defendSpots >= 12 && defendRate < 32) {
+    addPenalty(
+      "Underdefending versus opens",
+      clamp((32 - defendRate) * 0.8, 0, 18),
+      defendSpots
+    );
+  }
+
+  const blindSpots = Number(pre.blindFacingOpenSpots) || 0;
+  const blindFoldRate = safePercent(pre.blindFoldFacingOpen, blindSpots);
+  if (blindSpots >= 12 && blindFoldRate > 66) {
+    addPenalty(
+      "Blinds overfolding versus opens",
+      clamp((blindFoldRate - 66) * 0.6, 0, 12),
+      blindSpots
+    );
+  }
+
+  const reraiseSpots = Number(pre.facedReraiseAfterAggressionSpots) || 0;
+  const reraiseFoldRate = safePercent(pre.foldedAfterFacingReraise, reraiseSpots);
+  if (reraiseSpots >= 8 && reraiseFoldRate > 78) {
+    addPenalty(
+      "Overfolding after reraises",
+      clamp((reraiseFoldRate - 78) * 0.35, 0, 6),
+      reraiseSpots
+    );
+  }
+
+  const post = postflopDigest?.findings || {};
+  const scorePostMetric = (label, metric, thresholdPct, scale, cap) => {
+    const opportunities = Number(metric?.opportunities) || 0;
+    const ratePct = Number(metric?.ratePct) || 0;
+    if (opportunities < 8 || ratePct <= thresholdPct) return;
+    addPenalty(
+      label,
+      clamp((ratePct - thresholdPct) * scale, 0, cap),
+      opportunities
+    );
+  };
+
+  scorePostMetric(
+    "Missed in-position c-bets (favorable flop)",
+    post.missedIpCbetFavorable,
+    30,
+    0.45,
+    8
+  );
+  scorePostMetric(
+    "Missed in-position stabs (favorable flop)",
+    post.missedIpStabFavorable,
+    30,
+    0.4,
+    7
+  );
+  scorePostMetric(
+    "Likely light in-position turn folds",
+    post.lightIpFoldTurn,
+    18,
+    0.5,
+    8
+  );
+  scorePostMetric(
+    "Likely light in-position river folds",
+    post.lightIpFoldRiver,
+    16,
+    0.5,
+    8
+  );
+  scorePostMetric(
+    "Missed in-position value-raises",
+    post.missedIpValueRaise,
+    25,
+    0.42,
+    7
+  );
+
+  const totalPenalty = penalties.reduce((sum, item) => sum + item.points, 0);
+  const scorePct = clamp(100 - totalPenalty, 0, 100);
+  const score10 = scorePct / 10;
+  const sortedPenalties = [...penalties].sort((a, b) => b.points - a.points);
+  const isPrelim = totalHands < 60;
+
+  return {
+    scorePct: Number(scorePct.toFixed(1)),
+    score10: Number(score10.toFixed(1)),
+    scorePctLabel: `${scorePct.toFixed(1)}%`,
+    score10Label: `${score10.toFixed(1)}/10`,
+    prelimNote: isPrelim ? "Preliminary rating (sample under 60 hands)." : "",
+    topDrags: sortedPenalties.slice(0, 4).map((item) => ({
+      label: item.label,
+      points: Number(item.points.toFixed(1)),
+      sample: item.sample,
+    })),
+    totalPenalty: Number(totalPenalty.toFixed(1)),
+  };
+}
+
+function buildTournamentCoachSummary(summary, postflopDigest) {
+  if (!summary?.preflopBreakdown) return null;
+  const pre = summary.preflopBreakdown;
+  const rating = buildTournamentRating(summary, postflopDigest);
   const candidates = [];
   const openRate = safePercent(
     pre.openedWhenNoRaiseBeforeHero,
@@ -392,6 +532,7 @@ function buildTournamentCoachSummary(summary) {
   }
 
   return {
+    rating,
     primaryLeak:
       primary?.label || "No single dominant leak identified in current sample",
     secondaryLeak: secondary?.label || null,
@@ -400,41 +541,55 @@ function buildTournamentCoachSummary(summary) {
   };
 }
 
+function ensureSentenceEnding(text) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return /[.!?]$/.test(value) ? value : `${value}.`;
+}
+
+function normalizeInsightLines(items, max = 8) {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const value = String(item || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 function buildAiSummaryParagraph(review) {
   if (!review || typeof review !== "object") return "";
+  const joinSentences = (items, limit) =>
+    items
+      .slice(0, limit)
+      .map(ensureSentenceEnding)
+      .filter(Boolean)
+      .join(" ");
   const primaryLeak = String(review.primary_leak || "").trim();
   const secondaryLeak = String(review.secondary_leak || "").trim();
-  const confidence = confidenceLabel(String(review.confidence || "").trim().toLowerCase());
-  const evidence = Array.isArray(review.evidence)
-    ? review.evidence.map((line) => String(line || "").trim()).filter(Boolean)
-    : [];
-  const actions = Array.isArray(review.actions)
-    ? review.actions.map((line) => String(line || "").trim()).filter(Boolean)
-    : [];
-  const warnings = Array.isArray(review.warnings)
-    ? review.warnings.map((line) => String(line || "").trim()).filter(Boolean)
-    : [];
-
-  const evidenceSnippet = evidence.slice(0, 3).join(" ");
-  const actionSnippet = actions.slice(0, 3).join(" ");
-  const warningSnippet = warnings.slice(0, 1).join(" ");
+  const actions = normalizeInsightLines(review.actions, 8);
+  const warnings = normalizeInsightLines(review.warnings, 8);
+  const actionSnippet = joinSentences(actions, 3);
+  const warningSnippet = joinSentences(warnings, 2);
 
   const parts = [];
   if (primaryLeak) {
-    parts.push(`Primary leak: ${primaryLeak}.`);
+    parts.push(`Primary leak: ${ensureSentenceEnding(primaryLeak)}`);
   }
   if (secondaryLeak && !/no secondary leak flagged/i.test(secondaryLeak)) {
-    parts.push(`Secondary leak: ${secondaryLeak}.`);
-  }
-  parts.push(`Confidence: ${confidence}.`);
-  if (evidenceSnippet) {
-    parts.push(`Key evidence: ${evidenceSnippet}`);
+    parts.push(`Secondary leak: ${ensureSentenceEnding(secondaryLeak)}`);
   }
   if (actionSnippet) {
-    parts.push(`Focus next on: ${actionSnippet}`);
+    parts.push(`Priority fixes: ${actionSnippet}`);
   }
   if (warningSnippet) {
-    parts.push(`Caution: ${warningSnippet}`);
+    parts.push(`Watch-outs: ${warningSnippet}`);
   }
   return parts.join(" ");
 }
@@ -967,6 +1122,479 @@ function buildPreflopOpportunityAudit(hands) {
   };
 }
 
+const POST_FLOP_DECISION_TYPES = new Set([
+  "fold",
+  "check",
+  "call",
+  "bet",
+  "raise",
+  "jam",
+]);
+const POST_FLOP_AGGRESSIVE_TYPES = new Set(["bet", "raise", "jam"]);
+
+function isPostflopDecisionAction(action) {
+  const type = normalizeActionType(action);
+  return POST_FLOP_DECISION_TYPES.has(type);
+}
+
+function isPostflopAggressiveAction(action) {
+  const type = normalizeActionType(action);
+  return POST_FLOP_AGGRESSIVE_TYPES.has(type);
+}
+
+function parseCardToken(token) {
+  const text = String(token || "").trim().toUpperCase();
+  if (text.length < 2) return null;
+  const rank = text[0];
+  const suit = text[text.length - 1];
+  if (!HAND_RANK_INDEX.hasOwnProperty(rank)) return null;
+  return { rank, suit };
+}
+
+function parseCardList(cards) {
+  if (!Array.isArray(cards)) return [];
+  return cards.map(parseCardToken).filter(Boolean);
+}
+
+function hasHeroPairOrBetter(heroCards, boardCards) {
+  if (!Array.isArray(heroCards) || heroCards.length < 2) return false;
+  const hero = parseCardList(heroCards);
+  const board = parseCardList(boardCards);
+  if (hero.length < 2 || board.length === 0) return false;
+  if (hero[0].rank === hero[1].rank) return true;
+  const boardRanks = new Set(board.map((card) => card.rank));
+  return boardRanks.has(hero[0].rank) || boardRanks.has(hero[1].rank);
+}
+
+function hasFlushDraw(heroCards, boardCards) {
+  const hero = parseCardList(heroCards);
+  const board = parseCardList(boardCards);
+  if (hero.length < 2 || board.length < 3) return false;
+  const suitCounts = new Map();
+  for (const card of [...hero, ...board]) {
+    suitCounts.set(card.suit, (suitCounts.get(card.suit) || 0) + 1);
+  }
+  for (const [suit, count] of suitCounts.entries()) {
+    if (count < 4) continue;
+    const heroHasSuit = hero.some((card) => card.suit === suit);
+    const boardHasTwoSuit = board.filter((card) => card.suit === suit).length >= 2;
+    if (heroHasSuit && boardHasTwoSuit) return true;
+  }
+  return false;
+}
+
+function rankValueSet(cards) {
+  const parsed = parseCardList(cards);
+  const values = new Set();
+  for (const card of parsed) {
+    const value = HAND_RANK_INDEX[card.rank] + 2;
+    values.add(value);
+    if (value === 14) values.add(1);
+  }
+  return values;
+}
+
+function hasMadeStraight(values) {
+  for (let start = 1; start <= 10; start += 1) {
+    if (
+      values.has(start) &&
+      values.has(start + 1) &&
+      values.has(start + 2) &&
+      values.has(start + 3) &&
+      values.has(start + 4)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasOpenEndedStraightDraw(heroCards, boardCards) {
+  const values = rankValueSet([...(heroCards || []), ...(boardCards || [])]);
+  if (values.size < 4) return false;
+  if (hasMadeStraight(values)) return false;
+  for (let start = 2; start <= 10; start += 1) {
+    if (
+      values.has(start) &&
+      values.has(start + 1) &&
+      values.has(start + 2) &&
+      values.has(start + 3)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasStrongFlopDraw(heroCards, flopCards) {
+  return (
+    hasFlushDraw(heroCards, flopCards) ||
+    hasOpenEndedStraightDraw(heroCards, flopCards)
+  );
+}
+
+function isFavorableFlopBoard(flopCards) {
+  const flop = parseCardList(flopCards);
+  if (flop.length < 3) return false;
+  const ranks = flop.map((card) => HAND_RANK_INDEX[card.rank] + 2);
+  const suits = new Set(flop.map((card) => card.suit));
+  const rankCounts = new Map();
+  for (const value of ranks) {
+    rankCounts.set(value, (rankCounts.get(value) || 0) + 1);
+  }
+  const isPaired = Array.from(rankCounts.values()).some((count) => count >= 2);
+  const hasHighCard = ranks.some((value) => value >= 12);
+  const isRainbow = suits.size === 3;
+  const sorted = [...new Set(ranks)].sort((a, b) => a - b);
+  let maxAdjacentRun = 1;
+  let run = 1;
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i] === sorted[i - 1] + 1) {
+      run += 1;
+      maxAdjacentRun = Math.max(maxAdjacentRun, run);
+    } else {
+      run = 1;
+    }
+  }
+  const isDry = isRainbow && maxAdjacentRun <= 2;
+  return isPaired || hasHighCard || isDry;
+}
+
+function getBoardCardsToStreet(board, street) {
+  const flop = Array.isArray(board?.flop) ? board.flop.filter(Boolean) : [];
+  const turn = board?.turn ? [board.turn] : [];
+  const river = board?.river ? [board.river] : [];
+  if (street === "flop") return [...flop];
+  if (street === "turn") return [...flop, ...turn];
+  if (street === "river") return [...flop, ...turn, ...river];
+  return [...flop, ...turn, ...river];
+}
+
+function hasStrongMadeHand(heroCards, boardCards) {
+  const hero = parseCardList(heroCards);
+  const board = parseCardList(boardCards);
+  if (hero.length < 2 || board.length < 3) return false;
+  const rankCounts = new Map();
+  for (const card of [...hero, ...board]) {
+    rankCounts.set(card.rank, (rankCounts.get(card.rank) || 0) + 1);
+  }
+  let pairRanks = 0;
+  for (const count of rankCounts.values()) {
+    if (count >= 3) return true;
+    if (count >= 2) pairRanks += 1;
+  }
+  return pairRanks >= 2;
+}
+
+function findLastPreflopAggressor(preflopActions, heroName) {
+  const actions = Array.isArray(preflopActions) ? preflopActions : [];
+  let aggressor = null;
+  for (const action of actions) {
+    if (!isPreflopAggressiveAction(action)) continue;
+    const player = String(action?.player || "").trim();
+    if (!player) continue;
+    aggressor = player;
+  }
+  if (!aggressor) return null;
+  if (aggressor === heroName) return "hero";
+  return "villain";
+}
+
+function buildPostflopInPositionAudit(hands) {
+  const list = Array.isArray(hands) ? hands : [];
+  const missedIpCbetFavorableEvents = [];
+  const missedIpStabFavorableEvents = [];
+  const lightIpFoldFlopEvents = [];
+  const lightIpFoldTurnEvents = [];
+  const lightIpFoldRiverEvents = [];
+  const missedIpValueRaiseEvents = [];
+
+  let ipHeadsUpFlopSpots = 0;
+  let ipHeadsUpTurnSpots = 0;
+  let ipHeadsUpRiverSpots = 0;
+  let ipCbetOpportunities = 0;
+  let ipStabOpportunities = 0;
+  let ipFacingFlopBetSpots = 0;
+  let ipFacingTurnBetSpots = 0;
+  let ipFacingRiverBetSpots = 0;
+  let ipStrongMadeFacingTurnRiverBetSpots = 0;
+  let unknownCardsSpots = 0;
+
+  for (const hand of list) {
+    const heroName = String(hand?.heroName || "").trim();
+    if (!heroName) continue;
+    const heroCards = Array.isArray(hand?.heroCards) ? hand.heroCards : [];
+    const handCode = normalizeHeroHandCode(heroCards) || "Unknown";
+    if (heroCards.length < 2) {
+      unknownCardsSpots += 1;
+      continue;
+    }
+
+    const preflopActions = Array.isArray(hand?.actionsByStreet?.preflop)
+      ? hand.actionsByStreet.preflop
+      : [];
+    const flopActions = Array.isArray(hand?.actionsByStreet?.flop)
+      ? hand.actionsByStreet.flop
+      : [];
+    if (flopActions.length === 0) continue;
+
+    const flopDecisionActions = flopActions.filter(isPostflopDecisionAction);
+    if (flopDecisionActions.length === 0) continue;
+
+    const playersOnFlop = uniquePlayersForStreet(flopDecisionActions);
+    if (playersOnFlop.size !== 2 || !playersOnFlop.has(heroName)) continue;
+
+    const firstDecisionIndex = flopActions.findIndex(isPostflopDecisionAction);
+    if (firstDecisionIndex < 0) continue;
+    const firstDecision = flopActions[firstDecisionIndex];
+    const firstDecisionPlayer = String(firstDecision?.player || "").trim();
+    if (!firstDecisionPlayer || firstDecisionPlayer === heroName) continue;
+
+    const heroFirstDecision = flopActions.find(
+      (action, idx) =>
+        idx > firstDecisionIndex &&
+        String(action?.player || "").trim() === heroName &&
+        isPostflopDecisionAction(action)
+    );
+    if (!heroFirstDecision) continue;
+
+    ipHeadsUpFlopSpots += 1;
+    const firstDecisionType = normalizeActionType(firstDecision);
+    const heroDecisionType = normalizeActionType(heroFirstDecision);
+    const position = normalizePositionForRanges(hand?.heroPosition) || "Unknown";
+    const flopCards = Array.isArray(hand?.board?.flop)
+      ? hand.board.flop.filter(Boolean)
+      : [];
+    const favorableFlop = isFavorableFlopBoard(flopCards);
+    const lastPreflopAggressor = findLastPreflopAggressor(preflopActions, heroName);
+    const isCbetSpot = lastPreflopAggressor === "hero";
+    const isStabSpot = lastPreflopAggressor === "villain";
+
+    if (firstDecisionType === "check") {
+      if (isCbetSpot) {
+        ipCbetOpportunities += 1;
+        if (heroDecisionType === "check" && favorableFlop) {
+          missedIpCbetFavorableEvents.push({
+            type: "missed_ip_cbet_favorable",
+            handKey: handKey(hand),
+            handId: hand?.handId || "Unknown",
+            playedAt: hand?.playedAt || "Unknown",
+            position,
+            handCode,
+            actualAction: heroDecisionType,
+            recommendation: "Bet flop in position more often",
+          });
+        }
+      } else if (isStabSpot) {
+        ipStabOpportunities += 1;
+        if (heroDecisionType === "check" && favorableFlop) {
+          missedIpStabFavorableEvents.push({
+            type: "missed_ip_stab_favorable",
+            handKey: handKey(hand),
+            handId: hand?.handId || "Unknown",
+            playedAt: hand?.playedAt || "Unknown",
+            position,
+            handCode,
+            actualAction: heroDecisionType,
+            recommendation: "Take delayed/stab aggression in position",
+          });
+        }
+      }
+    }
+
+    if (isPostflopAggressiveAction(firstDecision)) {
+      ipFacingFlopBetSpots += 1;
+      const hasPairOrBetter = hasHeroPairOrBetter(heroCards, flopCards);
+      const hasStrongDraw = hasStrongFlopDraw(heroCards, flopCards);
+      if (heroDecisionType === "fold" && (hasPairOrBetter || hasStrongDraw)) {
+        lightIpFoldFlopEvents.push({
+          type: "light_ip_fold_flop",
+          handKey: handKey(hand),
+          handId: hand?.handId || "Unknown",
+          playedAt: hand?.playedAt || "Unknown",
+          position,
+          handCode,
+          actualAction: heroDecisionType,
+          recommendation: "Continue more often with pair/draw in position",
+        });
+      }
+    }
+
+    for (const street of ["turn", "river"]) {
+      const streetActions = Array.isArray(hand?.actionsByStreet?.[street])
+        ? hand.actionsByStreet[street]
+        : [];
+      if (streetActions.length === 0) continue;
+
+      const streetDecisionActions = streetActions.filter(isPostflopDecisionAction);
+      if (streetDecisionActions.length === 0) continue;
+
+      const playersOnStreet = uniquePlayersForStreet(streetDecisionActions);
+      if (playersOnStreet.size !== 2 || !playersOnStreet.has(heroName)) continue;
+
+      const streetFirstDecisionIndex = streetActions.findIndex(isPostflopDecisionAction);
+      if (streetFirstDecisionIndex < 0) continue;
+      const streetFirstDecision = streetActions[streetFirstDecisionIndex];
+      const streetFirstPlayer = String(streetFirstDecision?.player || "").trim();
+      if (!streetFirstPlayer || streetFirstPlayer === heroName) continue;
+
+      const heroStreetDecision = streetActions.find(
+        (action, idx) =>
+          idx > streetFirstDecisionIndex &&
+          String(action?.player || "").trim() === heroName &&
+          isPostflopDecisionAction(action)
+      );
+      if (!heroStreetDecision) continue;
+
+      if (street === "turn") ipHeadsUpTurnSpots += 1;
+      if (street === "river") ipHeadsUpRiverSpots += 1;
+
+      if (!isPostflopAggressiveAction(streetFirstDecision)) continue;
+
+      if (street === "turn") ipFacingTurnBetSpots += 1;
+      if (street === "river") ipFacingRiverBetSpots += 1;
+
+      const heroStreetDecisionType = normalizeActionType(heroStreetDecision);
+      const boardToStreet = getBoardCardsToStreet(hand?.board, street);
+      const hasPairOrBetter = hasHeroPairOrBetter(heroCards, boardToStreet);
+      const hasStrongDraw =
+        street === "turn" ? hasStrongFlopDraw(heroCards, boardToStreet) : false;
+      const strongMadeHand = hasStrongMadeHand(heroCards, boardToStreet);
+
+      if (street === "turn" && heroStreetDecisionType === "fold" && (hasPairOrBetter || hasStrongDraw)) {
+        lightIpFoldTurnEvents.push({
+          type: "light_ip_fold_turn",
+          handKey: handKey(hand),
+          handId: hand?.handId || "Unknown",
+          playedAt: hand?.playedAt || "Unknown",
+          position,
+          handCode,
+          actualAction: heroStreetDecisionType,
+          recommendation: "Defend turn bets in position more often with pair/draw equity",
+        });
+      }
+
+      if (street === "river" && heroStreetDecisionType === "fold" && strongMadeHand) {
+        lightIpFoldRiverEvents.push({
+          type: "light_ip_fold_river",
+          handKey: handKey(hand),
+          handId: hand?.handId || "Unknown",
+          playedAt: hand?.playedAt || "Unknown",
+          position,
+          handCode,
+          actualAction: heroStreetDecisionType,
+          recommendation: "Recheck river folds with strong made hands in position",
+        });
+      }
+
+      if (strongMadeHand) {
+        ipStrongMadeFacingTurnRiverBetSpots += 1;
+        if (heroStreetDecisionType === "call") {
+          missedIpValueRaiseEvents.push({
+            type: `missed_ip_value_raise_${street}`,
+            handKey: handKey(hand),
+            handId: hand?.handId || "Unknown",
+            playedAt: hand?.playedAt || "Unknown",
+            position,
+            handCode,
+            actualAction: heroStreetDecisionType,
+            recommendation: `Consider value-raise on ${street} versus bet with strong made hands`,
+          });
+        }
+      }
+    }
+  }
+
+  const missedIpCbetFavorable = summarizeAuditEvents(missedIpCbetFavorableEvents);
+  const missedIpStabFavorable = summarizeAuditEvents(missedIpStabFavorableEvents);
+  const lightIpFoldFlop = summarizeAuditEvents(lightIpFoldFlopEvents);
+  const lightIpFoldTurn = summarizeAuditEvents(lightIpFoldTurnEvents);
+  const lightIpFoldRiver = summarizeAuditEvents(lightIpFoldRiverEvents);
+  const missedIpValueRaise = summarizeAuditEvents(missedIpValueRaiseEvents);
+
+  const quickFixes = [];
+  const topCbetPos = missedIpCbetFavorable.byPosition[0];
+  const topStabPos = missedIpStabFavorable.byPosition[0];
+  const topFlopFoldPos = lightIpFoldFlop.byPosition[0];
+  const topTurnFoldPos = lightIpFoldTurn.byPosition[0];
+  const topRiverFoldPos = lightIpFoldRiver.byPosition[0];
+  const topValueRaisePos = missedIpValueRaise.byPosition[0];
+  if (topCbetPos) {
+    quickFixes.push(
+      `Increase flop c-bet frequency in position from ${topCbetPos.position}; favorable boards are getting checked too often.`
+    );
+  }
+  if (topStabPos) {
+    quickFixes.push(
+      `Stab more in-position after villain checks from ${topStabPos.position}; passivity is giving up EV.`
+    );
+  }
+  if (topFlopFoldPos) {
+    quickFixes.push(
+      `Defend flop bets in position more often from ${topFlopFoldPos.position} when holding pair/draw equity.`
+    );
+  }
+  if (topTurnFoldPos) {
+    quickFixes.push(
+      `Defend turn bets in position more often from ${topTurnFoldPos.position} when your hand retains equity.`
+    );
+  }
+  if (topRiverFoldPos) {
+    quickFixes.push(
+      `Review river folds in position from ${topRiverFoldPos.position}; strong made hands may be overfolding.`
+    );
+  }
+  if (topValueRaisePos) {
+    quickFixes.push(
+      `Add more value-raises in position from ${topValueRaisePos.position} when strong made hands face turn/river bets.`
+    );
+  }
+  if (quickFixes.length === 0) {
+    quickFixes.push(
+      "No dominant postflop in-position leak found in this MVP heads-up sample."
+    );
+  }
+
+  return {
+    scope: "heads_up_flop_turn_river_only",
+    ipHeadsUpFlopSpots,
+    ipHeadsUpTurnSpots,
+    ipHeadsUpRiverSpots,
+    ipCbetOpportunities,
+    ipStabOpportunities,
+    ipFacingFlopBetSpots,
+    ipFacingTurnBetSpots,
+    ipFacingRiverBetSpots,
+    ipStrongMadeFacingTurnRiverBetSpots,
+    unknownCardsSpots,
+    missedIpCbetFavorable: {
+      count: missedIpCbetFavorableEvents.length,
+      ...missedIpCbetFavorable,
+    },
+    missedIpStabFavorable: {
+      count: missedIpStabFavorableEvents.length,
+      ...missedIpStabFavorable,
+    },
+    lightIpFoldFlop: {
+      count: lightIpFoldFlopEvents.length,
+      ...lightIpFoldFlop,
+    },
+    lightIpFoldTurn: {
+      count: lightIpFoldTurnEvents.length,
+      ...lightIpFoldTurn,
+    },
+    lightIpFoldRiver: {
+      count: lightIpFoldRiverEvents.length,
+      ...lightIpFoldRiver,
+    },
+    missedIpValueRaise: {
+      count: missedIpValueRaiseEvents.length,
+      ...missedIpValueRaise,
+    },
+    quickFixes,
+  };
+}
+
 function hasAuditReference(event) {
   const key = String(event?.handKey || event?.sampleHandKey || "").trim();
   if (key) return true;
@@ -1431,9 +2059,137 @@ export default function HandReviewPanel() {
     () => buildPreflopOpportunityAudit(parsedHands),
     [parsedHands]
   );
+  const postflopInPositionAudit = useMemo(
+    () => buildPostflopInPositionAudit(parsedHands),
+    [parsedHands]
+  );
+  const postflopIpAuditDigest = useMemo(() => {
+    const audit = postflopInPositionAudit || {};
+    return {
+      scope: String(audit?.scope || "unknown"),
+      spots: {
+        headsUpFlop: Number(audit?.ipHeadsUpFlopSpots) || 0,
+        headsUpTurn: Number(audit?.ipHeadsUpTurnSpots) || 0,
+        headsUpRiver: Number(audit?.ipHeadsUpRiverSpots) || 0,
+      },
+      findings: {
+        missedIpCbetFavorable: {
+          count: Number(audit?.missedIpCbetFavorable?.count) || 0,
+          opportunities: Number(audit?.ipCbetOpportunities) || 0,
+          ratePct: safePercent(
+            Number(audit?.missedIpCbetFavorable?.count) || 0,
+            Number(audit?.ipCbetOpportunities) || 0
+          ),
+        },
+        missedIpStabFavorable: {
+          count: Number(audit?.missedIpStabFavorable?.count) || 0,
+          opportunities: Number(audit?.ipStabOpportunities) || 0,
+          ratePct: safePercent(
+            Number(audit?.missedIpStabFavorable?.count) || 0,
+            Number(audit?.ipStabOpportunities) || 0
+          ),
+        },
+        lightIpFoldFlop: {
+          count: Number(audit?.lightIpFoldFlop?.count) || 0,
+          opportunities: Number(audit?.ipFacingFlopBetSpots) || 0,
+          ratePct: safePercent(
+            Number(audit?.lightIpFoldFlop?.count) || 0,
+            Number(audit?.ipFacingFlopBetSpots) || 0
+          ),
+        },
+        lightIpFoldTurn: {
+          count: Number(audit?.lightIpFoldTurn?.count) || 0,
+          opportunities: Number(audit?.ipFacingTurnBetSpots) || 0,
+          ratePct: safePercent(
+            Number(audit?.lightIpFoldTurn?.count) || 0,
+            Number(audit?.ipFacingTurnBetSpots) || 0
+          ),
+        },
+        lightIpFoldRiver: {
+          count: Number(audit?.lightIpFoldRiver?.count) || 0,
+          opportunities: Number(audit?.ipFacingRiverBetSpots) || 0,
+          ratePct: safePercent(
+            Number(audit?.lightIpFoldRiver?.count) || 0,
+            Number(audit?.ipFacingRiverBetSpots) || 0
+          ),
+        },
+        missedIpValueRaise: {
+          count: Number(audit?.missedIpValueRaise?.count) || 0,
+          opportunities:
+            Number(audit?.ipStrongMadeFacingTurnRiverBetSpots) || 0,
+          ratePct: safePercent(
+            Number(audit?.missedIpValueRaise?.count) || 0,
+            Number(audit?.ipStrongMadeFacingTurnRiverBetSpots) || 0
+          ),
+        },
+      },
+      quickFixes: Array.isArray(audit?.quickFixes)
+        ? audit.quickFixes.filter(Boolean).slice(0, 3)
+        : [],
+    };
+  }, [postflopInPositionAudit]);
+  const postflopIpHighlights = useMemo(() => {
+    const f = postflopIpAuditDigest?.findings || {};
+    const candidates = [
+      {
+        label: "Missed IP c-bet (favorable flop)",
+        count: Number(f?.missedIpCbetFavorable?.count) || 0,
+        opportunities: Number(f?.missedIpCbetFavorable?.opportunities) || 0,
+      },
+      {
+        label: "Missed IP stab (favorable flop)",
+        count: Number(f?.missedIpStabFavorable?.count) || 0,
+        opportunities: Number(f?.missedIpStabFavorable?.opportunities) || 0,
+      },
+      {
+        label: "Likely light IP flop folds",
+        count: Number(f?.lightIpFoldFlop?.count) || 0,
+        opportunities: Number(f?.lightIpFoldFlop?.opportunities) || 0,
+      },
+      {
+        label: "Likely light IP turn folds",
+        count: Number(f?.lightIpFoldTurn?.count) || 0,
+        opportunities: Number(f?.lightIpFoldTurn?.opportunities) || 0,
+      },
+      {
+        label: "Likely light IP river folds",
+        count: Number(f?.lightIpFoldRiver?.count) || 0,
+        opportunities: Number(f?.lightIpFoldRiver?.opportunities) || 0,
+      },
+      {
+        label: "Missed IP value-raises",
+        count: Number(f?.missedIpValueRaise?.count) || 0,
+        opportunities: Number(f?.missedIpValueRaise?.opportunities) || 0,
+      },
+    ]
+      .filter((row) => row.count > 0 && row.opportunities > 0)
+      .sort(
+        (a, b) =>
+          safePercent(b.count, b.opportunities) -
+            safePercent(a.count, a.opportunities) || b.count - a.count
+      )
+      .slice(0, 3);
+
+    return candidates.map(
+      (row) =>
+        `${row.label}: ${rateCountLabel(row.count, row.opportunities)}.`
+    );
+  }, [postflopIpAuditDigest]);
+  const aiSummaryActions = useMemo(
+    () => normalizeInsightLines(summaryReview?.actions, 6),
+    [summaryReview]
+  );
+  const aiSummaryWarnings = useMemo(
+    () => normalizeInsightLines(summaryReview?.warnings, 6),
+    [summaryReview]
+  );
   const tournamentCoachSummary = useMemo(
-    () => buildTournamentCoachSummary(tournamentSummary),
-    [tournamentSummary]
+    () =>
+      buildTournamentCoachSummary(
+        tournamentSummary,
+        postflopIpAuditDigest
+      ),
+    [tournamentSummary, postflopIpAuditDigest]
   );
   const tournamentSummaryPayload = useMemo(() => {
     if (!tournamentSummary) return null;
@@ -1453,9 +2209,11 @@ export default function HandReviewPanel() {
       foldedRiver: tournamentSummary.foldedRiver,
       avgEntryStackBb: tournamentSummary.avgEntryStackBb,
       preflopBreakdown: tournamentSummary.preflopBreakdown,
+      postflopIpAudit: postflopIpAuditDigest,
+      tournamentRating: tournamentCoachSummary?.rating || null,
       topStatuses: tournamentSummary.topStatuses,
     };
-  }, [tournamentSummary]);
+  }, [tournamentSummary, postflopIpAuditDigest, tournamentCoachSummary]);
 
   const parsePayload = useMemo(
     () => ({
@@ -1920,6 +2678,39 @@ export default function HandReviewPanel() {
               {tournamentCoachSummary ? (
                 <div className="tournament-coach-summary">
                   <h4>Coach Summary</h4>
+                  {tournamentCoachSummary.rating ? (
+                    <>
+                      <p>
+                        <strong>Tournament rating:</strong>{" "}
+                        {tournamentCoachSummary.rating.score10Label} (
+                        {tournamentCoachSummary.rating.scorePctLabel})
+                      </p>
+                      {tournamentCoachSummary.rating.prelimNote ? (
+                        <p className="hand-review-empty">
+                          {tournamentCoachSummary.rating.prelimNote}
+                        </p>
+                      ) : null}
+                      {tournamentCoachSummary.rating.topDrags.length > 0 ? (
+                        <details className="coach-drags-pill">
+                          <summary>
+                            Biggest drags ({tournamentCoachSummary.rating.topDrags.length})
+                          </summary>
+                          <div className="tournament-summary-flags">
+                            {tournamentCoachSummary.rating.topDrags.map(
+                              (drag, idx) => (
+                                <p
+                                  key={`coach-rating-drag-${idx}`}
+                                  className="trend-flag watch"
+                                >
+                                  {drag.label}: -{drag.points.toFixed(1)} points
+                                </p>
+                              )
+                            )}
+                          </div>
+                        </details>
+                      ) : null}
+                    </>
+                  ) : null}
                   <p>
                     <strong>Primary leak:</strong> {tournamentCoachSummary.primaryLeak}
                   </p>
@@ -1951,6 +2742,18 @@ export default function HandReviewPanel() {
                   </div>
                 </div>
               ) : null}
+              {postflopIpHighlights.length > 0 ? (
+                <div className="tournament-coach-summary">
+                  <h4>Postflop IP Highlights</h4>
+                  <div className="tournament-summary-flags">
+                    {postflopIpHighlights.map((line, idx) => (
+                      <p key={`postflop-ip-highlight-${idx}`} className="trend-flag watch">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="tournament-ai-review">
                 <button
@@ -1970,6 +2773,34 @@ export default function HandReviewPanel() {
                     <p className="tournament-ai-paragraph">
                       {buildAiSummaryParagraph(summaryReview)}
                     </p>
+                    {aiSummaryActions.length > 0 ? (
+                      <>
+                        <p>
+                          <strong>Priority fixes:</strong>
+                        </p>
+                        <div className="tournament-summary-flags">
+                          {aiSummaryActions.slice(0, 4).map((line, idx) => (
+                            <p key={`ai-summary-action-${idx}`} className="trend-flag good">
+                              {ensureSentenceEnding(line)}
+                            </p>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {aiSummaryWarnings.length > 0 ? (
+                      <>
+                        <p>
+                          <strong>Watch-outs:</strong>
+                        </p>
+                        <div className="tournament-summary-flags">
+                          {aiSummaryWarnings.slice(0, 3).map((line, idx) => (
+                            <p key={`ai-summary-warning-${idx}`} className="trend-flag watch">
+                              {ensureSentenceEnding(line)}
+                            </p>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -2313,6 +3144,306 @@ export default function HandReviewPanel() {
                         <button
                           type="button"
                           key={`missed-open-example-${event.handId}-${event.playedAt}`}
+                          className={`audit-chip-button ${
+                            selectedAuditHandKey &&
+                            event.handKey &&
+                            selectedAuditHandKey === event.handKey
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => openAuditHand(event)}
+                          disabled={!hasAuditReference(event)}
+                        >
+                          {event.handId}: {event.position} {event.handCode} {event.actualAction} -{" "}
+                          {event.recommendation}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </details>
+
+              <details className="summary-section">
+                <summary>Postflop In Position Audit (MVP)</summary>
+                <p className="hand-review-empty">
+                  Scope: heads-up flop/turn/river spots where hero acts in position.
+                </p>
+                <div className="tournament-summary-metrics">
+                  <span>
+                    IP HU flop spots scored:{" "}
+                    {postflopInPositionAudit.ipHeadsUpFlopSpots}
+                  </span>
+                  <span>
+                    IP HU turn spots scored:{" "}
+                    {postflopInPositionAudit.ipHeadsUpTurnSpots}
+                  </span>
+                  <span>
+                    IP HU river spots scored:{" "}
+                    {postflopInPositionAudit.ipHeadsUpRiverSpots}
+                  </span>
+                  <span>
+                    IP c-bet opportunities:{" "}
+                    {postflopInPositionAudit.ipCbetOpportunities}
+                  </span>
+                  <span>
+                    IP stab opportunities:{" "}
+                    {postflopInPositionAudit.ipStabOpportunities}
+                  </span>
+                </div>
+                <div className="tournament-summary-metrics">
+                  <span>
+                    IP spots facing flop bet:{" "}
+                    {postflopInPositionAudit.ipFacingFlopBetSpots}
+                  </span>
+                  <span>
+                    IP spots facing turn bet:{" "}
+                    {postflopInPositionAudit.ipFacingTurnBetSpots}
+                  </span>
+                  <span>
+                    IP spots facing river bet:{" "}
+                    {postflopInPositionAudit.ipFacingRiverBetSpots}
+                  </span>
+                  <span>
+                    Strong made vs turn/river bet spots:{" "}
+                    {postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots}
+                  </span>
+                </div>
+                <div className="tournament-summary-metrics">
+                  <span>
+                    Missed IP c-bet on favorable flop:{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.missedIpCbetFavorable.count,
+                      postflopInPositionAudit.ipCbetOpportunities
+                    )}
+                  </span>
+                  <span>
+                    Missed IP stab on favorable flop:{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.missedIpStabFavorable.count,
+                      postflopInPositionAudit.ipStabOpportunities
+                    )}
+                  </span>
+                  <span>
+                    Likely light IP flop folds:{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.lightIpFoldFlop.count,
+                      postflopInPositionAudit.ipFacingFlopBetSpots
+                    )}
+                  </span>
+                  <span>
+                    Likely light IP turn folds:{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.lightIpFoldTurn.count,
+                      postflopInPositionAudit.ipFacingTurnBetSpots
+                    )}
+                  </span>
+                  <span>
+                    Likely light IP river folds:{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.lightIpFoldRiver.count,
+                      postflopInPositionAudit.ipFacingRiverBetSpots
+                    )}
+                  </span>
+                  <span>
+                    Missed IP value-raises (turn/river):{" "}
+                    {rateCountLabel(
+                      postflopInPositionAudit.missedIpValueRaise.count,
+                      postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots
+                    )}
+                  </span>
+                  <span>
+                    Missing hole cards: {postflopInPositionAudit.unknownCardsSpots}
+                  </span>
+                </div>
+                <div className="tournament-summary-flags">
+                  {postflopInPositionAudit.quickFixes.map((line, idx) => (
+                    <p
+                      key={`postflop-audit-fix-${idx}`}
+                      className={`trend-flag ${
+                        line.startsWith("No dominant") ? "good" : "watch"
+                      }`}
+                    >
+                      {line}
+                    </p>
+                  ))}
+                </div>
+
+                {postflopInPositionAudit.missedIpCbetFavorable.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top missed IP c-bets (favorable flop):</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.missedIpCbetFavorable.topCombos.map(
+                        (row) => (
+                          <button
+                            type="button"
+                            key={`postflop-cbet-${row.position}-${row.handCode}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              row.sampleHandKey &&
+                              selectedAuditHandKey === row.sampleHandKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(row)}
+                            disabled={!hasAuditReference(row)}
+                          >
+                            {row.handCode} ({row.position}) x{row.count}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.missedIpStabFavorable.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top missed IP stabs (favorable flop):</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.missedIpStabFavorable.topCombos.map(
+                        (row) => (
+                          <button
+                            type="button"
+                            key={`postflop-stab-${row.position}-${row.handCode}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              row.sampleHandKey &&
+                              selectedAuditHandKey === row.sampleHandKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(row)}
+                            disabled={!hasAuditReference(row)}
+                          >
+                            {row.handCode} ({row.position}) x{row.count}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.lightIpFoldFlop.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top likely light IP flop folds:</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.lightIpFoldFlop.topCombos.map((row) => (
+                        <button
+                          type="button"
+                          key={`postflop-flop-fold-${row.position}-${row.handCode}`}
+                          className={`audit-chip-button ${
+                            selectedAuditHandKey &&
+                            row.sampleHandKey &&
+                            selectedAuditHandKey === row.sampleHandKey
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => openAuditHand(row)}
+                          disabled={!hasAuditReference(row)}
+                        >
+                          {row.handCode} ({row.position}) x{row.count}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.lightIpFoldTurn.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top likely light IP turn folds:</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.lightIpFoldTurn.topCombos.map((row) => (
+                        <button
+                          type="button"
+                          key={`postflop-turn-fold-${row.position}-${row.handCode}`}
+                          className={`audit-chip-button ${
+                            selectedAuditHandKey &&
+                            row.sampleHandKey &&
+                            selectedAuditHandKey === row.sampleHandKey
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => openAuditHand(row)}
+                          disabled={!hasAuditReference(row)}
+                        >
+                          {row.handCode} ({row.position}) x{row.count}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.lightIpFoldRiver.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top likely light IP river folds:</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.lightIpFoldRiver.topCombos.map((row) => (
+                        <button
+                          type="button"
+                          key={`postflop-river-fold-${row.position}-${row.handCode}`}
+                          className={`audit-chip-button ${
+                            selectedAuditHandKey &&
+                            row.sampleHandKey &&
+                            selectedAuditHandKey === row.sampleHandKey
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => openAuditHand(row)}
+                          disabled={!hasAuditReference(row)}
+                        >
+                          {row.handCode} ({row.position}) x{row.count}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.missedIpValueRaise.topCombos.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Top missed IP value-raises (turn/river):</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.missedIpValueRaise.topCombos.map((row) => (
+                        <button
+                          type="button"
+                          key={`postflop-value-raise-${row.position}-${row.handCode}`}
+                          className={`audit-chip-button ${
+                            selectedAuditHandKey &&
+                            row.sampleHandKey &&
+                            selectedAuditHandKey === row.sampleHandKey
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => openAuditHand(row)}
+                          disabled={!hasAuditReference(row)}
+                        >
+                          {row.handCode} ({row.position}) x{row.count}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                {postflopInPositionAudit.missedIpValueRaise.examples.length > 0 ? (
+                  <>
+                    <p>
+                      <strong>Example missed IP value-raises:</strong>
+                    </p>
+                    <div className="tournament-summary-statuses">
+                      {postflopInPositionAudit.missedIpValueRaise.examples.map((event) => (
+                        <button
+                          type="button"
+                          key={`postflop-value-raise-example-${event.handId}-${event.playedAt}`}
                           className={`audit-chip-button ${
                             selectedAuditHandKey &&
                             event.handKey &&
