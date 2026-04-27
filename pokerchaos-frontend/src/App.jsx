@@ -5,7 +5,6 @@ import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
 import DecisionCard from "./components/DecisionCard.jsx";
 import HistoryStrip from "./components/HistoryStrip.jsx";
-import HandReviewPanel from "./components/HandReviewPanel.jsx";
 import PlayHandModal from "./components/PlayHandModal.jsx";
 import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
@@ -46,7 +45,6 @@ export default function App() {
   const [previewSizing, setPreviewSizing] = useState(null);
   const [stackModalOpen, setStackModalOpen] = useState(false);
   const [playHandOpen, setPlayHandOpen] = useState(false);
-  const [handReviewOpen, setHandReviewOpen] = useState(false);
   const handlePlayHandOpen = useCallback(() => {
     setField("heroSeat", "");
     setField("heroCards", { card1: null, card2: null });
@@ -75,7 +73,7 @@ export default function App() {
       }
       setStackModalOpen(false);
     },
-    [setField]
+    [setField],
   );
 
   useEffect(() => {
@@ -83,7 +81,7 @@ export default function App() {
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(
           "pcc_compact_mode",
-          compactMode ? "true" : "false"
+          compactMode ? "true" : "false",
         );
       }
     } catch {}
@@ -134,7 +132,7 @@ export default function App() {
         setField("heroCards", normalized);
       }, 0);
     },
-    [handleReset, setField, state.heroSeat]
+    [handleReset, setField, state.heroSeat],
   );
 
   const onAction = useCallback(
@@ -182,7 +180,7 @@ export default function App() {
               ? null
               : { kind: parsed.kind, value: parsed.value };
           const note = /squeeze|probe|c\s*bet|cbet|check-?raise|delayed/i.test(
-            coach.hero_action || ""
+            coach.hero_action || "",
           )
             ? coach.hero_action || ""
             : undefined;
@@ -222,7 +220,7 @@ export default function App() {
 
         if (additions.length > 0) {
           const nextHistory = [...(state.history || []), ...additions].slice(
-            -8
+            -8,
           );
           setField("history", nextHistory);
           const isOpp = evt.startsWith("opp_");
@@ -233,7 +231,7 @@ export default function App() {
       } catch {}
       dispatch(evt);
     },
-    [dispatch, coach, state.street, state.history, setField]
+    [dispatch, coach, state.street, state.history, setField],
   );
 
   useEffect(() => {
@@ -306,7 +304,7 @@ export default function App() {
           lastCoachAt.current = Date.now();
           try {
             const inc = /bet|raise|jam|3-bet|4-bet|open/i.test(
-              res?.hero_action || ""
+              res?.hero_action || "",
             )
               ? 1
               : -0.5;
@@ -359,7 +357,7 @@ export default function App() {
 
   const seats = useMemo(
     () => seatsForTableSize(state.tableSize),
-    [state.tableSize]
+    [state.tableSize],
   );
   const mood = useMemo(
     () => getChaosMood(state),
@@ -368,11 +366,11 @@ export default function App() {
       state.aggressors,
       state.previousActions.length,
       state.lastEventAt,
-    ]
+    ],
   );
   const sizingNote = useMemo(
     () => computeSizingNote(state, coach),
-    [state, coach]
+    [state, coach],
   );
 
   const persona = state.persona || "chaos_shark";
@@ -437,7 +435,7 @@ export default function App() {
         ? cards.map((card) =>
             typeof card === "string" && card.trim().length === 2
               ? card.trim().toUpperCase()
-              : null
+              : null,
           )
         : [null, null, null];
       const prevBoard = state.board || {
@@ -449,7 +447,7 @@ export default function App() {
         ? prevBoard.flop.map((card) =>
             typeof card === "string" && card.trim().length === 2
               ? card.trim().toUpperCase()
-              : null
+              : null,
           )
         : [null, null, null];
       const unchanged =
@@ -465,7 +463,7 @@ export default function App() {
       });
       setCoach(null);
     },
-    [setField, state.board]
+    [setField, state.board],
   );
   const handleTurnCardChange = useCallback(
     (card) => {
@@ -490,7 +488,7 @@ export default function App() {
       });
       setCoach(null);
     },
-    [setField, state.board]
+    [setField, state.board],
   );
   const handleRiverCardChange = useCallback(
     (card) => {
@@ -515,7 +513,7 @@ export default function App() {
       });
       setCoach(null);
     },
-    [setField, state.board]
+    [setField, state.board],
   );
   const openFlopManualSelector = useCallback(() => {
     const sanitize = (value) =>
@@ -573,7 +571,7 @@ export default function App() {
         },
       });
     },
-    [state.board, openCardSelector, handleFlopCardsChange]
+    [state.board, openCardSelector, handleFlopCardsChange],
   );
 
   const openTurnCardSelector = useCallback(
@@ -596,7 +594,7 @@ export default function App() {
         },
       });
     },
-    [state.board, openCardSelector, handleTurnCardChange]
+    [state.board, openCardSelector, handleTurnCardChange],
   );
 
   const openRiverCardSelector = useCallback(
@@ -619,7 +617,7 @@ export default function App() {
         },
       });
     },
-    [state.board, openCardSelector, handleRiverCardChange]
+    [state.board, openCardSelector, handleRiverCardChange],
   );
 
   const handleCardSelectorSave = useCallback(
@@ -629,7 +627,7 @@ export default function App() {
       }
       closeCardSelector();
     },
-    [cardSelectorConfig, closeCardSelector]
+    [cardSelectorConfig, closeCardSelector],
   );
   const rawHeroStack = state.heroStackBB;
   const rawVillainStack = state.villainStackBB;
@@ -644,8 +642,8 @@ export default function App() {
       ? Math.min(heroStackNumber, villainStackNumber)
       : heroStackNumber
     : villainStackValid
-    ? villainStackNumber
-    : "";
+      ? villainStackNumber
+      : "";
   const potTotal =
     typeof state.potSizes?.total === "number" &&
     Number.isFinite(state.potSizes.total) &&
@@ -676,7 +674,7 @@ export default function App() {
         Number.isFinite(numeric) && numeric > 0 ? numeric : null;
       setField("potSizes", { total: nextValue });
     },
-    [setField]
+    [setField],
   );
   const personaOptions = [
     {
@@ -781,7 +779,7 @@ export default function App() {
 
   const actions = useMemo(
     () => getAvailableActions(state, !!coach),
-    [state, coach]
+    [state, coach],
   );
 
   const styleOptions = [
@@ -791,7 +789,7 @@ export default function App() {
   ];
   const styleIndex = Math.max(
     0,
-    styleOptions.findIndex((o) => o.code === state.style)
+    styleOptions.findIndex((o) => o.code === state.style),
   );
 
   const showStyleSelector = persona === "chaos_shark";
@@ -879,8 +877,8 @@ export default function App() {
         entry.sizing && entry.sizing.kind === "percent"
           ? `${entry.sizing.value}%`
           : entry.sizing && entry.sizing.kind === "multiple"
-          ? `${entry.sizing.value}x`
-          : "";
+            ? `${entry.sizing.value}x`
+            : "";
       return [actor, entry.action, sizing].filter(Boolean).join(" ");
     });
   }, [state.history, state.heroSeat]);
@@ -904,7 +902,7 @@ export default function App() {
     (size) => {
       setPreviewSizing(size?.preview || size?.label || "");
     },
-    [setPreviewSizing]
+    [setPreviewSizing],
   );
 
   useEffect(() => {
@@ -987,7 +985,7 @@ export default function App() {
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <h1 className="title">Poker Chaos Coach</h1>
+              <h1 className="title">Chaos Coach</h1>
             </div>
             <div className="panel-heading-actions">
               <button
@@ -1008,14 +1006,6 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className={`pill-toggle ${handReviewOpen ? "active" : ""}`}
-                onClick={() => setHandReviewOpen((value) => !value)}
-                title="Open parsed hand-history review tools"
-              >
-                Hand Review
-              </button>
-              <button
-                type="button"
                 className="pill-toggle"
                 onClick={() => setSetupOpen((value) => !value)}
               >
@@ -1024,7 +1014,6 @@ export default function App() {
             </div>
           </div>
           <ChaosHud mood={mood} />
-          {handReviewOpen ? <HandReviewPanel /> : null}
           <div className="quick-pills">
             <div
               className="pill-field persona-field"
@@ -1233,7 +1222,7 @@ export default function App() {
                       const val = Number(e.target.value);
                       setField(
                         "heroStackBB",
-                        Number.isFinite(val) && val > 0 ? val : null
+                        Number.isFinite(val) && val > 0 ? val : null,
                       );
                     }}
                   />
@@ -1257,7 +1246,7 @@ export default function App() {
                     onChange={(e) => {
                       const code = e.target.value;
                       const option = villainStackRanges.find(
-                        (item) => item.code === code
+                        (item) => item.code === code,
                       );
                       setField("villainStackBB", option?.value || null);
                     }}

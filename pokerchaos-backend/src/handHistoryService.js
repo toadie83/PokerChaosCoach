@@ -1139,6 +1139,7 @@ export function compactHandForApi(hand) {
     handId: hand.handId,
     tournamentId: hand.tournamentId,
     playedAt: hand.playedAt,
+    playedAtEpoch: hand.playedAtEpoch ?? null,
     seats: (Array.isArray(hand.seats) ? hand.seats : []).map((seat) => ({
       seat: seat?.seat ?? null,
       player: seat?.player ?? null,

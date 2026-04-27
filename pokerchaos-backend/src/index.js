@@ -2,8 +2,12 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { z } from "zod";
-import { verifyToken } from "@clerk/backend";
-import { getAggressionPrompt, reviewTournamentHand } from "./openaiService.js";
+import { createClerkClient, verifyToken } from "@clerk/backend";
+import {
+  getAggressionPrompt,
+  reviewTournamentHand,
+  reviewTournamentSummary,
+} from "./openaiService.js";
 import {
   buildOpponentSnapshot,
   compactHandForApi,
@@ -26,6 +30,15 @@ if (!process.env.OPENAI_API_KEY) {
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 const clerkIssuer = process.env.CLERK_ISSUER;
+const reviewAllowAll = String(process.env.REVIEW_ALLOW_ALL || "true")
+  .trim()
+  .toLowerCase() !== "false";
+const coachAllowAll = String(process.env.COACH_ALLOW_ALL || "false")
+  .trim()
+  .toLowerCase() === "true";
+const clerkClient = clerkSecretKey
+  ? createClerkClient({ secretKey: clerkSecretKey })
+  : null;
 
 const app = express();
 
@@ -40,6 +53,89 @@ app.use(express.json({ limit: "8mb" }));
 app.get("/healthz", (_req, res) => {
   res.json({ ok: true, service: "pokerchaos-backend" });
 });
+
+function parseUserIdSet(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function parseEmailSet(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+const reviewAllowedUserIds = parseUserIdSet(process.env.REVIEW_ALLOWED_USER_IDS);
+const coachAllowedUserIds = parseUserIdSet(process.env.COACH_ALLOWED_USER_IDS);
+const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
+const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
+const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
+const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
+const shouldLookupUserEmails =
+  reviewAllowedEmails.size > 0 ||
+  coachAllowedEmails.size > 0 ||
+  adminAllowedEmails.size > 0;
+
+function normalizeEmail(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
+function extractUserEmails(user) {
+  const emails = new Set();
+  const addEmail = (value) => {
+    const normalized = normalizeEmail(value);
+    if (normalized) emails.add(normalized);
+  };
+
+  const primaryEmail = user?.primaryEmailAddress;
+  addEmail(primaryEmail?.emailAddress || primaryEmail?.email_address || null);
+
+  const emailAddresses = Array.isArray(user?.emailAddresses)
+    ? user.emailAddresses
+    : [];
+  for (const item of emailAddresses) {
+    addEmail(item?.emailAddress || item?.email_address || null);
+  }
+  return Array.from(emails);
+}
+
+function hasAnyMatchingEmail(candidateEmails, allowedEmailSet) {
+  if (!(allowedEmailSet instanceof Set) || allowedEmailSet.size === 0) return false;
+  const emails = Array.isArray(candidateEmails) ? candidateEmails : [];
+  return emails.some((email) => allowedEmailSet.has(normalizeEmail(email)));
+}
+
+function buildEntitlements(userId, userEmails = []) {
+  const uid = String(userId || "").trim();
+  const isAdmin =
+    adminUserIds.has(uid) || hasAnyMatchingEmail(userEmails, adminAllowedEmails);
+  const review =
+    isAdmin ||
+    reviewAllowAll ||
+    reviewAllowedUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, reviewAllowedEmails);
+  const coach =
+    isAdmin ||
+    coachAllowAll ||
+    coachAllowedUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, coachAllowedEmails);
+  return {
+    review,
+    coach,
+    admin: isAdmin,
+    emails: Array.isArray(userEmails) ? userEmails : [],
+  };
+}
 
 async function requireAuth(req, res, next) {
   if (!clerkSecretKey) {
@@ -59,12 +155,37 @@ async function requireAuth(req, res, next) {
       secretKey: clerkSecretKey,
       issuer: clerkIssuer,
     });
-    req.auth = { userId: session.sub };
+    const userId = session.sub;
+    let userEmails = [];
+    if (shouldLookupUserEmails && clerkClient && userId) {
+      try {
+        const clerkUser = await clerkClient.users.getUser(userId);
+        userEmails = extractUserEmails(clerkUser);
+      } catch (error) {
+        console.warn(
+          `[pokerchaos-backend] Failed to resolve Clerk user emails for ${userId}`,
+          error
+        );
+      }
+    }
+    req.auth = { userId };
+    req.entitlements = buildEntitlements(userId, userEmails);
     return next();
   } catch (error) {
     console.warn("[pokerchaos-backend] Auth failed", error);
     return res.status(401).json({ error: "Invalid or expired token." });
   }
+}
+
+function requireFeature(featureKey) {
+  return function featureGuard(req, res, next) {
+    const features = req.entitlements || {};
+    if (features[featureKey]) return next();
+    return res.status(403).json({
+      error: "Feature is not enabled for this account.",
+      requiredFeature: featureKey,
+    });
+  };
 }
 
 const promptSchema = z.object({
@@ -83,6 +204,12 @@ const handHistorySchema = z.object({
 const handReviewSchema = z.object({
   selectedHands: z.array(z.record(z.any())).min(1).max(30),
   opponentSnapshot: z.record(z.any()).optional(),
+  instruction: z.string().trim().max(700).optional(),
+  model: z.string().trim().optional(),
+});
+
+const summaryReviewSchema = z.object({
+  summary: z.record(z.any()),
   instruction: z.string().trim().max(700).optional(),
   model: z.string().trim().optional(),
 });
@@ -256,7 +383,19 @@ function attachOpponentContextToHand(hand, opponentLookup) {
   return hand;
 }
 
-app.post("/prompts", requireAuth, async (req, res) => {
+app.get("/me/entitlements", requireAuth, (req, res) => {
+  return res.json({
+    userId: req.auth?.userId || null,
+    emails: Array.isArray(req.entitlements?.emails) ? req.entitlements.emails : [],
+    features: {
+      review: Boolean(req.entitlements?.review),
+      coach: Boolean(req.entitlements?.coach),
+      admin: Boolean(req.entitlements?.admin),
+    },
+  });
+});
+
+app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
   const parsed = promptSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -283,7 +422,7 @@ app.post("/prompts", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/hand-history/parse", requireAuth, async (req, res) => {
+app.post("/hand-history/parse", requireAuth, requireFeature("review"), async (req, res) => {
   const parsed = handHistorySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -296,6 +435,12 @@ app.post("/hand-history/parse", requireAuth, async (req, res) => {
     const allHands = parseGgTournamentHistory(parsed.data.historyText, {
       heroName: parsed.data.heroName,
     });
+    const heroFoldedPreflopCount = allHands.filter((hand) =>
+      Boolean(hand?.heroPreflop?.didFold)
+    ).length;
+    const heroEnteredPreflopCount = allHands.filter(
+      (hand) => Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold)
+    ).length;
     const filtered = filterHandsForReview(allHands, {
       includeOnlyHeroDidNotFoldPreflop:
         parsed.data.includeOnlyHeroDidNotFoldPreflop,
@@ -313,6 +458,8 @@ app.post("/hand-history/parse", requireAuth, async (req, res) => {
         totalHands: allHands.length,
         filteredHands: filtered.length,
         returnedHands: limited.length,
+        heroFoldedPreflopCount,
+        heroEnteredPreflopCount,
         sort: parsed.data.sort,
       },
       opponents,
@@ -326,7 +473,7 @@ app.post("/hand-history/parse", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/hand-history/review", requireAuth, async (req, res) => {
+app.post("/hand-history/review", requireAuth, requireFeature("review"), async (req, res) => {
   const parsed = handReviewSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -371,6 +518,40 @@ app.post("/hand-history/review", requireAuth, async (req, res) => {
     });
   }
 });
+
+app.post(
+  "/hand-history/summary-review",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    const parsed = summaryReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const review = await reviewTournamentSummary(
+        parsed.data.summary,
+        parsed.data.instruction,
+        parsed.data.model
+      );
+      return res.json({ review });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament summary review error", error);
+      return res.status(502).json({
+        error:
+          "Failed to review tournament summary with AI. Please try again in a moment.",
+      });
+    }
+  }
+);
 
 function startServer(port, attempts = 0) {
   const server = app
