@@ -1627,6 +1627,7 @@ export default function HandReviewPanel() {
   const [insightsTab, setInsightsTab] = useState("tournament");
   const [opponentFilter, setOpponentFilter] = useState("current_table");
   const [copiedOpponentKey, setCopiedOpponentKey] = useState("");
+  const [isParserCollapsed, setIsParserCollapsed] = useState(false);
   const copyTimeoutRef = useRef(null);
   const handRowRefs = useRef(new Map());
 
@@ -2388,6 +2389,9 @@ export default function HandReviewPanel() {
     try {
       const res = await requestHandHistoryParse(parsePayload);
       setParseResult(res);
+      if (Array.isArray(res?.hands) && res.hands.length > 0) {
+        setIsParserCollapsed(true);
+      }
       setOutcomeFilter("all");
       setTimeFilter("all_time");
       setSelectedHandKeys(new Set());
@@ -2510,7 +2514,8 @@ export default function HandReviewPanel() {
   };
 
   return (
-    <section className="hand-review-panel">
+    <section className="hand-review-workspace">
+      <div className="hand-review-panel hand-review-pane hand-review-pane-left">
       <div className="hand-review-header">
         <h2>Hand Review</h2>
         <p>
@@ -2519,6 +2524,18 @@ export default function HandReviewPanel() {
         </p>
       </div>
 
+      <div className="hand-review-parser-head">
+        <button
+          type="button"
+          className="hand-review-parser-toggle"
+          onClick={() => setIsParserCollapsed((value) => !value)}
+        >
+          {isParserCollapsed ? "Expand parser" : "Collapse parser"}
+        </button>
+      </div>
+
+      {!isParserCollapsed ? (
+        <>
       <div className="hand-review-controls">
         <label>
           Hero name
@@ -2596,6 +2613,13 @@ export default function HandReviewPanel() {
           {loadingParse ? "Parsing..." : "Parse Hands"}
         </button>
       </div>
+        </>
+      ) : (
+        <p className="hand-review-empty">
+          Parser collapsed. Expand to load another hand-history file or paste
+          text.
+        </p>
+      )}
 
       {error ? <p className="hand-review-error">{error}</p> : null}
 
@@ -2610,6 +2634,239 @@ export default function HandReviewPanel() {
         </div>
       ) : null}
 
+      {parsedHands.length > 0 ? (
+        <div className="hand-review-controls">
+          <label>
+            Outcome status
+            <select
+              value={outcomeFilter}
+              onChange={(e) => {
+                setOutcomeFilter(e.target.value);
+                setSelectedHandKeys(new Set());
+              }}
+            >
+              <option value="all">All statuses</option>
+              {outcomeOptions.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Time window
+            <select
+              value={timeFilter}
+              onChange={(e) => {
+                setTimeFilter(e.target.value);
+                setSelectedHandKeys(new Set());
+              }}
+            >
+              {TIME_FILTER_OPTIONS.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
+
+      {filteredParsedHands.length > 0 ? (
+        <div className="hand-review-selection-tools">
+          <button type="button" onClick={selectAllHands}>
+            Select all
+          </button>
+          <button type="button" onClick={clearSelection}>
+            Clear selection
+          </button>
+          <button
+            type="button"
+            onClick={runReview}
+            disabled={selectedCount === 0 || loadingReview || Boolean(quickReviewHandKey)}
+          >
+            {loadingReview || quickReviewHandKey
+              ? "Reviewing..."
+              : `Analyze Selected (${selectedCount})`}
+          </button>
+        </div>
+      ) : null}
+
+      {filteredParsedHands.length > 0 ? (
+        <div className="hand-review-list">
+          {filteredParsedHands.map((hand) => {
+            const rowKey = handKey(hand);
+            const outcome = hand.heroOutcome || {};
+            const isSelected = selectedHandKeys.has(rowKey);
+            const isAuditTarget = selectedAuditHandKey === rowKey;
+            const isQuickReviewLoading = quickReviewHandKey === rowKey;
+            const attachedReview = reviewsByHandKey[rowKey];
+            return (
+            <article
+              key={rowKey}
+              ref={(node) => setHandRowRef(rowKey, node)}
+              className={`hand-row ${isSelected ? "selected" : ""} ${
+                isAuditTarget ? "audit-target" : ""
+              }`}
+            >
+              <div className="hand-row-head">
+                <div className="hand-row-id">
+                  <label className="hand-row-select">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleHandSelection(hand)}
+                    />
+                    <strong>{hand.handId}</strong>
+                  </label>
+                  <button
+                    type="button"
+                    className={`hand-row-quick-review ${
+                      isQuickReviewLoading ? "loading" : ""
+                    }`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      runQuickReview(hand);
+                    }}
+                    disabled={loadingReview || Boolean(quickReviewHandKey)}
+                    title="Quick AI review this hand"
+                    aria-label={`Quick AI review ${hand.handId}`}
+                  >
+                    {isQuickReviewLoading ? "..." : "⚡"}
+                  </button>
+                </div>
+                <span>{hand.playedAt}</span>
+              </div>
+              <div className="hand-row-meta">
+                <span>{hand.heroPosition || "Unknown position"}</span>
+                <span>Cards: {formatHeroCards(hand.heroCards)}</span>
+                <span
+                  className={`outcome-pill ${outcomeClass(outcome.code)}`}
+                  title={outcome.code || "unknown"}
+                >
+                  {outcome.label || "Outcome unknown"}
+                  {Number(outcome.wonAmount) > 0 ? ` (${outcome.wonAmount})` : ""}
+                </span>
+                <span>
+                  Preflop:{" "}
+                  {(hand.heroPreflop?.actions || [])
+                    .map((action) => formatAction(action))
+                    .join(", ") || "No decision"}
+                </span>
+              </div>
+              {attachedReview ? (
+                <div className="hand-row-review">
+                  <div className="hand-review-scores">
+                    <span
+                      className={`score-pill ${scoreClass(
+                        attachedReview.overall_score
+                      )}`}
+                    >
+                      Overall {formatScore(attachedReview.overall_score)}
+                    </span>
+                    <span>Pre {formatScore(attachedReview.preflop_score)}</span>
+                    <span>Flop {formatScore(attachedReview.flop_score)}</span>
+                    <span>Turn {formatScore(attachedReview.turn_score)}</span>
+                    <span>River {formatScore(attachedReview.river_score)}</span>
+                    <span>
+                      Confidence {attachedReview.confidence || "medium"}
+                    </span>
+                  </div>
+                  <p>
+                    <strong>Leak:</strong> {attachedReview.primary_leak}
+                  </p>
+                  <p>
+                    <strong>Better line:</strong> {attachedReview.better_line}
+                  </p>
+                </div>
+              ) : null}
+              <details className="hand-breakdown">
+                <summary>Hand breakdown</summary>
+                <div className="hand-breakdown-body">
+                  <p>
+                    <strong>Hero cards:</strong> {formatHeroCards(hand.heroCards)}
+                  </p>
+                  <p>
+                    <strong>Board:</strong> {formatBoard(hand.board)}
+                  </p>
+                  <p>
+                    <strong>Flop:</strong> {formatBoardStreet(hand.board, "flop")}
+                  </p>
+                  <p>
+                    <strong>Turn:</strong> {formatBoardStreet(hand.board, "turn")}
+                  </p>
+                  <p>
+                    <strong>River:</strong> {formatBoardStreet(hand.board, "river")}
+                  </p>
+                  <p>
+                    <strong>Context:</strong> {streetPlayersLabel(hand)}
+                  </p>
+                  <p>
+                    <strong>Blinds:</strong>{" "}
+                    {hand.blinds?.smallBlind || "?"}/{hand.blinds?.bigBlind || "?"}
+                    {hand.blinds?.ante ? ` (${hand.blinds.ante} ante)` : ""}
+                  </p>
+                  <div className="hand-breakdown-street">
+                    <strong>Preflop</strong>
+                    {(hand.actionsByStreet?.preflop || []).length > 0 ? (
+                      (hand.actionsByStreet?.preflop || []).map((action, idx) => (
+                        <span key={`pre-${idx}`}>{formatActionWithPlayer(action)}</span>
+                      ))
+                    ) : (
+                      <span>No actions captured.</span>
+                    )}
+                  </div>
+                  {(hand.actionsByStreet?.flop || []).length > 0 ? (
+                    <div className="hand-breakdown-street">
+                      <strong>Flop</strong>
+                      {(hand.actionsByStreet?.flop || []).map((action, idx) => (
+                        <span key={`flop-${idx}`}>{formatActionWithPlayer(action)}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {(hand.actionsByStreet?.turn || []).length > 0 ? (
+                    <div className="hand-breakdown-street">
+                      <strong>Turn</strong>
+                      {(hand.actionsByStreet?.turn || []).map((action, idx) => (
+                        <span key={`turn-${idx}`}>{formatActionWithPlayer(action)}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {(hand.actionsByStreet?.river || []).length > 0 ? (
+                    <div className="hand-breakdown-street">
+                      <strong>River</strong>
+                      {(hand.actionsByStreet?.river || []).map((action, idx) => (
+                        <span key={`river-${idx}`}>{formatActionWithPlayer(action)}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {Array.isArray(hand.showdown?.revealedCards) &&
+                  hand.showdown.revealedCards.length > 0 ? (
+                    <div className="hand-breakdown-street">
+                      <strong>Revealed cards</strong>
+                      {hand.showdown.revealedCards.map((entry, idx) => (
+                        <span key={`show-${idx}`}>
+                          {entry.player}: {(entry.cards || []).join(" ") || "Unknown"}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+            </article>
+          )})}
+        </div>
+      ) : null}
+
+      {parsedHands.length > 0 && filteredParsedHands.length === 0 ? (
+        <p className="hand-review-empty">
+          No parsed hands match the selected outcome status.
+        </p>
+      ) : null}
+      </div>
+
+      <div className="hand-review-pane hand-review-pane-right">
       {hasTournamentSummary || hasHandAudit || hasOpponentSnapshot ? (
         <div className="hand-insights">
           <div className="hand-insights-tabs" role="tablist" aria-label="Insights tabs">
@@ -3562,247 +3819,14 @@ export default function HandReviewPanel() {
             </div>
           ) : null}
         </div>
-      ) : null}
-
-      {parsedHands.length > 0 ? (
-        <div className="hand-review-controls">
-          <label>
-            Outcome status
-            <select
-              value={outcomeFilter}
-              onChange={(e) => {
-                setOutcomeFilter(e.target.value);
-                setSelectedHandKeys(new Set());
-              }}
-            >
-              <option value="all">All statuses</option>
-              {outcomeOptions.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Time window
-            <select
-              value={timeFilter}
-              onChange={(e) => {
-                setTimeFilter(e.target.value);
-                setSelectedHandKeys(new Set());
-              }}
-            >
-              {TIME_FILTER_OPTIONS.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : null}
-
-      {filteredParsedHands.length > 0 ? (
-        <div className="hand-review-selection-tools">
-          <button type="button" onClick={selectAllHands}>
-            Select all
-          </button>
-          <button type="button" onClick={clearSelection}>
-            Clear selection
-          </button>
-          <button
-            type="button"
-            onClick={runReview}
-            disabled={selectedCount === 0 || loadingReview || Boolean(quickReviewHandKey)}
-          >
-            {loadingReview || quickReviewHandKey
-              ? "Reviewing..."
-              : `Analyze Selected (${selectedCount})`}
-          </button>
-        </div>
-      ) : null}
-
-      {filteredParsedHands.length > 0 ? (
-        <div className="hand-review-list">
-          {filteredParsedHands.map((hand) => {
-            const rowKey = handKey(hand);
-            const outcome = hand.heroOutcome || {};
-            const isSelected = selectedHandKeys.has(rowKey);
-            const isAuditTarget = selectedAuditHandKey === rowKey;
-            const isQuickReviewLoading = quickReviewHandKey === rowKey;
-            const attachedReview = reviewsByHandKey[rowKey];
-            return (
-            <article
-              key={rowKey}
-              ref={(node) => setHandRowRef(rowKey, node)}
-              className={`hand-row ${isSelected ? "selected" : ""} ${
-                isAuditTarget ? "audit-target" : ""
-              }`}
-            >
-              <div className="hand-row-head">
-                <div className="hand-row-id">
-                  <label className="hand-row-select">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleHandSelection(hand)}
-                    />
-                    <strong>{hand.handId}</strong>
-                  </label>
-                  <button
-                    type="button"
-                    className={`hand-row-quick-review ${
-                      isQuickReviewLoading ? "loading" : ""
-                    }`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      runQuickReview(hand);
-                    }}
-                    disabled={loadingReview || Boolean(quickReviewHandKey)}
-                    title="Quick AI review this hand"
-                    aria-label={`Quick AI review ${hand.handId}`}
-                  >
-                    {isQuickReviewLoading ? "..." : "⚡"}
-                  </button>
-                </div>
-                <span>{hand.playedAt}</span>
-              </div>
-              <div className="hand-row-meta">
-                <span>{hand.heroPosition || "Unknown position"}</span>
-                <span>Cards: {formatHeroCards(hand.heroCards)}</span>
-                <span
-                  className={`outcome-pill ${outcomeClass(outcome.code)}`}
-                  title={outcome.code || "unknown"}
-                >
-                  {outcome.label || "Outcome unknown"}
-                  {Number(outcome.wonAmount) > 0 ? ` (${outcome.wonAmount})` : ""}
-                </span>
-                <span>
-                  Preflop:{" "}
-                  {(hand.heroPreflop?.actions || [])
-                    .map((action) => formatAction(action))
-                    .join(", ") || "No decision"}
-                </span>
-              </div>
-              {attachedReview ? (
-                <div className="hand-row-review">
-                  <div className="hand-review-scores">
-                    <span
-                      className={`score-pill ${scoreClass(
-                        attachedReview.overall_score
-                      )}`}
-                    >
-                      Overall {formatScore(attachedReview.overall_score)}
-                    </span>
-                    <span>Pre {formatScore(attachedReview.preflop_score)}</span>
-                    <span>Flop {formatScore(attachedReview.flop_score)}</span>
-                    <span>Turn {formatScore(attachedReview.turn_score)}</span>
-                    <span>River {formatScore(attachedReview.river_score)}</span>
-                    <span>
-                      Confidence {attachedReview.confidence || "medium"}
-                    </span>
-                  </div>
-                  <p>
-                    <strong>Leak:</strong> {attachedReview.primary_leak}
-                  </p>
-                  <p>
-                    <strong>Better line:</strong> {attachedReview.better_line}
-                  </p>
-                  <details className="hand-breakdown">
-                    <summary>Hand breakdown</summary>
-                    <div className="hand-breakdown-body">
-                      <p>
-                        <strong>Hero cards:</strong> {formatHeroCards(hand.heroCards)}
-                      </p>
-                      <p>
-                        <strong>Board:</strong> {formatBoard(hand.board)}
-                      </p>
-                      <p>
-                        <strong>Flop:</strong> {formatBoardStreet(hand.board, "flop")}
-                      </p>
-                      <p>
-                        <strong>Turn:</strong> {formatBoardStreet(hand.board, "turn")}
-                      </p>
-                      <p>
-                        <strong>River:</strong> {formatBoardStreet(hand.board, "river")}
-                      </p>
-                      <p>
-                        <strong>Context:</strong> {streetPlayersLabel(hand)}
-                      </p>
-                      <p>
-                        <strong>Blinds:</strong>{" "}
-                        {hand.blinds?.smallBlind || "?"}/
-                        {hand.blinds?.bigBlind || "?"}
-                        {hand.blinds?.ante ? ` (${hand.blinds.ante} ante)` : ""}
-                      </p>
-                      <div className="hand-breakdown-street">
-                        <strong>Preflop</strong>
-                        {(hand.actionsByStreet?.preflop || []).length > 0 ? (
-                          (hand.actionsByStreet?.preflop || []).map((action, idx) => (
-                            <span key={`pre-${idx}`}>
-                              {formatActionWithPlayer(action)}
-                            </span>
-                          ))
-                        ) : (
-                          <span>No actions captured.</span>
-                        )}
-                      </div>
-                      {(hand.actionsByStreet?.flop || []).length > 0 ? (
-                        <div className="hand-breakdown-street">
-                          <strong>Flop</strong>
-                          {(hand.actionsByStreet?.flop || []).map((action, idx) => (
-                            <span key={`flop-${idx}`}>
-                              {formatActionWithPlayer(action)}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {(hand.actionsByStreet?.turn || []).length > 0 ? (
-                        <div className="hand-breakdown-street">
-                          <strong>Turn</strong>
-                          {(hand.actionsByStreet?.turn || []).map((action, idx) => (
-                            <span key={`turn-${idx}`}>
-                              {formatActionWithPlayer(action)}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {(hand.actionsByStreet?.river || []).length > 0 ? (
-                        <div className="hand-breakdown-street">
-                          <strong>River</strong>
-                          {(hand.actionsByStreet?.river || []).map((action, idx) => (
-                            <span key={`river-${idx}`}>
-                              {formatActionWithPlayer(action)}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {Array.isArray(hand.showdown?.revealedCards) &&
-                      hand.showdown.revealedCards.length > 0 ? (
-                        <div className="hand-breakdown-street">
-                          <strong>Revealed cards</strong>
-                          {hand.showdown.revealedCards.map((entry, idx) => (
-                            <span key={`show-${idx}`}>
-                              {entry.player}: {(entry.cards || []).join(" ") || "Unknown"}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </details>
-                </div>
-              ) : null}
-            </article>
-          )})}
-        </div>
-      ) : null}
-
-      {parsedHands.length > 0 && filteredParsedHands.length === 0 ? (
+      ) : (
         <p className="hand-review-empty">
-          No parsed hands match the selected outcome status.
+          Parse hands to unlock Tournament Summary, Stats, Audit, and Opponent
+          Snapshot.
         </p>
-      ) : null}
+      )}
+      </div>
+
     </section>
   );
 }

@@ -92,12 +92,46 @@ function EntitlementGateCard({ title, detail, actionLabel, onAction }) {
   );
 }
 
+function AppFooter() {
+  return (
+    <footer className="app-footer">
+      <div className="app-footer-inner">
+        <details className="app-footer-disclaimer">
+          <summary>Disclaimer</summary>
+          <p>
+            Training insights are informational and should be used at your own
+            discretion. Hand-history input is not saved for model training.
+          </p>
+        </details>
+        <a className="app-footer-link" href="mailto:qacopilotdev@gmail.com">
+          Contact me
+        </a>
+      </div>
+    </footer>
+  );
+}
+
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = window.localStorage?.getItem("pcc_theme");
+      return saved === "dark" ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  });
   const [entitlements, setEntitlements] = useState(null);
   const [entitlementsStatus, setEntitlementsStatus] = useState("loading"); // loading | ready | error
   const [entitlementsError, setEntitlementsError] = useState("");
+
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute("data-theme", theme);
+      window.localStorage?.setItem("pcc_theme", theme);
+    } catch {}
+  }, [theme]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) {
@@ -160,7 +194,21 @@ function SignedInShell() {
             );
           })}
         </div>
-        <UserButton />
+        <div className="auth-bar-actions">
+          <button
+            type="button"
+            className="top-nav-link"
+            onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+            aria-label={
+              theme === "dark"
+                ? "Switch to light mode"
+                : "Switch to dark high-contrast mode"
+            }
+          >
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+          <UserButton />
+        </div>
       </div>
 
       <ServerWakeGate>
@@ -195,6 +243,7 @@ function SignedInShell() {
           />
         ) : null}
       </ServerWakeGate>
+      <AppFooter />
     </>
   );
 }

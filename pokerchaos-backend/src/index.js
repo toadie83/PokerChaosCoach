@@ -33,6 +33,9 @@ const clerkIssuer = process.env.CLERK_ISSUER;
 const reviewAllowAll = String(process.env.REVIEW_ALLOW_ALL || "true")
   .trim()
   .toLowerCase() !== "false";
+const reviewAiAllowAll = String(process.env.REVIEW_AI_ALLOW_ALL || "false")
+  .trim()
+  .toLowerCase() === "true";
 const coachAllowAll = String(process.env.COACH_ALLOW_ALL || "false")
   .trim()
   .toLowerCase() === "true";
@@ -75,13 +78,18 @@ function parseEmailSet(raw) {
 }
 
 const reviewAllowedUserIds = parseUserIdSet(process.env.REVIEW_ALLOWED_USER_IDS);
+const reviewAiAllowedUserIds = parseUserIdSet(
+  process.env.REVIEW_AI_ALLOWED_USER_IDS
+);
 const coachAllowedUserIds = parseUserIdSet(process.env.COACH_ALLOWED_USER_IDS);
 const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
 const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
+const reviewAiAllowedEmails = parseEmailSet(process.env.REVIEW_AI_ALLOWED_EMAILS);
 const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
 const shouldLookupUserEmails =
   reviewAllowedEmails.size > 0 ||
+  reviewAiAllowedEmails.size > 0 ||
   coachAllowedEmails.size > 0 ||
   adminAllowedEmails.size > 0;
 
@@ -124,6 +132,11 @@ function buildEntitlements(userId, userEmails = []) {
     reviewAllowAll ||
     reviewAllowedUserIds.has(uid) ||
     hasAnyMatchingEmail(userEmails, reviewAllowedEmails);
+  const reviewAi =
+    isAdmin ||
+    reviewAiAllowAll ||
+    reviewAiAllowedUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, reviewAiAllowedEmails);
   const coach =
     isAdmin ||
     coachAllowAll ||
@@ -131,6 +144,7 @@ function buildEntitlements(userId, userEmails = []) {
     hasAnyMatchingEmail(userEmails, coachAllowedEmails);
   return {
     review,
+    reviewAi,
     coach,
     admin: isAdmin,
     emails: Array.isArray(userEmails) ? userEmails : [],
@@ -389,11 +403,20 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
     emails: Array.isArray(req.entitlements?.emails) ? req.entitlements.emails : [],
     features: {
       review: Boolean(req.entitlements?.review),
+      reviewAi: Boolean(req.entitlements?.reviewAi),
       coach: Boolean(req.entitlements?.coach),
       admin: Boolean(req.entitlements?.admin),
     },
   });
 });
+
+function requireReviewAi(req, res, next) {
+  if (req.entitlements?.reviewAi) return next();
+  return res.status(403).json({
+    error: "AI help currently disabled for this user.",
+    requiredFeature: "reviewAi",
+  });
+}
 
 app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
   const parsed = promptSchema.safeParse(req.body ?? {});
@@ -473,56 +496,63 @@ app.post("/hand-history/parse", requireAuth, requireFeature("review"), async (re
   }
 });
 
-app.post("/hand-history/review", requireAuth, requireFeature("review"), async (req, res) => {
-  const parsed = handReviewSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
-  }
-
-  try {
-    const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
-    const reviews = [];
-    for (const hand of parsed.data.selectedHands) {
-      const compactHand = sanitizeHandForStreetFairness(hand);
-      const reviewHand = attachOpponentContextToHand(compactHand, opponentLookup);
-      const review = await reviewTournamentHand(
-        reviewHand,
-        parsed.data.instruction,
-        parsed.data.model
-      );
-      reviews.push({
-        hand: compactHand,
-        review,
+app.post(
+  "/hand-history/review",
+  requireAuth,
+  requireFeature("review"),
+  requireReviewAi,
+  async (req, res) => {
+    const parsed = handReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
       });
     }
 
-    return res.json({
-      summary: {
-        selectedHands: parsed.data.selectedHands.length,
-        reviewedHands: reviews.length,
-      },
-      reviews,
-    });
-  } catch (error) {
-    console.error("[pokerchaos-backend] Hand review error", error);
-    return res.status(502).json({
-      error:
-        "Failed to review hand history with AI. Please try again in a moment.",
-    });
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
+      const reviews = [];
+      for (const hand of parsed.data.selectedHands) {
+        const compactHand = sanitizeHandForStreetFairness(hand);
+        const reviewHand = attachOpponentContextToHand(compactHand, opponentLookup);
+        const review = await reviewTournamentHand(
+          reviewHand,
+          parsed.data.instruction,
+          parsed.data.model
+        );
+        reviews.push({
+          hand: compactHand,
+          review,
+        });
+      }
+
+      return res.json({
+        summary: {
+          selectedHands: parsed.data.selectedHands.length,
+          reviewedHands: reviews.length,
+        },
+        reviews,
+      });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Hand review error", error);
+      return res.status(502).json({
+        error:
+          "Failed to review hand history with AI. Please try again in a moment.",
+      });
+    }
   }
-});
+);
 
 app.post(
   "/hand-history/summary-review",
   requireAuth,
   requireFeature("review"),
+  requireReviewAi,
   async (req, res) => {
     const parsed = summaryReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
