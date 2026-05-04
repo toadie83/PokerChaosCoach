@@ -41,6 +41,26 @@ npm run dev
 - `POST /hand-history/parse` (requires `review` entitlement) accepts GG hand-history text and returns parsed hands with Hero preflop filtering.
 - `POST /hand-history/review` (requires `review` entitlement) accepts selected parsed hands and returns AI hand reviews with per-street scoring.
 - `POST /hand-history/summary-review` (requires `review` entitlement) accepts tournament summary stats and returns AI leak diagnosis with prioritized actions.
+- `POST /tournaments/upload` (requires `review` entitlement) accepts tournament hand-history text, parses it, and upserts by `(user_id, tournament_id)`.
+- `GET /tournaments` (requires `review` entitlement) lists saved tournament uploads for the current user (ordered by tournament played date, then most recently updated).
+- `GET /tournaments/:tournamentId` (requires `review` entitlement) loads one saved tournament (summary, opponent snapshot, parsed hands).
+
+## Postgres Setup
+
+Tournament uploads require Postgres.
+
+Set either:
+
+- `DATABASE_URL=postgres://...`
+
+Or standard PG vars:
+
+- `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`
+
+Optional SSL toggles:
+
+- `PGSSL=true`
+- `PGSSL_REJECT_UNAUTHORIZED=false` (default)
 
 ## Feature Entitlements
 

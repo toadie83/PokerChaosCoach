@@ -88,3 +88,12 @@ export async function getJson(path) {
     }
   });
 }
+
+export async function deleteJson(path) {
+  return requestJson(path, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+}

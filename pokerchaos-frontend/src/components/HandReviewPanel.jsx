@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  requestDeleteSavedTournament,
   requestHandHistoryParse,
   requestHandHistoryReview,
+  requestSavedTournament,
+  requestSavedTournaments,
+  requestTournamentUpload,
   requestTournamentSummaryReview,
 } from "../api/aiService.js";
 
@@ -57,7 +61,7 @@ function formatPercentCount(stat) {
     return "n/a";
   }
   return `${percentLabel(Number(stat.pct))} (${Number(stat.count)}/${Number(
-    stat.total
+    stat.total,
   )})`;
 }
 
@@ -73,8 +77,8 @@ function formatAggression(aggression) {
     Number.isFinite(Number(factorRaw)) && calls > 0
       ? Number(factorRaw).toFixed(2)
       : calls === 0 && aggressiveActions > 0
-      ? "inf"
-      : "n/a";
+        ? "inf"
+        : "n/a";
   return `Freq ${frequency} | AF ${factor}`;
 }
 
@@ -107,7 +111,11 @@ function formatPlayNote(player) {
   const confidence = String(player?.playNote?.confidence || "")
     .trim()
     .toLowerCase();
-  if (confidence === "high" || confidence === "medium" || confidence === "low") {
+  if (
+    confidence === "high" ||
+    confidence === "medium" ||
+    confidence === "low"
+  ) {
     return `${text} (${confidence} confidence)`;
   }
   return text;
@@ -180,7 +188,9 @@ function uniquePlayersForStreet(actions) {
 function streetPlayersLabel(hand) {
   const flopPlayers = uniquePlayersForStreet(hand?.actionsByStreet?.flop || []);
   const turnPlayers = uniquePlayersForStreet(hand?.actionsByStreet?.turn || []);
-  const riverPlayers = uniquePlayersForStreet(hand?.actionsByStreet?.river || []);
+  const riverPlayers = uniquePlayersForStreet(
+    hand?.actionsByStreet?.river || [],
+  );
   if (flopPlayers.size > 0) {
     const multiway = flopPlayers.size > 2 ? "multiway" : "heads-up";
     return `Flop players: ${flopPlayers.size} (${multiway})`;
@@ -248,7 +258,7 @@ function confidenceLabel(confidence) {
 
 function formatRateWithConfidence(numerator, denominator) {
   return `${rateCountLabel(numerator, denominator)} - ${confidenceLabel(
-    confidenceFromSample(denominator)
+    confidenceFromSample(denominator),
   )}`;
 }
 
@@ -278,7 +288,7 @@ function buildTournamentRating(summary, postflopDigest) {
     addPenalty(
       "High overall preflop fold rate",
       clamp((preflopFoldPct - preflopFoldThreshold) * 1.2, 0, 20),
-      totalHands
+      totalHands,
     );
   }
 
@@ -288,7 +298,7 @@ function buildTournamentRating(summary, postflopDigest) {
     addPenalty(
       "Under-opening first-in",
       clamp((28 - openRate) * 0.65, 0, 14),
-      openSpots
+      openSpots,
     );
   }
 
@@ -298,7 +308,7 @@ function buildTournamentRating(summary, postflopDigest) {
     addPenalty(
       "Underdefending versus opens",
       clamp((32 - defendRate) * 0.8, 0, 18),
-      defendSpots
+      defendSpots,
     );
   }
 
@@ -308,17 +318,20 @@ function buildTournamentRating(summary, postflopDigest) {
     addPenalty(
       "Blinds overfolding versus opens",
       clamp((blindFoldRate - 66) * 0.6, 0, 12),
-      blindSpots
+      blindSpots,
     );
   }
 
   const reraiseSpots = Number(pre.facedReraiseAfterAggressionSpots) || 0;
-  const reraiseFoldRate = safePercent(pre.foldedAfterFacingReraise, reraiseSpots);
+  const reraiseFoldRate = safePercent(
+    pre.foldedAfterFacingReraise,
+    reraiseSpots,
+  );
   if (reraiseSpots >= 8 && reraiseFoldRate > 78) {
     addPenalty(
       "Overfolding after reraises",
       clamp((reraiseFoldRate - 78) * 0.35, 0, 6),
-      reraiseSpots
+      reraiseSpots,
     );
   }
 
@@ -330,7 +343,7 @@ function buildTournamentRating(summary, postflopDigest) {
     addPenalty(
       label,
       clamp((ratePct - thresholdPct) * scale, 0, cap),
-      opportunities
+      opportunities,
     );
   };
 
@@ -339,35 +352,35 @@ function buildTournamentRating(summary, postflopDigest) {
     post.missedIpCbetFavorable,
     30,
     0.45,
-    8
+    8,
   );
   scorePostMetric(
     "Missed in-position stabs (favorable flop)",
     post.missedIpStabFavorable,
     30,
     0.4,
-    7
+    7,
   );
   scorePostMetric(
     "Likely light in-position turn folds",
     post.lightIpFoldTurn,
     18,
     0.5,
-    8
+    8,
   );
   scorePostMetric(
     "Likely light in-position river folds",
     post.lightIpFoldRiver,
     16,
     0.5,
-    8
+    8,
   );
   scorePostMetric(
     "Missed in-position value-raises",
     post.missedIpValueRaise,
     25,
     0.42,
-    7
+    7,
   );
 
   const totalPenalty = penalties.reduce((sum, item) => sum + item.points, 0);
@@ -398,16 +411,16 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
   const candidates = [];
   const openRate = safePercent(
     pre.openedWhenNoRaiseBeforeHero,
-    pre.noRaiseBeforeHeroSpots
+    pre.noRaiseBeforeHeroSpots,
   );
   const defendRate = safePercent(pre.defendedFacingOpen, pre.facingOpenSpots);
   const blindFoldRate = safePercent(
     pre.blindFoldFacingOpen,
-    pre.blindFacingOpenSpots
+    pre.blindFacingOpenSpots,
   );
   const reraiseFoldRate = safePercent(
     pre.foldedAfterFacingReraise,
-    pre.facedReraiseAfterAggressionSpots
+    pre.facedReraiseAfterAggressionSpots,
   );
 
   if (pre.noRaiseBeforeHeroSpots >= 12 && openRate < 28) {
@@ -417,7 +430,7 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
       label: "Under-opening in first-in spots",
       evidence: `Open rate in no-raise spots is ${rateCountLabel(
         pre.openedWhenNoRaiseBeforeHero,
-        pre.noRaiseBeforeHeroSpots
+        pre.noRaiseBeforeHeroSpots,
       )}.`,
       action:
         "Increase opens first from late and mid positions before changing marginal defend spots.",
@@ -432,7 +445,7 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
       label: "Overfolding when facing opens",
       evidence: `Defend rate facing opens is ${rateCountLabel(
         pre.defendedFacingOpen,
-        pre.facingOpenSpots
+        pre.facingOpenSpots,
       )}.`,
       action:
         "Add more calls and 3-bets in facing-open spots, starting with BB and BTN defenses.",
@@ -447,7 +460,7 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
       label: "Blinds are folding too often versus opens",
       evidence: `Blind fold vs open is ${rateCountLabel(
         pre.blindFoldFacingOpen,
-        pre.blindFacingOpenSpots
+        pre.blindFacingOpenSpots,
       )}.`,
       action:
         "Widen BB defend first, then selectively add SB 3-bet/call continues versus late opens.",
@@ -462,7 +475,7 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
       label: "Likely overfolding after facing reraises",
       evidence: `Fold after reraises is ${rateCountLabel(
         pre.foldedAfterFacingReraise,
-        pre.facedReraiseAfterAggressionSpots
+        pre.facedReraiseAfterAggressionSpots,
       )}.`,
       action:
         "Review open and 3-bet ranges so your aggressive lines do not auto-fold too often to pressure.",
@@ -478,47 +491,43 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
     pre.noRaiseBeforeHeroSpots < 8
       ? "low sample"
       : openRate < 28
-      ? "too low"
-      : "ok";
+        ? "too low"
+        : "ok";
   const defendSignal =
-    pre.facingOpenSpots < 8
-      ? "low sample"
-      : defendRate < 32
-      ? "too low"
-      : "ok";
+    pre.facingOpenSpots < 8 ? "low sample" : defendRate < 32 ? "too low" : "ok";
   const blindFoldSignal =
     pre.blindFacingOpenSpots < 8
       ? "low sample"
       : blindFoldRate > 66
-      ? "too high"
-      : "ok";
+        ? "too high"
+        : "ok";
   const reraiseSignal =
     pre.facedReraiseAfterAggressionSpots < 8
       ? "low sample"
       : reraiseFoldRate > 78
-      ? "too high"
-      : "ok";
+        ? "too high"
+        : "ok";
 
   const evidence = [
     `Open first-in: ${rateCountLabel(
       pre.openedWhenNoRaiseBeforeHero,
-      pre.noRaiseBeforeHeroSpots
+      pre.noRaiseBeforeHeroSpots,
     )} - ${openSignal}`,
     `Defend vs open: ${rateCountLabel(
       pre.defendedFacingOpen,
-      pre.facingOpenSpots
+      pre.facingOpenSpots,
     )} - ${defendSignal}`,
     `Blind fold vs open: ${rateCountLabel(
       pre.blindFoldFacingOpen,
-      pre.blindFacingOpenSpots
+      pre.blindFacingOpenSpots,
     )} - ${blindFoldSignal}`,
   ];
   if (pre.facedReraiseAfterAggressionSpots > 0) {
     evidence.push(
       `Fold after reraise: ${rateCountLabel(
         pre.foldedAfterFacingReraise,
-        pre.facedReraiseAfterAggressionSpots
-      )} - ${reraiseSignal}`
+        pre.facedReraiseAfterAggressionSpots,
+      )} - ${reraiseSignal}`,
     );
   }
 
@@ -527,7 +536,7 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
   if (secondary?.action) actions.push(secondary.action);
   if (actions.length === 0) {
     actions.push(
-      "No dominant leak signal yet. Keep collecting hands and focus on the largest preflop opportunity buckets."
+      "No dominant leak signal yet. Keep collecting hands and focus on the largest preflop opportunity buckets.",
     );
   }
 
@@ -566,11 +575,7 @@ function normalizeInsightLines(items, max = 8) {
 function buildAiSummaryParagraph(review) {
   if (!review || typeof review !== "object") return "";
   const joinSentences = (items, limit) =>
-    items
-      .slice(0, limit)
-      .map(ensureSentenceEnding)
-      .filter(Boolean)
-      .join(" ");
+    items.slice(0, limit).map(ensureSentenceEnding).filter(Boolean).join(" ");
   const primaryLeak = String(review.primary_leak || "").trim();
   const secondaryLeak = String(review.secondary_leak || "").trim();
   const actions = normalizeInsightLines(review.actions, 8);
@@ -602,8 +607,9 @@ const TIME_FILTER_OPTIONS = [
 
 function parsePlayedAtEpoch(raw) {
   if (typeof raw !== "string") return null;
-  const match =
-    /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(raw.trim());
+  const match = /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(
+    raw.trim(),
+  );
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -620,14 +626,104 @@ function getHandPlayedAtEpoch(hand) {
   return parsePlayedAtEpoch(String(hand?.playedAt || ""));
 }
 
-const HAND_RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+function stripFileExtension(fileName) {
+  const value = String(fileName || "").trim();
+  if (!value) return "";
+  return value.replace(/\.[^.]+$/, "");
+}
+
+function parseTournamentMetaFromFileName(fileName) {
+  const base = stripFileExtension(fileName);
+  if (!base) {
+    return {
+      tournamentId: "",
+      tournamentName: "",
+      playedAtEpoch: null,
+    };
+  }
+
+  const idAndNameMatch = /^([A-Za-z]{2}\d{8}-\d{4})\s*-\s*(.+)$/.exec(base);
+  if (idAndNameMatch) {
+    const rawId = String(idAndNameMatch[1] || "").trim();
+    const rawName = String(idAndNameMatch[2] || "").trim();
+    const idDateMatch = /^[A-Za-z]{2}(\d{8})-(\d{4})$/.exec(rawId);
+    let playedAtEpoch = null;
+    if (idDateMatch) {
+      const dateToken = idDateMatch[1];
+      const timeToken = idDateMatch[2];
+      const year = Number(dateToken.slice(0, 4));
+      const month = Number(dateToken.slice(4, 6));
+      const day = Number(dateToken.slice(6, 8));
+      const hour = Number(timeToken.slice(0, 2));
+      const minute = Number(timeToken.slice(2, 4));
+      playedAtEpoch = Date.UTC(year, month - 1, day, hour, minute, 0);
+    }
+    return {
+      tournamentId: rawId,
+      tournamentName: rawName,
+      playedAtEpoch: Number.isFinite(playedAtEpoch) ? playedAtEpoch : null,
+    };
+  }
+
+  return {
+    tournamentId: "",
+    tournamentName: base,
+    playedAtEpoch: null,
+  };
+}
+
+function formatDateTimeLabelFromEpoch(epoch) {
+  const value = Number(epoch);
+  if (!Number.isFinite(value)) return "Unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDateTimeLabel(value) {
+  if (value === null || value === undefined || value === "") return "Unknown";
+  if (typeof value === "number") return formatDateTimeLabelFromEpoch(value);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const HAND_RANKS = [
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "T",
+  "J",
+  "Q",
+  "K",
+  "A",
+];
 const HAND_RANK_INDEX = HAND_RANKS.reduce((map, rank, idx) => {
   map[rank] = idx;
   return map;
 }, {});
 
 function expandRangeToken(token) {
-  const text = String(token || "").trim().toUpperCase();
+  const text = String(token || "")
+    .trim()
+    .toUpperCase();
   if (!text) return [];
 
   const pairExact = /^([2-9TJQKA])\1$/.exec(text);
@@ -675,14 +771,21 @@ function makeRangeSet(tokens) {
 
 function normalizeHeroHandCode(cards) {
   if (!Array.isArray(cards) || cards.length < 2) return null;
-  const c1 = String(cards[0] || "").trim().toUpperCase();
-  const c2 = String(cards[1] || "").trim().toUpperCase();
+  const c1 = String(cards[0] || "")
+    .trim()
+    .toUpperCase();
+  const c2 = String(cards[1] || "")
+    .trim()
+    .toUpperCase();
   if (c1.length < 2 || c2.length < 2) return null;
   const r1 = c1[0];
   const r2 = c2[0];
   const s1 = c1[c1.length - 1];
   const s2 = c2[c2.length - 1];
-  if (!HAND_RANK_INDEX.hasOwnProperty(r1) || !HAND_RANK_INDEX.hasOwnProperty(r2)) {
+  if (
+    !HAND_RANK_INDEX.hasOwnProperty(r1) ||
+    !HAND_RANK_INDEX.hasOwnProperty(r2)
+  ) {
     return null;
   }
   if (r1 === r2) return `${r1}${r2}`;
@@ -694,7 +797,9 @@ function normalizeHeroHandCode(cards) {
 }
 
 function normalizePositionForRanges(rawPosition) {
-  const pos = String(rawPosition || "").trim().toUpperCase();
+  const pos = String(rawPosition || "")
+    .trim()
+    .toUpperCase();
   if (!pos) return null;
   if (pos === "UTG+2" || pos === "MP") return "LJ";
   if (pos === "MP+1") return "HJ";
@@ -710,8 +815,27 @@ function buildPreflopRangeModel() {
   return {
     openRfi: {
       UTG: makeRangeSet(["77+", "AJS+", "KQS", "AQO+", "A5S", "A4S"]),
-      "UTG+1": makeRangeSet(["66+", "ATS+", "KJS+", "QJS", "AJO+", "KQO", "A5S", "A4S"]),
-      LJ: makeRangeSet(["55+", "A9S+", "KTS+", "QTS+", "JTS", "T9S", "98S", "AJO+", "KQO"]),
+      "UTG+1": makeRangeSet([
+        "66+",
+        "ATS+",
+        "KJS+",
+        "QJS",
+        "AJO+",
+        "KQO",
+        "A5S",
+        "A4S",
+      ]),
+      LJ: makeRangeSet([
+        "55+",
+        "A9S+",
+        "KTS+",
+        "QTS+",
+        "JTS",
+        "T9S",
+        "98S",
+        "AJO+",
+        "KQO",
+      ]),
       HJ: makeRangeSet([
         "44+",
         "A8S+",
@@ -812,8 +936,27 @@ function buildPreflopRangeModel() {
         "98S",
         "87S",
       ]),
-      BTN: makeRangeSet(["55+", "A7S+", "ATO+", "KTS+", "KQO", "QTS+", "JTS", "T9S", "98S"]),
-      CO: makeRangeSet(["66+", "ATS+", "AQO+", "KQS", "KJS", "QJS", "JTS", "T9S"]),
+      BTN: makeRangeSet([
+        "55+",
+        "A7S+",
+        "ATO+",
+        "KTS+",
+        "KQO",
+        "QTS+",
+        "JTS",
+        "T9S",
+        "98S",
+      ]),
+      CO: makeRangeSet([
+        "66+",
+        "ATS+",
+        "AQO+",
+        "KQS",
+        "KJS",
+        "QJS",
+        "JTS",
+        "T9S",
+      ]),
       HJ: makeRangeSet(["77+", "AJS+", "AQO+", "KQS", "QJS"]),
       LJ: makeRangeSet(["88+", "AJS+", "AQO+", "KQS"]),
       "UTG+1": makeRangeSet(["TT+", "AQS+", "AKO"]),
@@ -869,7 +1012,9 @@ function summarizeAuditEvents(events) {
   return {
     byPosition: Array.from(byPosition.entries())
       .map(([position, count]) => ({ position, count }))
-      .sort((a, b) => b.count - a.count || a.position.localeCompare(b.position)),
+      .sort(
+        (a, b) => b.count - a.count || a.position.localeCompare(b.position),
+      ),
     topCombos: Array.from(byCombo.values())
       .sort((a, b) => b.count - a.count || a.position.localeCompare(b.position))
       .slice(0, 8),
@@ -928,12 +1073,16 @@ function buildPreflopOpportunityAudit(hands) {
       .some(
         (action) =>
           String(action?.player || "").trim() !== heroName &&
-          isPreflopAggressiveAction(action)
+          isPreflopAggressiveAction(action),
       );
 
     if (!priorOpponentAggression) {
       rfiSpotsScored += 1;
-      const shouldOpen = rangeContains(PRE_FLOP_RANGE_MODEL.openRfi, position, handCode);
+      const shouldOpen = rangeContains(
+        PRE_FLOP_RANGE_MODEL.openRfi,
+        position,
+        handCode,
+      );
       const didOpen = isPreflopAggressiveAction(firstHeroDecision);
       if (shouldOpen) expectedOpenSpots += 1;
       if (shouldOpen && !didOpen) {
@@ -965,21 +1114,21 @@ function buildPreflopOpportunityAudit(hands) {
         (action, idx) =>
           idx >= firstHeroDecisionIndex &&
           String(action?.player || "").trim() === heroName &&
-          isPreflopAggressiveAction(action)
+          isPreflopAggressiveAction(action),
       );
       if (heroRfiIndex >= 0) {
         const opp3BetIndex = preflopActions.findIndex(
           (action, idx) =>
             idx > heroRfiIndex &&
             String(action?.player || "").trim() !== heroName &&
-            isPreflopAggressiveAction(action)
+            isPreflopAggressiveAction(action),
         );
         if (opp3BetIndex >= 0) {
           const heroResponse = preflopActions.find(
             (action, idx) =>
               idx > opp3BetIndex &&
               String(action?.player || "").trim() === heroName &&
-              isPreflopDecisionAction(action)
+              isPreflopDecisionAction(action),
           );
           if (heroResponse) {
             vs3BetSpotsScored += 1;
@@ -987,7 +1136,7 @@ function buildPreflopOpportunityAudit(hands) {
             const shouldContinue = rangeContains(
               PRE_FLOP_RANGE_MODEL.continueVs3BetAfterOpen,
               position,
-              handCode
+              handCode,
             );
             const didContinue = responseType !== "fold";
             if (shouldContinue) expectedContinueVs3BetSpots += 1;
@@ -1023,7 +1172,7 @@ function buildPreflopOpportunityAudit(hands) {
       const shouldDefend = rangeContains(
         PRE_FLOP_RANGE_MODEL.defendVsOpen,
         position,
-        handCode
+        handCode,
       );
       const didDefend = firstHeroDecisionType !== "fold";
       if (shouldDefend) expectedDefendSpots += 1;
@@ -1059,7 +1208,9 @@ function buildPreflopOpportunityAudit(hands) {
   const overfoldVs3BetSummary = summarizeAuditEvents(overfoldVs3BetEvents);
   const looseOpenSummary = summarizeAuditEvents(looseOpenEvents);
   const looseDefendSummary = summarizeAuditEvents(looseDefendEvents);
-  const looseContinueVs3BetSummary = summarizeAuditEvents(looseContinueVs3BetEvents);
+  const looseContinueVs3BetSummary = summarizeAuditEvents(
+    looseContinueVs3BetEvents,
+  );
 
   const quickFixes = [];
   const topMissedOpenPosition = missedOpenSummary.byPosition[0];
@@ -1067,22 +1218,22 @@ function buildPreflopOpportunityAudit(hands) {
   const topOverfold3BetPosition = overfoldVs3BetSummary.byPosition[0];
   if (topMissedOpenPosition) {
     quickFixes.push(
-      `Open more first-in from ${topMissedOpenPosition.position}; ${topMissedOpenPosition.count} chart-qualified opens were missed.`
+      `Open more first-in from ${topMissedOpenPosition.position}; ${topMissedOpenPosition.count} chart-qualified opens were missed.`,
     );
   }
   if (topMissedDefendPosition) {
     quickFixes.push(
-      `Defend more vs opens from ${topMissedDefendPosition.position}; ${topMissedDefendPosition.count} chart-qualified continues were folded.`
+      `Defend more vs opens from ${topMissedDefendPosition.position}; ${topMissedDefendPosition.count} chart-qualified continues were folded.`,
     );
   }
   if (topOverfold3BetPosition) {
     quickFixes.push(
-      `Continue slightly wider vs 3-bets after opening from ${topOverfold3BetPosition.position}; strong continues are being folded.`
+      `Continue slightly wider vs 3-bets after opening from ${topOverfold3BetPosition.position}; strong continues are being folded.`,
     );
   }
   if (quickFixes.length === 0) {
     quickFixes.push(
-      "No dominant passive preflop leak from this chart-based check. Keep collecting volume for stronger signals."
+      "No dominant passive preflop leak from this chart-based check. Keep collecting volume for stronger signals.",
     );
   }
 
@@ -1143,7 +1294,9 @@ function isPostflopAggressiveAction(action) {
 }
 
 function parseCardToken(token) {
-  const text = String(token || "").trim().toUpperCase();
+  const text = String(token || "")
+    .trim()
+    .toUpperCase();
   if (text.length < 2) return null;
   const rank = text[0];
   const suit = text[text.length - 1];
@@ -1177,7 +1330,8 @@ function hasFlushDraw(heroCards, boardCards) {
   for (const [suit, count] of suitCounts.entries()) {
     if (count < 4) continue;
     const heroHasSuit = hero.some((card) => card.suit === suit);
-    const boardHasTwoSuit = board.filter((card) => card.suit === suit).length >= 2;
+    const boardHasTwoSuit =
+      board.filter((card) => card.suit === suit).length >= 2;
     if (heroHasSuit && boardHasTwoSuit) return true;
   }
   return false;
@@ -1354,19 +1508,23 @@ function buildPostflopInPositionAudit(hands) {
       (action, idx) =>
         idx > firstDecisionIndex &&
         String(action?.player || "").trim() === heroName &&
-        isPostflopDecisionAction(action)
+        isPostflopDecisionAction(action),
     );
     if (!heroFirstDecision) continue;
 
     ipHeadsUpFlopSpots += 1;
     const firstDecisionType = normalizeActionType(firstDecision);
     const heroDecisionType = normalizeActionType(heroFirstDecision);
-    const position = normalizePositionForRanges(hand?.heroPosition) || "Unknown";
+    const position =
+      normalizePositionForRanges(hand?.heroPosition) || "Unknown";
     const flopCards = Array.isArray(hand?.board?.flop)
       ? hand.board.flop.filter(Boolean)
       : [];
     const favorableFlop = isFavorableFlopBoard(flopCards);
-    const lastPreflopAggressor = findLastPreflopAggressor(preflopActions, heroName);
+    const lastPreflopAggressor = findLastPreflopAggressor(
+      preflopActions,
+      heroName,
+    );
     const isCbetSpot = lastPreflopAggressor === "hero";
     const isStabSpot = lastPreflopAggressor === "villain";
 
@@ -1426,23 +1584,30 @@ function buildPostflopInPositionAudit(hands) {
         : [];
       if (streetActions.length === 0) continue;
 
-      const streetDecisionActions = streetActions.filter(isPostflopDecisionAction);
+      const streetDecisionActions = streetActions.filter(
+        isPostflopDecisionAction,
+      );
       if (streetDecisionActions.length === 0) continue;
 
       const playersOnStreet = uniquePlayersForStreet(streetDecisionActions);
-      if (playersOnStreet.size !== 2 || !playersOnStreet.has(heroName)) continue;
+      if (playersOnStreet.size !== 2 || !playersOnStreet.has(heroName))
+        continue;
 
-      const streetFirstDecisionIndex = streetActions.findIndex(isPostflopDecisionAction);
+      const streetFirstDecisionIndex = streetActions.findIndex(
+        isPostflopDecisionAction,
+      );
       if (streetFirstDecisionIndex < 0) continue;
       const streetFirstDecision = streetActions[streetFirstDecisionIndex];
-      const streetFirstPlayer = String(streetFirstDecision?.player || "").trim();
+      const streetFirstPlayer = String(
+        streetFirstDecision?.player || "",
+      ).trim();
       if (!streetFirstPlayer || streetFirstPlayer === heroName) continue;
 
       const heroStreetDecision = streetActions.find(
         (action, idx) =>
           idx > streetFirstDecisionIndex &&
           String(action?.player || "").trim() === heroName &&
-          isPostflopDecisionAction(action)
+          isPostflopDecisionAction(action),
       );
       if (!heroStreetDecision) continue;
 
@@ -1461,7 +1626,11 @@ function buildPostflopInPositionAudit(hands) {
         street === "turn" ? hasStrongFlopDraw(heroCards, boardToStreet) : false;
       const strongMadeHand = hasStrongMadeHand(heroCards, boardToStreet);
 
-      if (street === "turn" && heroStreetDecisionType === "fold" && (hasPairOrBetter || hasStrongDraw)) {
+      if (
+        street === "turn" &&
+        heroStreetDecisionType === "fold" &&
+        (hasPairOrBetter || hasStrongDraw)
+      ) {
         lightIpFoldTurnEvents.push({
           type: "light_ip_fold_turn",
           handKey: handKey(hand),
@@ -1470,11 +1639,16 @@ function buildPostflopInPositionAudit(hands) {
           position,
           handCode,
           actualAction: heroStreetDecisionType,
-          recommendation: "Defend turn bets in position more often with pair/draw equity",
+          recommendation:
+            "Defend turn bets in position more often with pair/draw equity",
         });
       }
 
-      if (street === "river" && heroStreetDecisionType === "fold" && strongMadeHand) {
+      if (
+        street === "river" &&
+        heroStreetDecisionType === "fold" &&
+        strongMadeHand
+      ) {
         lightIpFoldRiverEvents.push({
           type: "light_ip_fold_river",
           handKey: handKey(hand),
@@ -1483,7 +1657,8 @@ function buildPostflopInPositionAudit(hands) {
           position,
           handCode,
           actualAction: heroStreetDecisionType,
-          recommendation: "Recheck river folds with strong made hands in position",
+          recommendation:
+            "Recheck river folds with strong made hands in position",
         });
       }
 
@@ -1505,8 +1680,12 @@ function buildPostflopInPositionAudit(hands) {
     }
   }
 
-  const missedIpCbetFavorable = summarizeAuditEvents(missedIpCbetFavorableEvents);
-  const missedIpStabFavorable = summarizeAuditEvents(missedIpStabFavorableEvents);
+  const missedIpCbetFavorable = summarizeAuditEvents(
+    missedIpCbetFavorableEvents,
+  );
+  const missedIpStabFavorable = summarizeAuditEvents(
+    missedIpStabFavorableEvents,
+  );
   const lightIpFoldFlop = summarizeAuditEvents(lightIpFoldFlopEvents);
   const lightIpFoldTurn = summarizeAuditEvents(lightIpFoldTurnEvents);
   const lightIpFoldRiver = summarizeAuditEvents(lightIpFoldRiverEvents);
@@ -1521,37 +1700,37 @@ function buildPostflopInPositionAudit(hands) {
   const topValueRaisePos = missedIpValueRaise.byPosition[0];
   if (topCbetPos) {
     quickFixes.push(
-      `Increase flop c-bet frequency in position from ${topCbetPos.position}; favorable boards are getting checked too often.`
+      `Increase flop c-bet frequency in position from ${topCbetPos.position}; favorable boards are getting checked too often.`,
     );
   }
   if (topStabPos) {
     quickFixes.push(
-      `Stab more in-position after villain checks from ${topStabPos.position}; passivity is giving up EV.`
+      `Stab more in-position after villain checks from ${topStabPos.position}; passivity is giving up EV.`,
     );
   }
   if (topFlopFoldPos) {
     quickFixes.push(
-      `Defend flop bets in position more often from ${topFlopFoldPos.position} when holding pair/draw equity.`
+      `Defend flop bets in position more often from ${topFlopFoldPos.position} when holding pair/draw equity.`,
     );
   }
   if (topTurnFoldPos) {
     quickFixes.push(
-      `Defend turn bets in position more often from ${topTurnFoldPos.position} when your hand retains equity.`
+      `Defend turn bets in position more often from ${topTurnFoldPos.position} when your hand retains equity.`,
     );
   }
   if (topRiverFoldPos) {
     quickFixes.push(
-      `Review river folds in position from ${topRiverFoldPos.position}; strong made hands may be overfolding.`
+      `Review river folds in position from ${topRiverFoldPos.position}; strong made hands may be overfolding.`,
     );
   }
   if (topValueRaisePos) {
     quickFixes.push(
-      `Add more value-raises in position from ${topValueRaisePos.position} when strong made hands face turn/river bets.`
+      `Add more value-raises in position from ${topValueRaisePos.position} when strong made hands face turn/river bets.`,
     );
   }
   if (quickFixes.length === 0) {
     quickFixes.push(
-      "No dominant postflop in-position leak found in this MVP heads-up sample."
+      "No dominant postflop in-position leak found in this MVP heads-up sample.",
     );
   }
 
@@ -1599,7 +1778,9 @@ function hasAuditReference(event) {
   const key = String(event?.handKey || event?.sampleHandKey || "").trim();
   if (key) return true;
   const handId = String(event?.handId || event?.sampleHandId || "").trim();
-  const playedAt = String(event?.playedAt || event?.samplePlayedAt || "").trim();
+  const playedAt = String(
+    event?.playedAt || event?.samplePlayedAt || "",
+  ).trim();
   return Boolean(handId || playedAt);
 }
 
@@ -1616,8 +1797,21 @@ export default function HandReviewPanel() {
   const [loadingReview, setLoadingReview] = useState(false);
   const [quickReviewHandKey, setQuickReviewHandKey] = useState("");
   const [loadingSummaryReview, setLoadingSummaryReview] = useState(false);
+  const [loadingTournamentSave, setLoadingTournamentSave] = useState(false);
   const [error, setError] = useState("");
   const [summaryReviewError, setSummaryReviewError] = useState("");
+  const [saveTournamentError, setSaveTournamentError] = useState("");
+  const [saveTournamentSuccess, setSaveTournamentSuccess] = useState("");
+  const [pendingTournamentSave, setPendingTournamentSave] = useState(null);
+  const [savedTournamentModalOpen, setSavedTournamentModalOpen] =
+    useState(false);
+  const [loadingSavedTournaments, setLoadingSavedTournaments] = useState(false);
+  const [savedTournaments, setSavedTournaments] = useState([]);
+  const [savedTournamentError, setSavedTournamentError] = useState("");
+  const [selectedSavedTournamentId, setSelectedSavedTournamentId] =
+    useState("");
+  const [loadingSavedTournamentId, setLoadingSavedTournamentId] = useState("");
+  const [deletingSavedTournamentId, setDeletingSavedTournamentId] = useState("");
   const [parseResult, setParseResult] = useState(null);
   const [reviewsByHandKey, setReviewsByHandKey] = useState({});
   const [summaryReview, setSummaryReview] = useState(null);
@@ -1632,7 +1826,9 @@ export default function HandReviewPanel() {
   const handRowRefs = useRef(new Map());
 
   const canSubmit = historyText.trim().length > 0;
-  const parsedHands = Array.isArray(parseResult?.hands) ? parseResult.hands : [];
+  const parsedHands = Array.isArray(parseResult?.hands)
+    ? parseResult.hands
+    : [];
   const opponentSnapshot = parseResult?.opponents || null;
   const opponentPlayers = Array.isArray(opponentSnapshot?.players)
     ? opponentSnapshot.players
@@ -1646,9 +1842,9 @@ export default function HandReviewPanel() {
       new Set(
         currentTableGuessPlayers
           .map((seat) => String(seat?.player || "").trim())
-          .filter(Boolean)
+          .filter(Boolean),
       ),
-    [currentTableGuessPlayers]
+    [currentTableGuessPlayers],
   );
   const currentTableSeatByPlayer = useMemo(() => {
     const map = new Map();
@@ -1730,23 +1926,74 @@ export default function HandReviewPanel() {
     return map;
   }, [parsedHands]);
   const selectedHands = filteredParsedHands.filter((hand) =>
-    selectedHandKeys.has(handKey(hand))
+    selectedHandKeys.has(handKey(hand)),
   );
+  const detectedTournamentIds = useMemo(() => {
+    const ids = new Set();
+    for (const hand of parsedHands) {
+      const id = String(hand?.tournamentId || "").trim();
+      if (id) ids.add(id);
+    }
+    return Array.from(ids).sort();
+  }, [parsedHands]);
+  const inferredTournamentId =
+    detectedTournamentIds.length === 1 ? detectedTournamentIds[0] : "";
+  const parsedTournamentPlayedAtEpoch = useMemo(() => {
+    const epochs = parsedHands
+      .map((hand) => Number(getHandPlayedAtEpoch(hand)))
+      .filter((value) => Number.isFinite(value));
+    if (!epochs.length) return null;
+    return Math.min(...epochs);
+  }, [parsedHands]);
+  const fileMeta = useMemo(
+    () => parseTournamentMetaFromFileName(sourceFileName),
+    [sourceFileName],
+  );
+  const suggestedTournamentMeta = useMemo(() => {
+    const tournamentId = inferredTournamentId || fileMeta.tournamentId || "";
+    const tournamentName =
+      fileMeta.tournamentName ||
+      (sourceFileName ? stripFileExtension(sourceFileName) : "") ||
+      (tournamentId ? `Tournament ${tournamentId}` : "Tournament upload");
+    const playedAtEpoch = Number.isFinite(Number(fileMeta.playedAtEpoch))
+      ? Number(fileMeta.playedAtEpoch)
+      : parsedTournamentPlayedAtEpoch;
+    return {
+      tournamentId,
+      tournamentName,
+      playedAtEpoch: Number.isFinite(Number(playedAtEpoch))
+        ? Number(playedAtEpoch)
+        : null,
+    };
+  }, [
+    fileMeta.playedAtEpoch,
+    fileMeta.tournamentId,
+    fileMeta.tournamentName,
+    inferredTournamentId,
+    parsedTournamentPlayedAtEpoch,
+    sourceFileName,
+  ]);
   const selectedCount = selectedHands.length;
   const reviewedCount = parsedHands.reduce(
     (count, hand) => (reviewsByHandKey[handKey(hand)] ? count + 1 : count),
-    0
+    0,
   );
   const tournamentSummary = useMemo(() => {
     if (!parseResult?.summary) return null;
-    const totalHands = Number(parseResult.summary.totalHands) || parsedHands.length || 0;
-    const summaryPreflopFolds = Number(parseResult.summary.heroFoldedPreflopCount);
-    const summaryEnteredPreflop = Number(parseResult.summary.heroEnteredPreflopCount);
+    const totalHands =
+      Number(parseResult.summary.totalHands) || parsedHands.length || 0;
+    const summaryPreflopFolds = Number(
+      parseResult.summary.heroFoldedPreflopCount,
+    );
+    const summaryEnteredPreflop = Number(
+      parseResult.summary.heroEnteredPreflopCount,
+    );
     const preflopFolds =
       Number.isFinite(summaryPreflopFolds) && summaryPreflopFolds >= 0
         ? summaryPreflopFolds
         : parsedHands.filter(
-            (hand) => String(hand?.heroOutcome?.code || "") === "folded_preflop"
+            (hand) =>
+              String(hand?.heroOutcome?.code || "") === "folded_preflop",
           ).length;
     const enteredHands =
       Number.isFinite(summaryEnteredPreflop) && summaryEnteredPreflop >= 0
@@ -1845,7 +2092,7 @@ export default function HandReviewPanel() {
           .some(
             (action) =>
               String(action?.player || "").trim() !== heroNameForHand &&
-              isPreflopAggressiveAction(action)
+              isPreflopAggressiveAction(action),
           );
 
         if (priorOpponentAggression) {
@@ -1887,7 +2134,7 @@ export default function HandReviewPanel() {
             (action, idx) =>
               idx > firstHeroDecisionIndex &&
               String(action?.player || "").trim() !== heroNameForHand &&
-              isPreflopAggressiveAction(action)
+              isPreflopAggressiveAction(action),
           );
           if (oppRaiseAfterCallIndex >= 0) {
             callThenFacedRaiseSpots += 1;
@@ -1895,7 +2142,7 @@ export default function HandReviewPanel() {
               (action, idx) =>
                 idx > oppRaiseAfterCallIndex &&
                 String(action?.player || "").trim() === heroNameForHand &&
-                normalizeActionType(action) === "fold"
+                normalizeActionType(action) === "fold",
             );
             if (foldedAfterRaise) callThenFoldedToRaise += 1;
           }
@@ -1905,14 +2152,14 @@ export default function HandReviewPanel() {
       const heroAggressiveIndex = preflopActions.findIndex(
         (action) =>
           String(action?.player || "").trim() === heroNameForHand &&
-          isPreflopAggressiveAction(action)
+          isPreflopAggressiveAction(action),
       );
       if (heroAggressiveIndex >= 0) {
         const oppReraiseIndex = preflopActions.findIndex(
           (action, idx) =>
             idx > heroAggressiveIndex &&
             String(action?.player || "").trim() !== heroNameForHand &&
-            isPreflopAggressiveAction(action)
+            isPreflopAggressiveAction(action),
         );
         if (oppReraiseIndex >= 0) {
           facedReraiseAfterAggressionSpots += 1;
@@ -1920,7 +2167,7 @@ export default function HandReviewPanel() {
             (action, idx) =>
               idx > oppReraiseIndex &&
               String(action?.player || "").trim() === heroNameForHand &&
-              normalizeActionType(action) === "fold"
+              normalizeActionType(action) === "fold",
           );
           if (heroFoldedAfterReraise) foldedAfterFacingReraise += 1;
         }
@@ -1931,11 +2178,14 @@ export default function HandReviewPanel() {
     const enteredPct = safePercent(enteredHands, totalHands);
     const preflopFoldPct = safePercent(preflopFolds, totalHands);
     const noShowdownWinPct = safePercent(wonNoShowdown, enteredHands);
-    const postflopNoShowdownPct = safePercent(wonNoShowdownPostflop, enteredHands);
+    const postflopNoShowdownPct = safePercent(
+      wonNoShowdownPostflop,
+      enteredHands,
+    );
     const showdownWinPct = safePercent(wonShowdown, showdownSamples);
     const lateStreetFoldPct = safePercent(
       foldedTurn + foldedRiver,
-      foldedFlop + foldedTurn + foldedRiver
+      foldedFlop + foldedTurn + foldedRiver,
     );
     const enteredLatePct = safePercent(enteredLate, enteredHands);
     const avgEntryStackBb = stackBbCount > 0 ? stackBbSum / stackBbCount : null;
@@ -1952,14 +2202,17 @@ export default function HandReviewPanel() {
     if (enteredEarly >= enteredLate + 4) {
       preflopFoldWarnThreshold += 2;
     }
-    preflopFoldWarnThreshold = Math.max(72, Math.min(84, preflopFoldWarnThreshold));
+    preflopFoldWarnThreshold = Math.max(
+      72,
+      Math.min(84, preflopFoldWarnThreshold),
+    );
 
     const flags = [];
     if (totalHands >= 40 && preflopFoldPct > preflopFoldWarnThreshold) {
       flags.push({
         level: "watch",
         text: `Preflop fold rate is high for this sample/context (${percentLabel(
-          preflopFoldPct
+          preflopFoldPct,
         )} vs ~${percentLabel(preflopFoldWarnThreshold)} threshold).`,
       });
     }
@@ -1975,10 +2228,7 @@ export default function HandReviewPanel() {
         text: "Showdown conversion is weak. Review bluff-catch calls and thin value lines.",
       });
     }
-    if (
-      foldedFlop + foldedTurn + foldedRiver >= 8 &&
-      lateStreetFoldPct >= 65
-    ) {
+    if (foldedFlop + foldedTurn + foldedRiver >= 8 && lateStreetFoldPct >= 65) {
       flags.push({
         level: "watch",
         text: "Most postflop folds happen late. Check turn/river over-fold patterns.",
@@ -2058,11 +2308,11 @@ export default function HandReviewPanel() {
   }, [parseResult?.summary, parsedHands]);
   const preflopOpportunityAudit = useMemo(
     () => buildPreflopOpportunityAudit(parsedHands),
-    [parsedHands]
+    [parsedHands],
   );
   const postflopInPositionAudit = useMemo(
     () => buildPostflopInPositionAudit(parsedHands),
-    [parsedHands]
+    [parsedHands],
   );
   const postflopIpAuditDigest = useMemo(() => {
     const audit = postflopInPositionAudit || {};
@@ -2079,7 +2329,7 @@ export default function HandReviewPanel() {
           opportunities: Number(audit?.ipCbetOpportunities) || 0,
           ratePct: safePercent(
             Number(audit?.missedIpCbetFavorable?.count) || 0,
-            Number(audit?.ipCbetOpportunities) || 0
+            Number(audit?.ipCbetOpportunities) || 0,
           ),
         },
         missedIpStabFavorable: {
@@ -2087,7 +2337,7 @@ export default function HandReviewPanel() {
           opportunities: Number(audit?.ipStabOpportunities) || 0,
           ratePct: safePercent(
             Number(audit?.missedIpStabFavorable?.count) || 0,
-            Number(audit?.ipStabOpportunities) || 0
+            Number(audit?.ipStabOpportunities) || 0,
           ),
         },
         lightIpFoldFlop: {
@@ -2095,7 +2345,7 @@ export default function HandReviewPanel() {
           opportunities: Number(audit?.ipFacingFlopBetSpots) || 0,
           ratePct: safePercent(
             Number(audit?.lightIpFoldFlop?.count) || 0,
-            Number(audit?.ipFacingFlopBetSpots) || 0
+            Number(audit?.ipFacingFlopBetSpots) || 0,
           ),
         },
         lightIpFoldTurn: {
@@ -2103,7 +2353,7 @@ export default function HandReviewPanel() {
           opportunities: Number(audit?.ipFacingTurnBetSpots) || 0,
           ratePct: safePercent(
             Number(audit?.lightIpFoldTurn?.count) || 0,
-            Number(audit?.ipFacingTurnBetSpots) || 0
+            Number(audit?.ipFacingTurnBetSpots) || 0,
           ),
         },
         lightIpFoldRiver: {
@@ -2111,7 +2361,7 @@ export default function HandReviewPanel() {
           opportunities: Number(audit?.ipFacingRiverBetSpots) || 0,
           ratePct: safePercent(
             Number(audit?.lightIpFoldRiver?.count) || 0,
-            Number(audit?.ipFacingRiverBetSpots) || 0
+            Number(audit?.ipFacingRiverBetSpots) || 0,
           ),
         },
         missedIpValueRaise: {
@@ -2120,7 +2370,7 @@ export default function HandReviewPanel() {
             Number(audit?.ipStrongMadeFacingTurnRiverBetSpots) || 0,
           ratePct: safePercent(
             Number(audit?.missedIpValueRaise?.count) || 0,
-            Number(audit?.ipStrongMadeFacingTurnRiverBetSpots) || 0
+            Number(audit?.ipStrongMadeFacingTurnRiverBetSpots) || 0,
           ),
         },
       },
@@ -2167,30 +2417,25 @@ export default function HandReviewPanel() {
       .sort(
         (a, b) =>
           safePercent(b.count, b.opportunities) -
-            safePercent(a.count, a.opportunities) || b.count - a.count
+            safePercent(a.count, a.opportunities) || b.count - a.count,
       )
       .slice(0, 3);
 
     return candidates.map(
-      (row) =>
-        `${row.label}: ${rateCountLabel(row.count, row.opportunities)}.`
+      (row) => `${row.label}: ${rateCountLabel(row.count, row.opportunities)}.`,
     );
   }, [postflopIpAuditDigest]);
   const aiSummaryActions = useMemo(
     () => normalizeInsightLines(summaryReview?.actions, 6),
-    [summaryReview]
+    [summaryReview],
   );
   const aiSummaryWarnings = useMemo(
     () => normalizeInsightLines(summaryReview?.warnings, 6),
-    [summaryReview]
+    [summaryReview],
   );
   const tournamentCoachSummary = useMemo(
-    () =>
-      buildTournamentCoachSummary(
-        tournamentSummary,
-        postflopIpAuditDigest
-      ),
-    [tournamentSummary, postflopIpAuditDigest]
+    () => buildTournamentCoachSummary(tournamentSummary, postflopIpAuditDigest),
+    [tournamentSummary, postflopIpAuditDigest],
   );
   const tournamentSummaryPayload = useMemo(() => {
     if (!tournamentSummary) return null;
@@ -2225,7 +2470,7 @@ export default function HandReviewPanel() {
       sort: sortOrder,
       limit: Math.max(1, Math.min(500, Number(handLimit) || 200)),
     }),
-    [historyText, heroName, sortOrder, handLimit, preflopHandSet]
+    [historyText, heroName, sortOrder, handLimit, preflopHandSet],
   );
   const hasTournamentSummary = Boolean(tournamentSummary);
   const hasHandAudit = parsedHands.length > 0;
@@ -2271,7 +2516,11 @@ export default function HandReviewPanel() {
     setPendingAuditScrollKey("");
   }, [pendingAuditScrollKey, filteredParsedHands]);
 
-  const copyOpponentTendencies = async (playerKey, tendencyLabels, playNoteLine) => {
+  const copyOpponentTendencies = async (
+    playerKey,
+    tendencyLabels,
+    playNoteLine,
+  ) => {
     const labels = Array.isArray(tendencyLabels)
       ? tendencyLabels.filter(Boolean)
       : [];
@@ -2310,9 +2559,11 @@ export default function HandReviewPanel() {
     if (key && parsedHandByKey.has(key)) {
       return parsedHandByKey.get(key) || null;
     }
-    const eventHandId = String(event?.handId || event?.sampleHandId || "").trim();
+    const eventHandId = String(
+      event?.handId || event?.sampleHandId || "",
+    ).trim();
     const eventPlayedAt = String(
-      event?.playedAt || event?.samplePlayedAt || ""
+      event?.playedAt || event?.samplePlayedAt || "",
     ).trim();
     if (!eventHandId && !eventPlayedAt) return null;
     return (
@@ -2347,7 +2598,9 @@ export default function HandReviewPanel() {
     setSelectedAuditHandKey(key);
     setError("");
 
-    const visibleNow = filteredParsedHands.some((hand) => handKey(hand) === key);
+    const visibleNow = filteredParsedHands.some(
+      (hand) => handKey(hand) === key,
+    );
     if (!visibleNow) {
       setOutcomeFilter("all");
       setTimeFilter("all_time");
@@ -2363,6 +2616,8 @@ export default function HandReviewPanel() {
     setHistoryText(text || "");
     setSourceFileName(file.name || "");
     setError("");
+    setSaveTournamentError("");
+    setSaveTournamentSuccess("");
     setParseResult(null);
     setReviewsByHandKey({});
     setSummaryReview(null);
@@ -2376,11 +2631,15 @@ export default function HandReviewPanel() {
     setSelectedAuditHandKey("");
     setPendingAuditScrollKey("");
     setQuickReviewHandKey("");
+    setPendingTournamentSave(null);
   };
 
   const runParse = async () => {
     if (!canSubmit) return;
     setError("");
+    setSaveTournamentError("");
+    setSaveTournamentSuccess("");
+    setPendingTournamentSave(null);
     setLoadingParse(true);
     setQuickReviewHandKey("");
     setReviewsByHandKey({});
@@ -2405,6 +2664,201 @@ export default function HandReviewPanel() {
       setError(err?.message || "Failed to parse hand history.");
     } finally {
       setLoadingParse(false);
+    }
+  };
+
+  const promptSaveTournament = async () => {
+    const trimmedHistory = historyText.trim();
+    if (!trimmedHistory) {
+      setSaveTournamentError(
+        "Paste or load a hand-history file before saving.",
+      );
+      return;
+    }
+
+    const resolvedTournamentId = String(
+      suggestedTournamentMeta.tournamentId || "",
+    ).trim();
+    if (!resolvedTournamentId && detectedTournamentIds.length > 1) {
+      setSaveTournamentError(
+        "Multiple tournament IDs detected in this upload. Keep one tournament per save.",
+      );
+      return;
+    }
+    if (!resolvedTournamentId) {
+      setSaveTournamentError(
+        "Could not detect a tournament ID. Load a file that includes one.",
+      );
+      return;
+    }
+
+    setSaveTournamentError("");
+    setSaveTournamentSuccess("");
+    setPendingTournamentSave({
+      tournamentId: resolvedTournamentId,
+      tournamentName: String(
+        suggestedTournamentMeta.tournamentName || "",
+      ).trim(),
+      playedAtEpoch: suggestedTournamentMeta.playedAtEpoch,
+    });
+  };
+
+  const saveTournament = async () => {
+    if (!pendingTournamentSave) {
+      setSaveTournamentError("Open Save Tournament first to confirm details.");
+      return;
+    }
+
+    setSaveTournamentError("");
+    setSaveTournamentSuccess("");
+    setLoadingTournamentSave(true);
+    try {
+      const payload = {
+        historyText,
+        heroName: heroName.trim() || "Hero",
+        tournamentId: pendingTournamentSave.tournamentId,
+        tournamentName:
+          String(pendingTournamentSave.tournamentName || "").trim() ||
+          undefined,
+      };
+
+      const res = await requestTournamentUpload(payload);
+      const savedId = String(res?.saved?.tournamentId || "").trim();
+      if (savedId) {
+        setSaveTournamentSuccess(
+          `Saved tournament ${savedId}. Future uploads with this ID will overwrite.`,
+        );
+      } else {
+        setSaveTournamentSuccess(
+          "Tournament saved. Future uploads with the same ID will overwrite.",
+        );
+      }
+      setPendingTournamentSave(null);
+    } catch (err) {
+      setSaveTournamentError(err?.message || "Failed to save tournament.");
+    } finally {
+      setLoadingTournamentSave(false);
+    }
+  };
+
+  const openSavedTournamentModal = async () => {
+    setSavedTournamentModalOpen(true);
+    setSavedTournamentError("");
+    setSelectedSavedTournamentId("");
+    setLoadingSavedTournaments(true);
+    try {
+      const res = await requestSavedTournaments();
+      const tournaments = Array.isArray(res?.tournaments)
+        ? res.tournaments
+        : [];
+      setSavedTournaments(tournaments);
+      setSelectedSavedTournamentId("");
+    } catch (err) {
+      setSavedTournamentError(
+        err?.message || "Failed to load saved tournaments.",
+      );
+      setSavedTournaments([]);
+    } finally {
+      setLoadingSavedTournaments(false);
+    }
+  };
+
+  const closeSavedTournamentModal = () => {
+    if (loadingSavedTournamentId || deletingSavedTournamentId) return;
+    setSavedTournamentModalOpen(false);
+    setSavedTournamentError("");
+    setSelectedSavedTournamentId("");
+  };
+
+  const loadSavedTournament = async (tournamentId) => {
+    const id = String(tournamentId || "").trim();
+    if (!id) return;
+    setSavedTournamentError("");
+    setLoadingSavedTournamentId(id);
+    try {
+      const res = await requestSavedTournament(id);
+      const tournament = res?.tournament || {};
+      const hands = Array.isArray(tournament.hands) ? tournament.hands : [];
+      const opponents =
+        tournament.opponents && typeof tournament.opponents === "object"
+          ? tournament.opponents
+          : null;
+      const summary =
+        tournament.summary && typeof tournament.summary === "object"
+          ? tournament.summary
+          : null;
+
+      setParseResult({
+        summary: summary || {
+          totalHands: hands.length,
+          filteredHands: hands.length,
+          returnedHands: hands.length,
+        },
+        hands,
+        opponents,
+      });
+
+      setHistoryText(String(tournament.historyText || historyText || ""));
+      setSourceFileName(
+        tournament.tournamentName
+          ? `${tournament.tournamentId} - ${tournament.tournamentName}.txt`
+          : `${tournament.tournamentId}.txt`,
+      );
+      setError("");
+      setSaveTournamentError("");
+      setSaveTournamentSuccess("");
+      setSummaryReview(null);
+      setSummaryReviewError("");
+      setReviewsByHandKey({});
+      setSelectedHandKeys(new Set());
+      setOutcomeFilter("all");
+      setTimeFilter("all_time");
+      setInsightsTab("tournament");
+      setOpponentFilter("current_table");
+      setCopiedOpponentKey("");
+      setSelectedAuditHandKey("");
+      setPendingAuditScrollKey("");
+      setPendingTournamentSave(null);
+      setSavedTournamentModalOpen(false);
+    } catch (err) {
+      setSavedTournamentError(
+        err?.message || "Failed to load saved tournament.",
+      );
+    } finally {
+      setLoadingSavedTournamentId("");
+    }
+  };
+
+  const loadSelectedSavedTournament = async () => {
+    if (!selectedSavedTournamentId || loadingSavedTournamentId) return;
+    await loadSavedTournament(selectedSavedTournamentId);
+  };
+
+  const deleteSelectedSavedTournament = async () => {
+    const id = String(selectedSavedTournamentId || "").trim();
+    if (!id || deletingSavedTournamentId || loadingSavedTournamentId) return;
+
+    const confirmed = window.confirm(
+      `Delete saved tournament ${id}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setSavedTournamentError("");
+    setDeletingSavedTournamentId(id);
+    try {
+      await requestDeleteSavedTournament(id);
+      setSavedTournaments((previous) =>
+        previous.filter(
+          (item) => String(item?.tournamentId || "").trim() !== id,
+        ),
+      );
+      setSelectedSavedTournamentId("");
+    } catch (err) {
+      setSavedTournamentError(
+        err?.message || "Failed to delete saved tournament.",
+      );
+    } finally {
+      setDeletingSavedTournamentId("");
     }
   };
 
@@ -2474,7 +2928,9 @@ export default function HandReviewPanel() {
 
   const runSummaryReview = async () => {
     if (!tournamentSummaryPayload) {
-      setSummaryReviewError("Parse hands first before requesting summary review.");
+      setSummaryReviewError(
+        "Parse hands first before requesting summary review.",
+      );
       return;
     }
     setSummaryReviewError("");
@@ -2486,7 +2942,7 @@ export default function HandReviewPanel() {
       setSummaryReview(res?.review || null);
     } catch (err) {
       setSummaryReviewError(
-        err?.message || "Failed to review tournament summary with AI."
+        err?.message || "Failed to review tournament summary with AI.",
       );
     } finally {
       setLoadingSummaryReview(false);
@@ -2505,7 +2961,7 @@ export default function HandReviewPanel() {
 
   const selectAllHands = () => {
     setSelectedHandKeys(
-      new Set(filteredParsedHands.map((hand) => handKey(hand)))
+      new Set(filteredParsedHands.map((hand) => handKey(hand))),
     );
   };
 
@@ -2516,1317 +2972,1650 @@ export default function HandReviewPanel() {
   return (
     <section className="hand-review-workspace">
       <div className="hand-review-panel hand-review-pane hand-review-pane-left">
-      <div className="hand-review-header">
-        <h2>Hand Review</h2>
-        <p>
-          Upload or paste GG tournament history, then choose whether to include
-          all preflop outcomes or exclude preflop folds.
-        </p>
-      </div>
-
-      <div className="hand-review-parser-head">
-        <button
-          type="button"
-          className="hand-review-parser-toggle"
-          onClick={() => setIsParserCollapsed((value) => !value)}
-        >
-          {isParserCollapsed ? "Expand parser" : "Collapse parser"}
-        </button>
-      </div>
-
-      {!isParserCollapsed ? (
-        <>
-      <div className="hand-review-controls">
-        <label>
-          Hero name
-          <input
-            type="text"
-            value={heroName}
-            onChange={(e) => setHeroName(e.target.value)}
-            placeholder="Hero"
-          />
-        </label>
-        <label>
-          Sort
-          <select
-            value={sortOrder}
-            onChange={(e) => setSortOrder(e.target.value)}
-          >
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </select>
-        </label>
-        <label>
-          Parse limit
-          <input
-            type="number"
-            min={1}
-            max={500}
-            value={handLimit}
-            onChange={(e) => setHandLimit(e.target.value)}
-          />
-        </label>
-        <label>
-          Hand set
-          <select
-            value={preflopHandSet}
-            onChange={(e) => setPreflopHandSet(e.target.value)}
-          >
-            <option value="all_hands">Include all hands</option>
-            <option value="exclude_preflop_folds">
-              Exclude hero preflop folds
-            </option>
-          </select>
-        </label>
-      </div>
-
-      <div className="hand-review-inputs">
-        <label className="hand-review-file">
-          <span>{sourceFileName || "Choose hand history text file"}</span>
-          <input type="file" accept=".txt,.log" onChange={handleFileChange} />
-        </label>
-        <textarea
-          value={historyText}
-          onChange={(e) => {
-            setHistoryText(e.target.value);
-            setError("");
-            setReviewsByHandKey({});
-            setSummaryReview(null);
-            setSummaryReviewError("");
-            setOutcomeFilter("all");
-            setTimeFilter("all_time");
-            setSelectedHandKeys(new Set());
-            setInsightsTab("tournament");
-            setOpponentFilter("current_table");
-            setCopiedOpponentKey("");
-            setSelectedAuditHandKey("");
-            setPendingAuditScrollKey("");
-            setQuickReviewHandKey("");
-          }}
-          rows={10}
-          placeholder="Paste GG hand history text here"
-        />
-      </div>
-
-      <div className="hand-review-actions">
-        <button type="button" onClick={runParse} disabled={!canSubmit || loadingParse}>
-          {loadingParse ? "Parsing..." : "Parse Hands"}
-        </button>
-      </div>
-        </>
-      ) : (
-        <p className="hand-review-empty">
-          Parser collapsed. Expand to load another hand-history file or paste
-          text.
-        </p>
-      )}
-
-      {error ? <p className="hand-review-error">{error}</p> : null}
-
-      {parseResult?.summary ? (
-        <div className="hand-review-summary">
-          <span>Total: {parseResult.summary.totalHands}</span>
-          <span>Filtered: {parseResult.summary.filteredHands}</span>
-          <span>Returned: {parseResult.summary.returnedHands}</span>
-          <span>Visible: {filteredParsedHands.length}</span>
-          <span>Selected: {selectedCount}</span>
-          <span>Reviewed: {reviewedCount}</span>
+        <div className="hand-review-header">
+          <h2>Hand Review</h2>
+          <p>
+            Upload or paste GG tournament history, then choose whether to
+            include all preflop outcomes or exclude preflop folds.
+          </p>
         </div>
-      ) : null}
 
-      {parsedHands.length > 0 ? (
-        <div className="hand-review-controls">
-          <label>
-            Outcome status
-            <select
-              value={outcomeFilter}
-              onChange={(e) => {
-                setOutcomeFilter(e.target.value);
-                setSelectedHandKeys(new Set());
-              }}
-            >
-              <option value="all">All statuses</option>
-              {outcomeOptions.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Time window
-            <select
-              value={timeFilter}
-              onChange={(e) => {
-                setTimeFilter(e.target.value);
-                setSelectedHandKeys(new Set());
-              }}
-            >
-              {TIME_FILTER_OPTIONS.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : null}
-
-      {filteredParsedHands.length > 0 ? (
-        <div className="hand-review-selection-tools">
-          <button type="button" onClick={selectAllHands}>
-            Select all
-          </button>
-          <button type="button" onClick={clearSelection}>
-            Clear selection
-          </button>
+        <div className="hand-review-parser-head">
           <button
             type="button"
-            onClick={runReview}
-            disabled={selectedCount === 0 || loadingReview || Boolean(quickReviewHandKey)}
+            className="hand-review-parser-toggle"
+            onClick={() => setIsParserCollapsed((value) => !value)}
           >
-            {loadingReview || quickReviewHandKey
-              ? "Reviewing..."
-              : `Analyze Selected (${selectedCount})`}
+            {isParserCollapsed ? "Expand parser" : "Collapse parser"}
           </button>
         </div>
-      ) : null}
 
-      {filteredParsedHands.length > 0 ? (
-        <div className="hand-review-list">
-          {filteredParsedHands.map((hand) => {
-            const rowKey = handKey(hand);
-            const outcome = hand.heroOutcome || {};
-            const isSelected = selectedHandKeys.has(rowKey);
-            const isAuditTarget = selectedAuditHandKey === rowKey;
-            const isQuickReviewLoading = quickReviewHandKey === rowKey;
-            const attachedReview = reviewsByHandKey[rowKey];
-            return (
-            <article
-              key={rowKey}
-              ref={(node) => setHandRowRef(rowKey, node)}
-              className={`hand-row ${isSelected ? "selected" : ""} ${
-                isAuditTarget ? "audit-target" : ""
-              }`}
-            >
-              <div className="hand-row-head">
-                <div className="hand-row-id">
-                  <label className="hand-row-select">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleHandSelection(hand)}
-                    />
-                    <strong>{hand.handId}</strong>
-                  </label>
-                  <button
-                    type="button"
-                    className={`hand-row-quick-review ${
-                      isQuickReviewLoading ? "loading" : ""
-                    }`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      runQuickReview(hand);
-                    }}
-                    disabled={loadingReview || Boolean(quickReviewHandKey)}
-                    title="Quick AI review this hand"
-                    aria-label={`Quick AI review ${hand.handId}`}
-                  >
-                    {isQuickReviewLoading ? "..." : "⚡"}
-                  </button>
-                </div>
-                <span>{hand.playedAt}</span>
-              </div>
-              <div className="hand-row-meta">
-                <span>{hand.heroPosition || "Unknown position"}</span>
-                <span>Cards: {formatHeroCards(hand.heroCards)}</span>
-                <span
-                  className={`outcome-pill ${outcomeClass(outcome.code)}`}
-                  title={outcome.code || "unknown"}
+        {!isParserCollapsed ? (
+          <>
+            <div className="hand-review-controls">
+              <label>
+                Hero name
+                <input
+                  type="text"
+                  value={heroName}
+                  onChange={(e) => setHeroName(e.target.value)}
+                  placeholder="Hero"
+                />
+              </label>
+              <label>
+                Sort
+                <select
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value)}
                 >
-                  {outcome.label || "Outcome unknown"}
-                  {Number(outcome.wonAmount) > 0 ? ` (${outcome.wonAmount})` : ""}
-                </span>
-                <span>
-                  Preflop:{" "}
-                  {(hand.heroPreflop?.actions || [])
-                    .map((action) => formatAction(action))
-                    .join(", ") || "No decision"}
-                </span>
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </label>
+              <label>
+                Parse limit
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={handLimit}
+                  onChange={(e) => setHandLimit(e.target.value)}
+                />
+              </label>
+              <label>
+                Hand set
+                <select
+                  value={preflopHandSet}
+                  onChange={(e) => setPreflopHandSet(e.target.value)}
+                >
+                  <option value="all_hands">Include all hands</option>
+                  <option value="exclude_preflop_folds">
+                    Exclude hero preflop folds
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <div className="hand-review-inputs">
+              <label className="hand-review-file">
+                <span>{sourceFileName || "Import hand history text file"}</span>
+                <input
+                  type="file"
+                  accept=".txt,.log"
+                  onChange={handleFileChange}
+                />
+              </label>
+              <div className="hand-review-upload-choice">
+                <span>or</span>
+                <button type="button" onClick={openSavedTournamentModal}>
+                  Load saved tournament
+                </button>
               </div>
-              {attachedReview ? (
-                <div className="hand-row-review">
-                  <div className="hand-review-scores">
-                    <span
-                      className={`score-pill ${scoreClass(
-                        attachedReview.overall_score
-                      )}`}
-                    >
-                      Overall {formatScore(attachedReview.overall_score)}
-                    </span>
-                    <span>Pre {formatScore(attachedReview.preflop_score)}</span>
-                    <span>Flop {formatScore(attachedReview.flop_score)}</span>
-                    <span>Turn {formatScore(attachedReview.turn_score)}</span>
-                    <span>River {formatScore(attachedReview.river_score)}</span>
-                    <span>
-                      Confidence {attachedReview.confidence || "medium"}
-                    </span>
-                  </div>
-                  <p>
-                    <strong>Leak:</strong> {attachedReview.primary_leak}
-                  </p>
-                  <p>
-                    <strong>Better line:</strong> {attachedReview.better_line}
-                  </p>
-                </div>
-              ) : null}
-              <details className="hand-breakdown">
-                <summary>Hand breakdown</summary>
-                <div className="hand-breakdown-body">
-                  <p>
-                    <strong>Hero cards:</strong> {formatHeroCards(hand.heroCards)}
-                  </p>
-                  <p>
-                    <strong>Board:</strong> {formatBoard(hand.board)}
-                  </p>
-                  <p>
-                    <strong>Flop:</strong> {formatBoardStreet(hand.board, "flop")}
-                  </p>
-                  <p>
-                    <strong>Turn:</strong> {formatBoardStreet(hand.board, "turn")}
-                  </p>
-                  <p>
-                    <strong>River:</strong> {formatBoardStreet(hand.board, "river")}
-                  </p>
-                  <p>
-                    <strong>Context:</strong> {streetPlayersLabel(hand)}
-                  </p>
-                  <p>
-                    <strong>Blinds:</strong>{" "}
-                    {hand.blinds?.smallBlind || "?"}/{hand.blinds?.bigBlind || "?"}
-                    {hand.blinds?.ante ? ` (${hand.blinds.ante} ante)` : ""}
-                  </p>
-                  <div className="hand-breakdown-street">
-                    <strong>Preflop</strong>
-                    {(hand.actionsByStreet?.preflop || []).length > 0 ? (
-                      (hand.actionsByStreet?.preflop || []).map((action, idx) => (
-                        <span key={`pre-${idx}`}>{formatActionWithPlayer(action)}</span>
-                      ))
-                    ) : (
-                      <span>No actions captured.</span>
-                    )}
-                  </div>
-                  {(hand.actionsByStreet?.flop || []).length > 0 ? (
-                    <div className="hand-breakdown-street">
-                      <strong>Flop</strong>
-                      {(hand.actionsByStreet?.flop || []).map((action, idx) => (
-                        <span key={`flop-${idx}`}>{formatActionWithPlayer(action)}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {(hand.actionsByStreet?.turn || []).length > 0 ? (
-                    <div className="hand-breakdown-street">
-                      <strong>Turn</strong>
-                      {(hand.actionsByStreet?.turn || []).map((action, idx) => (
-                        <span key={`turn-${idx}`}>{formatActionWithPlayer(action)}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {(hand.actionsByStreet?.river || []).length > 0 ? (
-                    <div className="hand-breakdown-street">
-                      <strong>River</strong>
-                      {(hand.actionsByStreet?.river || []).map((action, idx) => (
-                        <span key={`river-${idx}`}>{formatActionWithPlayer(action)}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {Array.isArray(hand.showdown?.revealedCards) &&
-                  hand.showdown.revealedCards.length > 0 ? (
-                    <div className="hand-breakdown-street">
-                      <strong>Revealed cards</strong>
-                      {hand.showdown.revealedCards.map((entry, idx) => (
-                        <span key={`show-${idx}`}>
-                          {entry.player}: {(entry.cards || []).join(" ") || "Unknown"}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </details>
-            </article>
-          )})}
-        </div>
-      ) : null}
+              <textarea
+                value={historyText}
+                onChange={(e) => {
+                  setHistoryText(e.target.value);
+                  setError("");
+                  setSaveTournamentError("");
+                  setSaveTournamentSuccess("");
+                  setPendingTournamentSave(null);
+                  setReviewsByHandKey({});
+                  setSummaryReview(null);
+                  setSummaryReviewError("");
+                  setOutcomeFilter("all");
+                  setTimeFilter("all_time");
+                  setSelectedHandKeys(new Set());
+                  setInsightsTab("tournament");
+                  setOpponentFilter("current_table");
+                  setCopiedOpponentKey("");
+                  setSelectedAuditHandKey("");
+                  setPendingAuditScrollKey("");
+                  setQuickReviewHandKey("");
+                }}
+                rows={10}
+                placeholder="Paste GG hand history text here"
+              />
+            </div>
 
-      {parsedHands.length > 0 && filteredParsedHands.length === 0 ? (
-        <p className="hand-review-empty">
-          No parsed hands match the selected outcome status.
-        </p>
-      ) : null}
-      </div>
-
-      <div className="hand-review-pane hand-review-pane-right">
-      {hasTournamentSummary || hasHandAudit || hasOpponentSnapshot ? (
-        <div className="hand-insights">
-          <div className="hand-insights-tabs" role="tablist" aria-label="Insights tabs">
-            {hasTournamentSummary ? (
+            <div className="hand-review-actions">
               <button
                 type="button"
-                role="tab"
-                aria-selected={insightsTab === "tournament"}
-                className={`hand-insights-tab ${
-                  insightsTab === "tournament" ? "active" : ""
-                }`}
-                onClick={() => setInsightsTab("tournament")}
+                onClick={runParse}
+                disabled={!canSubmit || loadingParse}
               >
-                Tournament Summary
+                {loadingParse ? "Parsing..." : "Parse Hands"}
               </button>
-            ) : null}
-            {hasTournamentSummary ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={insightsTab === "stats"}
-                className={`hand-insights-tab ${
-                  insightsTab === "stats" ? "active" : ""
-                }`}
-                onClick={() => setInsightsTab("stats")}
-              >
-                Tournament Stats
-              </button>
-            ) : null}
-            {hasHandAudit ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={insightsTab === "audit"}
-                className={`hand-insights-tab ${
-                  insightsTab === "audit" ? "active" : ""
-                }`}
-                onClick={() => setInsightsTab("audit")}
-              >
-                Hand Audit
-              </button>
-            ) : null}
-            {hasOpponentSnapshot ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={insightsTab === "opponents"}
-                className={`hand-insights-tab ${
-                  insightsTab === "opponents" ? "active" : ""
-                }`}
-                onClick={() => setInsightsTab("opponents")}
-              >
-                Opponent Snapshot
-              </button>
-            ) : null}
-          </div>
-
-          {insightsTab === "tournament" && hasTournamentSummary ? (
-            <div className="tournament-summary">
-              <div className="tournament-summary-head">
-                <h3>Tournament Summary</h3>
-                <span>
-                  Sample: {tournamentSummary.sampleHands} returned hands
-                </span>
-              </div>
-              {tournamentCoachSummary ? (
-                <div className="tournament-coach-summary">
-                  <h4>Coach Summary</h4>
-                  {tournamentCoachSummary.rating ? (
-                    <>
-                      <p>
-                        <strong>Tournament rating:</strong>{" "}
-                        {tournamentCoachSummary.rating.score10Label} (
-                        {tournamentCoachSummary.rating.scorePctLabel})
-                      </p>
-                      {tournamentCoachSummary.rating.prelimNote ? (
-                        <p className="hand-review-empty">
-                          {tournamentCoachSummary.rating.prelimNote}
-                        </p>
-                      ) : null}
-                      {tournamentCoachSummary.rating.topDrags.length > 0 ? (
-                        <details className="coach-drags-pill">
-                          <summary>
-                            Biggest drags ({tournamentCoachSummary.rating.topDrags.length})
-                          </summary>
-                          <div className="tournament-summary-flags">
-                            {tournamentCoachSummary.rating.topDrags.map(
-                              (drag, idx) => (
-                                <p
-                                  key={`coach-rating-drag-${idx}`}
-                                  className="trend-flag watch"
-                                >
-                                  {drag.label}: -{drag.points.toFixed(1)} points
-                                </p>
-                              )
-                            )}
-                          </div>
-                        </details>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <p>
-                    <strong>Primary leak:</strong> {tournamentCoachSummary.primaryLeak}
-                  </p>
-                  {tournamentCoachSummary.secondaryLeak ? (
-                    <p>
-                      <strong>Secondary leak:</strong>{" "}
-                      {tournamentCoachSummary.secondaryLeak}
-                    </p>
-                  ) : null}
-                  <p>
-                    <strong>Key stats:</strong>
-                  </p>
-                  <div className="tournament-summary-flags">
-                    {tournamentCoachSummary.evidence.map((line, idx) => (
-                      <p key={`coach-evidence-${idx}`} className="trend-flag watch">
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                  <p>
-                    <strong>Quick fixes:</strong>
-                  </p>
-                  <div className="tournament-summary-flags">
-                    {tournamentCoachSummary.actions.map((line, idx) => (
-                      <p key={`coach-action-${idx}`} className="trend-flag good">
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {postflopIpHighlights.length > 0 ? (
-                <div className="tournament-coach-summary">
-                  <h4>Postflop IP Highlights</h4>
-                  <div className="tournament-summary-flags">
-                    {postflopIpHighlights.map((line, idx) => (
-                      <p key={`postflop-ip-highlight-${idx}`} className="trend-flag watch">
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="tournament-ai-review">
+              {parsedHands.length > 0 ? (
                 <button
                   type="button"
-                  onClick={runSummaryReview}
-                  disabled={loadingSummaryReview || !tournamentSummaryPayload}
+                  onClick={promptSaveTournament}
+                  disabled={loadingTournamentSave || loadingParse || !canSubmit}
                 >
-                  {loadingSummaryReview
-                    ? "Reviewing summary..."
-                    : "AI Review Summary"}
+                  Save Tournament
                 </button>
-                {summaryReviewError ? (
-                  <p className="hand-review-error">{summaryReviewError}</p>
-                ) : null}
-                {summaryReview ? (
-                  <div className="tournament-ai-review-card">
-                    <p className="tournament-ai-paragraph">
-                      {buildAiSummaryParagraph(summaryReview)}
-                    </p>
-                    {aiSummaryActions.length > 0 ? (
-                      <>
-                        <p>
-                          <strong>Priority fixes:</strong>
-                        </p>
-                        <div className="tournament-summary-flags">
-                          {aiSummaryActions.slice(0, 4).map((line, idx) => (
-                            <p key={`ai-summary-action-${idx}`} className="trend-flag good">
-                              {ensureSentenceEnding(line)}
-                            </p>
-                          ))}
-                        </div>
-                      </>
-                    ) : null}
-                    {aiSummaryWarnings.length > 0 ? (
-                      <>
-                        <p>
-                          <strong>Watch-outs:</strong>
-                        </p>
-                        <div className="tournament-summary-flags">
-                          {aiSummaryWarnings.slice(0, 3).map((line, idx) => (
-                            <p key={`ai-summary-warning-${idx}`} className="trend-flag watch">
-                              {ensureSentenceEnding(line)}
-                            </p>
-                          ))}
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
             </div>
-          ) : null}
 
-          {insightsTab === "stats" && hasTournamentSummary ? (
-            <div className="tournament-summary">
-              <div className="tournament-summary-head">
-                <h3>Tournament Stats</h3>
-                <span>
-                  Sample: {tournamentSummary.sampleHands} returned hands
-                </span>
-              </div>
-              <details className="summary-section">
-                <summary>Core KPIs</summary>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Entered pot: {percentLabel(tournamentSummary.enteredPct)} (
-                    {tournamentSummary.enteredHands}/{tournamentSummary.totalHands})
-                  </span>
-                  <span>
-                    Folded preflop:{" "}
-                    {percentLabel(tournamentSummary.preflopFoldPct)} (
-                    {tournamentSummary.preflopFolds}/{tournamentSummary.totalHands})
-                  </span>
-                  <span>
-                    Preflop fold warning threshold:{" "}
-                    {percentLabel(tournamentSummary.preflopFoldWarnThreshold)}
-                    {tournamentSummary.totalHands < 40
-                      ? " (inactive under 40-hand sample)"
-                      : ""}
-                  </span>
-                  <span>
-                    Seat distribution (late/early/blinds): {tournamentSummary.enteredLate}/
-                    {tournamentSummary.enteredEarly}/{tournamentSummary.enteredBlind}
-                  </span>
-                  <span>
-                    Avg entry stack:{" "}
-                    {tournamentSummary.avgEntryStackBb !== null
-                      ? `${tournamentSummary.avgEntryStackBb.toFixed(1)} BB`
-                      : "n/a"}
-                  </span>
-                </div>
-              </details>
+            {detectedTournamentIds.length > 1 ? (
+              <p className="hand-review-empty">
+                Detected tournament IDs: {detectedTournamentIds.join(", ")}
+              </p>
+            ) : null}
 
-              <details className="summary-section">
-                <summary>Opening</summary>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    No-raise spots - raised:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.openedWhenNoRaiseBeforeHero,
-                      tournamentSummary.preflopBreakdown.noRaiseBeforeHeroSpots
-                    )}
-                  </span>
-                </div>
-                {tournamentSummary.preflopBreakdown.openByPositionRows.filter(
-                  (row) => row.spots >= 6
-                ).length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {tournamentSummary.preflopBreakdown.openByPositionRows
-                      .filter((row) => row.spots >= 6)
-                      .map((row) => (
-                        <span key={`open-${row.position}`}>
-                          Open {row.position}: {formatRateWithConfidence(row.opens, row.spots)}
-                        </span>
-                      ))}
+            {saveTournamentError ? (
+              <p className="hand-review-error">{saveTournamentError}</p>
+            ) : null}
+            {saveTournamentSuccess ? (
+              <p className="hand-review-success">{saveTournamentSuccess}</p>
+            ) : null}
+          </>
+        ) : (
+          <p className="hand-review-empty">
+            Parser collapsed. Expand to load another hand-history file or paste
+            text.
+          </p>
+        )}
+
+        {error ? <p className="hand-review-error">{error}</p> : null}
+
+        {parseResult?.summary ? (
+          <div className="hand-review-summary">
+            <span>Total: {parseResult.summary.totalHands}</span>
+            <span>Filtered: {parseResult.summary.filteredHands}</span>
+            <span>Returned: {parseResult.summary.returnedHands}</span>
+            <span>Visible: {filteredParsedHands.length}</span>
+            <span>Selected: {selectedCount}</span>
+            <span>Reviewed: {reviewedCount}</span>
+          </div>
+        ) : null}
+
+        {parsedHands.length > 0 ? (
+          <div className="hand-review-controls">
+            <label>
+              Outcome status
+              <select
+                value={outcomeFilter}
+                onChange={(e) => {
+                  setOutcomeFilter(e.target.value);
+                  setSelectedHandKeys(new Set());
+                }}
+              >
+                <option value="all">All statuses</option>
+                {outcomeOptions.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Time window
+              <select
+                value={timeFilter}
+                onChange={(e) => {
+                  setTimeFilter(e.target.value);
+                  setSelectedHandKeys(new Set());
+                }}
+              >
+                {TIME_FILTER_OPTIONS.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+
+        {filteredParsedHands.length > 0 ? (
+          <div className="hand-review-selection-tools">
+            <button type="button" onClick={selectAllHands}>
+              Select all
+            </button>
+            <button type="button" onClick={clearSelection}>
+              Clear selection
+            </button>
+            <button
+              type="button"
+              onClick={runReview}
+              disabled={
+                selectedCount === 0 ||
+                loadingReview ||
+                Boolean(quickReviewHandKey)
+              }
+            >
+              {loadingReview || quickReviewHandKey
+                ? "Reviewing..."
+                : `Analyze Selected (${selectedCount})`}
+            </button>
+          </div>
+        ) : null}
+
+        {filteredParsedHands.length > 0 ? (
+          <div className="hand-review-list">
+            {filteredParsedHands.map((hand) => {
+              const rowKey = handKey(hand);
+              const outcome = hand.heroOutcome || {};
+              const isSelected = selectedHandKeys.has(rowKey);
+              const isAuditTarget = selectedAuditHandKey === rowKey;
+              const isQuickReviewLoading = quickReviewHandKey === rowKey;
+              const attachedReview = reviewsByHandKey[rowKey];
+              return (
+                <article
+                  key={rowKey}
+                  ref={(node) => setHandRowRef(rowKey, node)}
+                  className={`hand-row ${isSelected ? "selected" : ""} ${
+                    isAuditTarget ? "audit-target" : ""
+                  }`}
+                >
+                  <div className="hand-row-head">
+                    <div className="hand-row-id">
+                      <label className="hand-row-select">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleHandSelection(hand)}
+                        />
+                        <strong>{hand.handId}</strong>
+                      </label>
+                      <button
+                        type="button"
+                        className={`hand-row-quick-review ${
+                          isQuickReviewLoading ? "loading" : ""
+                        }`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          runQuickReview(hand);
+                        }}
+                        disabled={loadingReview || Boolean(quickReviewHandKey)}
+                        title="Quick AI review this hand"
+                        aria-label={`Quick AI review ${hand.handId}`}
+                      >
+                        {isQuickReviewLoading ? "..." : "⚡"}
+                      </button>
+                    </div>
+                    <span>{hand.playedAt}</span>
                   </div>
-                ) : (
-                  <p className="hand-review-empty">
-                    Not enough opening samples by position yet (need at least 6).
-                  </p>
-                )}
-              </details>
-
-              <details className="summary-section">
-                <summary>Defending</summary>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Facing-open spots - defended:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.defendedFacingOpen,
-                      tournamentSummary.preflopBreakdown.facingOpenSpots
-                    )}
-                  </span>
-                  <span>
-                    Blind folds vs open (SB+BB):{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.blindFoldFacingOpen,
-                      tournamentSummary.preflopBreakdown.blindFacingOpenSpots
-                    )}
-                  </span>
-                  <span>
-                    SB folds vs open:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.sbFoldFacingOpen,
-                      tournamentSummary.preflopBreakdown.sbFacingOpenSpots
-                    )}
-                  </span>
-                  <span>
-                    BB folds vs open:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.bbFoldFacingOpen,
-                      tournamentSummary.preflopBreakdown.bbFacingOpenSpots
-                    )}
-                  </span>
-                </div>
-                {tournamentSummary.preflopBreakdown.defendByPositionRows.filter(
-                  (row) => row.spots >= 6
-                ).length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {tournamentSummary.preflopBreakdown.defendByPositionRows
-                      .filter((row) => row.spots >= 6)
-                      .map((row) => (
-                        <span key={`defend-${row.position}`}>
-                          Defend {row.position}:{" "}
-                          {formatRateWithConfidence(row.defends, row.spots)}
-                        </span>
-                      ))}
-                  </div>
-                ) : (
-                  <p className="hand-review-empty">
-                    Not enough defend samples by position yet (need at least 6).
-                  </p>
-                )}
-              </details>
-
-              <details className="summary-section">
-                <summary>Vs Reraise</summary>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Faced reraise after aggression - folded:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.foldedAfterFacingReraise,
-                      tournamentSummary.preflopBreakdown.facedReraiseAfterAggressionSpots
-                    )}
-                  </span>
-                  <span>
-                    Called then faced raise - folded:{" "}
-                    {formatRateWithConfidence(
-                      tournamentSummary.preflopBreakdown.callThenFoldedToRaise,
-                      tournamentSummary.preflopBreakdown.callThenFacedRaiseSpots
-                    )}
-                  </span>
-                </div>
-              </details>
-
-              <details className="summary-section">
-                <summary>Postflop And Outcomes</summary>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Won without showdown:{" "}
-                    {percentLabel(tournamentSummary.noShowdownWinPct)} of entered
-                  </span>
-                  <span>
-                    Postflop no-showdown wins:{" "}
-                    {percentLabel(tournamentSummary.postflopNoShowdownPct)} of entered
-                  </span>
-                  <span>
-                    Showdown win rate:{" "}
-                    {tournamentSummary.showdownSamples > 0
-                      ? percentLabel(tournamentSummary.showdownWinPct)
-                      : "n/a"}
-                  </span>
-                  <span>
-                    Late-street fold share:{" "}
-                    {tournamentSummary.foldedFlop +
-                      tournamentSummary.foldedTurn +
-                      tournamentSummary.foldedRiver >
-                    0
-                      ? percentLabel(tournamentSummary.lateStreetFoldPct)
-                      : "n/a"}
-                  </span>
-                </div>
-                <div className="tournament-summary-flags">
-                  {tournamentSummary.flags.map((flag, idx) => (
-                    <p key={`flag-${idx}`} className={`trend-flag ${flag.level}`}>
-                      {flag.text}
-                    </p>
-                  ))}
-                </div>
-              </details>
-
-              <details className="summary-section">
-                <summary>Raw Status Counts</summary>
-                {tournamentSummary.topStatuses.length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {tournamentSummary.topStatuses.map(([status, count]) => (
-                      <span key={status}>
-                        {status}: {count}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="hand-review-empty">No status counts available.</p>
-                )}
-              </details>
-            </div>
-          ) : null}
-
-          {insightsTab === "audit" && hasHandAudit ? (
-            <div className="tournament-summary">
-              <div className="tournament-summary-head">
-                <h3>Hand Audit</h3>
-                <span>Sample: {parsedHands.length} parsed hands</span>
-              </div>
-              <details className="summary-section">
-                <summary>Preflop Opportunity Audit (MVP)</summary>
-                <div className="tournament-summary-metrics">
-                  <span>RFI spots scored: {preflopOpportunityAudit.rfiSpotsScored}</span>
-                  <span>
-                    Facing-open spots scored: {preflopOpportunityAudit.facingOpenSpotsScored}
-                  </span>
-                  <span>
-                    Vs 3-bet spots scored: {preflopOpportunityAudit.vs3BetSpotsScored}
-                  </span>
-                  <span>
-                    Missing hole cards: {preflopOpportunityAudit.unknownCardsSpots}
-                  </span>
-                </div>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Missed opens (chart-qualified): {preflopOpportunityAudit.missedOpen.count}/
-                    {preflopOpportunityAudit.expectedOpenSpots}
-                  </span>
-                  <span>
-                    Missed defends (chart-qualified):{" "}
-                    {preflopOpportunityAudit.missedDefend.count}/
-                    {preflopOpportunityAudit.expectedDefendSpots}
-                  </span>
-                  <span>
-                    Overfold vs 3-bet (chart-qualified):{" "}
-                    {preflopOpportunityAudit.overfoldVs3Bet.count}/
-                    {preflopOpportunityAudit.expectedContinueVs3BetSpots}
-                  </span>
-                </div>
-                <div className="tournament-summary-flags">
-                  {preflopOpportunityAudit.quickFixes.map((line, idx) => (
-                    <p
-                      key={`audit-fix-${idx}`}
-                      className={`trend-flag ${
-                        line.startsWith("No dominant") ? "good" : "watch"
-                      }`}
+                  <div className="hand-row-meta">
+                    <span>{hand.heroPosition || "Unknown position"}</span>
+                    <span>Cards: {formatHeroCards(hand.heroCards)}</span>
+                    <span
+                      className={`outcome-pill ${outcomeClass(outcome.code)}`}
+                      title={outcome.code || "unknown"}
                     >
-                      {line}
-                    </p>
-                  ))}
-                </div>
-
-                <p>
-                  <strong>Top missed opens:</strong>
-                </p>
-                {preflopOpportunityAudit.missedOpen.topCombos.length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {preflopOpportunityAudit.missedOpen.topCombos.map((row) => (
-                      <button
-                        type="button"
-                        key={`missed-open-${row.position}-${row.handCode}`}
-                        className={`audit-chip-button ${
-                          selectedAuditHandKey &&
-                          row.sampleHandKey &&
-                          selectedAuditHandKey === row.sampleHandKey
-                            ? "active"
-                            : ""
-                        }`}
-                        onClick={() => openAuditHand(row)}
-                        disabled={!hasAuditReference(row)}
-                      >
-                        {row.handCode} ({row.position}) x{row.count}
-                      </button>
-                    ))}
+                      {outcome.label || "Outcome unknown"}
+                      {Number(outcome.wonAmount) > 0
+                        ? ` (${outcome.wonAmount})`
+                        : ""}
+                    </span>
+                    <span>
+                      Preflop:{" "}
+                      {(hand.heroPreflop?.actions || [])
+                        .map((action) => formatAction(action))
+                        .join(", ") || "No decision"}
+                    </span>
                   </div>
-                ) : (
-                  <p className="hand-review-empty">No repeated missed open combos flagged.</p>
-                )}
-
-                <p>
-                  <strong>Top missed defends:</strong>
-                </p>
-                {preflopOpportunityAudit.missedDefend.topCombos.length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {preflopOpportunityAudit.missedDefend.topCombos.map((row) => (
-                      <button
-                        type="button"
-                        key={`missed-defend-${row.position}-${row.handCode}`}
-                        className={`audit-chip-button ${
-                          selectedAuditHandKey &&
-                          row.sampleHandKey &&
-                          selectedAuditHandKey === row.sampleHandKey
-                            ? "active"
-                            : ""
-                        }`}
-                        onClick={() => openAuditHand(row)}
-                        disabled={!hasAuditReference(row)}
-                      >
-                        {row.handCode} ({row.position}) x{row.count}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="hand-review-empty">No repeated missed defend combos flagged.</p>
-                )}
-
-                <p>
-                  <strong>Top overfolds vs 3-bet:</strong>
-                </p>
-                {preflopOpportunityAudit.overfoldVs3Bet.topCombos.length > 0 ? (
-                  <div className="tournament-summary-statuses">
-                    {preflopOpportunityAudit.overfoldVs3Bet.topCombos.map((row) => (
-                      <button
-                        type="button"
-                        key={`missed-3bet-${row.position}-${row.handCode}`}
-                        className={`audit-chip-button ${
-                          selectedAuditHandKey &&
-                          row.sampleHandKey &&
-                          selectedAuditHandKey === row.sampleHandKey
-                            ? "active"
-                            : ""
-                        }`}
-                        onClick={() => openAuditHand(row)}
-                        disabled={!hasAuditReference(row)}
-                      >
-                        {row.handCode} ({row.position}) x{row.count}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="hand-review-empty">
-                    No repeated overfold-vs-3-bet combos flagged.
-                  </p>
-                )}
-
-                {preflopOpportunityAudit.missedOpen.examples.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Example missed opens:</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {preflopOpportunityAudit.missedOpen.examples.map((event) => (
-                        <button
-                          type="button"
-                          key={`missed-open-example-${event.handId}-${event.playedAt}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            event.handKey &&
-                            selectedAuditHandKey === event.handKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(event)}
-                          disabled={!hasAuditReference(event)}
+                  {attachedReview ? (
+                    <div className="hand-row-review">
+                      <div className="hand-review-scores">
+                        <span
+                          className={`score-pill ${scoreClass(
+                            attachedReview.overall_score,
+                          )}`}
                         >
-                          {event.handId}: {event.position} {event.handCode} {event.actualAction} -{" "}
-                          {event.recommendation}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-              </details>
-
-              <details className="summary-section">
-                <summary>Postflop In Position Audit (MVP)</summary>
-                <p className="hand-review-empty">
-                  Scope: heads-up flop/turn/river spots where hero acts in position.
-                </p>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    IP HU flop spots scored:{" "}
-                    {postflopInPositionAudit.ipHeadsUpFlopSpots}
-                  </span>
-                  <span>
-                    IP HU turn spots scored:{" "}
-                    {postflopInPositionAudit.ipHeadsUpTurnSpots}
-                  </span>
-                  <span>
-                    IP HU river spots scored:{" "}
-                    {postflopInPositionAudit.ipHeadsUpRiverSpots}
-                  </span>
-                  <span>
-                    IP c-bet opportunities:{" "}
-                    {postflopInPositionAudit.ipCbetOpportunities}
-                  </span>
-                  <span>
-                    IP stab opportunities:{" "}
-                    {postflopInPositionAudit.ipStabOpportunities}
-                  </span>
-                </div>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    IP spots facing flop bet:{" "}
-                    {postflopInPositionAudit.ipFacingFlopBetSpots}
-                  </span>
-                  <span>
-                    IP spots facing turn bet:{" "}
-                    {postflopInPositionAudit.ipFacingTurnBetSpots}
-                  </span>
-                  <span>
-                    IP spots facing river bet:{" "}
-                    {postflopInPositionAudit.ipFacingRiverBetSpots}
-                  </span>
-                  <span>
-                    Strong made vs turn/river bet spots:{" "}
-                    {postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots}
-                  </span>
-                </div>
-                <div className="tournament-summary-metrics">
-                  <span>
-                    Missed IP c-bet on favorable flop:{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.missedIpCbetFavorable.count,
-                      postflopInPositionAudit.ipCbetOpportunities
-                    )}
-                  </span>
-                  <span>
-                    Missed IP stab on favorable flop:{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.missedIpStabFavorable.count,
-                      postflopInPositionAudit.ipStabOpportunities
-                    )}
-                  </span>
-                  <span>
-                    Likely light IP flop folds:{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.lightIpFoldFlop.count,
-                      postflopInPositionAudit.ipFacingFlopBetSpots
-                    )}
-                  </span>
-                  <span>
-                    Likely light IP turn folds:{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.lightIpFoldTurn.count,
-                      postflopInPositionAudit.ipFacingTurnBetSpots
-                    )}
-                  </span>
-                  <span>
-                    Likely light IP river folds:{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.lightIpFoldRiver.count,
-                      postflopInPositionAudit.ipFacingRiverBetSpots
-                    )}
-                  </span>
-                  <span>
-                    Missed IP value-raises (turn/river):{" "}
-                    {rateCountLabel(
-                      postflopInPositionAudit.missedIpValueRaise.count,
-                      postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots
-                    )}
-                  </span>
-                  <span>
-                    Missing hole cards: {postflopInPositionAudit.unknownCardsSpots}
-                  </span>
-                </div>
-                <div className="tournament-summary-flags">
-                  {postflopInPositionAudit.quickFixes.map((line, idx) => (
-                    <p
-                      key={`postflop-audit-fix-${idx}`}
-                      className={`trend-flag ${
-                        line.startsWith("No dominant") ? "good" : "watch"
-                      }`}
-                    >
-                      {line}
-                    </p>
-                  ))}
-                </div>
-
-                {postflopInPositionAudit.missedIpCbetFavorable.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top missed IP c-bets (favorable flop):</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.missedIpCbetFavorable.topCombos.map(
-                        (row) => (
-                          <button
-                            type="button"
-                            key={`postflop-cbet-${row.position}-${row.handCode}`}
-                            className={`audit-chip-button ${
-                              selectedAuditHandKey &&
-                              row.sampleHandKey &&
-                              selectedAuditHandKey === row.sampleHandKey
-                                ? "active"
-                                : ""
-                            }`}
-                            onClick={() => openAuditHand(row)}
-                            disabled={!hasAuditReference(row)}
-                          >
-                            {row.handCode} ({row.position}) x{row.count}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.missedIpStabFavorable.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top missed IP stabs (favorable flop):</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.missedIpStabFavorable.topCombos.map(
-                        (row) => (
-                          <button
-                            type="button"
-                            key={`postflop-stab-${row.position}-${row.handCode}`}
-                            className={`audit-chip-button ${
-                              selectedAuditHandKey &&
-                              row.sampleHandKey &&
-                              selectedAuditHandKey === row.sampleHandKey
-                                ? "active"
-                                : ""
-                            }`}
-                            onClick={() => openAuditHand(row)}
-                            disabled={!hasAuditReference(row)}
-                          >
-                            {row.handCode} ({row.position}) x{row.count}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.lightIpFoldFlop.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top likely light IP flop folds:</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.lightIpFoldFlop.topCombos.map((row) => (
-                        <button
-                          type="button"
-                          key={`postflop-flop-fold-${row.position}-${row.handCode}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            row.sampleHandKey &&
-                            selectedAuditHandKey === row.sampleHandKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(row)}
-                          disabled={!hasAuditReference(row)}
-                        >
-                          {row.handCode} ({row.position}) x{row.count}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.lightIpFoldTurn.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top likely light IP turn folds:</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.lightIpFoldTurn.topCombos.map((row) => (
-                        <button
-                          type="button"
-                          key={`postflop-turn-fold-${row.position}-${row.handCode}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            row.sampleHandKey &&
-                            selectedAuditHandKey === row.sampleHandKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(row)}
-                          disabled={!hasAuditReference(row)}
-                        >
-                          {row.handCode} ({row.position}) x{row.count}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.lightIpFoldRiver.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top likely light IP river folds:</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.lightIpFoldRiver.topCombos.map((row) => (
-                        <button
-                          type="button"
-                          key={`postflop-river-fold-${row.position}-${row.handCode}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            row.sampleHandKey &&
-                            selectedAuditHandKey === row.sampleHandKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(row)}
-                          disabled={!hasAuditReference(row)}
-                        >
-                          {row.handCode} ({row.position}) x{row.count}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.missedIpValueRaise.topCombos.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Top missed IP value-raises (turn/river):</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.missedIpValueRaise.topCombos.map((row) => (
-                        <button
-                          type="button"
-                          key={`postflop-value-raise-${row.position}-${row.handCode}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            row.sampleHandKey &&
-                            selectedAuditHandKey === row.sampleHandKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(row)}
-                          disabled={!hasAuditReference(row)}
-                        >
-                          {row.handCode} ({row.position}) x{row.count}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-
-                {postflopInPositionAudit.missedIpValueRaise.examples.length > 0 ? (
-                  <>
-                    <p>
-                      <strong>Example missed IP value-raises:</strong>
-                    </p>
-                    <div className="tournament-summary-statuses">
-                      {postflopInPositionAudit.missedIpValueRaise.examples.map((event) => (
-                        <button
-                          type="button"
-                          key={`postflop-value-raise-example-${event.handId}-${event.playedAt}`}
-                          className={`audit-chip-button ${
-                            selectedAuditHandKey &&
-                            event.handKey &&
-                            selectedAuditHandKey === event.handKey
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => openAuditHand(event)}
-                          disabled={!hasAuditReference(event)}
-                        >
-                          {event.handId}: {event.position} {event.handCode} {event.actualAction} -{" "}
-                          {event.recommendation}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-              </details>
-            </div>
-          ) : null}
-
-          {insightsTab === "opponents" && hasOpponentSnapshot ? (
-            <div className="opponent-snapshot">
-              <div className="opponent-snapshot-head">
-                <h3>Opponent Snapshot</h3>
-                <span>
-                  {visibleOpponentPlayers.length}/
-                  {opponentSnapshot?.totalOpponents || opponentPlayers.length} players
-                  across {opponentSnapshot?.totalHandsTracked || 0} hands
-                </span>
-              </div>
-              <div className="opponent-snapshot-toolbar">
-                <label>
-                  View
-                  <select
-                    value={opponentFilter}
-                    onChange={(event) => setOpponentFilter(event.target.value)}
-                  >
-                    <option value="all">All opponents</option>
-                    <option value="current_table">Current table (best guess)</option>
-                  </select>
-                </label>
-                <p className="opponent-snapshot-note">
-                  Best guess uses latest hand
-                  {currentTableGuess?.playedAt ? ` (${currentTableGuess.playedAt})` : ""}.
-                </p>
-              </div>
-              <div className="opponent-snapshot-list">
-                {visibleOpponentPlayers.map((player) => {
-                  const tendencyLabels = extractTendencyLabels(player);
-                  const playNoteLine = formatPlayNote(player);
-                  return (
-                    <article key={player.player} className="opponent-snapshot-row">
-                      <div className="opponent-snapshot-row-head">
-                        <strong>{player.player}</strong>
-                        <span>{player.handsSeen} hands</span>
-                        <span>{formatLatestSeat(player.latestSeat)}</span>
-                        <span>{formatChipStack(player.latestStack)}</span>
-                        {player.lastSeenAt ? <span>Last: {player.lastSeenAt}</span> : null}
-                        <button
-                          type="button"
-                          className="opponent-copy-button"
-                          onClick={() =>
-                            copyOpponentTendencies(
-                              player.player,
-                              tendencyLabels,
-                              playNoteLine
-                            )
-                          }
-                          disabled={tendencyLabels.length === 0 && !playNoteLine}
-                        >
-                          {copiedOpponentKey === player.player
-                            ? "Copied"
-                            : "Copy tendencies"}
-                        </button>
-                      </div>
-                      <div className="opponent-snapshot-metrics">
-                        <span>Entered pot: {formatPercentCount(player.enteredPot)}</span>
-                        <span>
-                          Folded preflop: {formatPercentCount(player.foldedPreflop)}
+                          Overall {formatScore(attachedReview.overall_score)}
                         </span>
                         <span>
-                          Raised preflop: {formatPercentCount(player.preflopRaise)}
+                          Pre {formatScore(attachedReview.preflop_score)}
                         </span>
                         <span>
-                          Fold to preflop raise:{" "}
-                          {formatPercentCount(player.foldToPreflopRaise)}
+                          Flop {formatScore(attachedReview.flop_score)}
                         </span>
                         <span>
-                          Postflop aggression: {formatAggression(player.postflopAggression)}
+                          Turn {formatScore(attachedReview.turn_score)}
+                        </span>
+                        <span>
+                          River {formatScore(attachedReview.river_score)}
+                        </span>
+                        <span>
+                          Confidence {attachedReview.confidence || "medium"}
                         </span>
                       </div>
-                      {playNoteLine ? (
-                        <p className="opponent-play-note">
-                          <strong>Play note:</strong> {playNoteLine}
-                        </p>
+                      <p>
+                        <strong>Leak:</strong> {attachedReview.primary_leak}
+                      </p>
+                      <p>
+                        <strong>Better line:</strong>{" "}
+                        {attachedReview.better_line}
+                      </p>
+                    </div>
+                  ) : null}
+                  <details className="hand-breakdown">
+                    <summary>Hand breakdown</summary>
+                    <div className="hand-breakdown-body">
+                      <p>
+                        <strong>Hero cards:</strong>{" "}
+                        {formatHeroCards(hand.heroCards)}
+                      </p>
+                      <p>
+                        <strong>Board:</strong> {formatBoard(hand.board)}
+                      </p>
+                      <p>
+                        <strong>Flop:</strong>{" "}
+                        {formatBoardStreet(hand.board, "flop")}
+                      </p>
+                      <p>
+                        <strong>Turn:</strong>{" "}
+                        {formatBoardStreet(hand.board, "turn")}
+                      </p>
+                      <p>
+                        <strong>River:</strong>{" "}
+                        {formatBoardStreet(hand.board, "river")}
+                      </p>
+                      <p>
+                        <strong>Context:</strong> {streetPlayersLabel(hand)}
+                      </p>
+                      <p>
+                        <strong>Blinds:</strong>{" "}
+                        {hand.blinds?.smallBlind || "?"}/
+                        {hand.blinds?.bigBlind || "?"}
+                        {hand.blinds?.ante ? ` (${hand.blinds.ante} ante)` : ""}
+                      </p>
+                      <div className="hand-breakdown-street">
+                        <strong>Preflop</strong>
+                        {(hand.actionsByStreet?.preflop || []).length > 0 ? (
+                          (hand.actionsByStreet?.preflop || []).map(
+                            (action, idx) => (
+                              <span key={`pre-${idx}`}>
+                                {formatActionWithPlayer(action)}
+                              </span>
+                            ),
+                          )
+                        ) : (
+                          <span>No actions captured.</span>
+                        )}
+                      </div>
+                      {(hand.actionsByStreet?.flop || []).length > 0 ? (
+                        <div className="hand-breakdown-street">
+                          <strong>Flop</strong>
+                          {(hand.actionsByStreet?.flop || []).map(
+                            (action, idx) => (
+                              <span key={`flop-${idx}`}>
+                                {formatActionWithPlayer(action)}
+                              </span>
+                            ),
+                          )}
+                        </div>
                       ) : null}
-                      {tendencyLabels.length > 0 ? (
-                        <div className="opponent-snapshot-tags">
-                          {tendencyLabels.map((label) => (
-                            <span key={`${player.player}-${label}`} className="opponent-tag">
-                              {label}
+                      {(hand.actionsByStreet?.turn || []).length > 0 ? (
+                        <div className="hand-breakdown-street">
+                          <strong>Turn</strong>
+                          {(hand.actionsByStreet?.turn || []).map(
+                            (action, idx) => (
+                              <span key={`turn-${idx}`}>
+                                {formatActionWithPlayer(action)}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      ) : null}
+                      {(hand.actionsByStreet?.river || []).length > 0 ? (
+                        <div className="hand-breakdown-street">
+                          <strong>River</strong>
+                          {(hand.actionsByStreet?.river || []).map(
+                            (action, idx) => (
+                              <span key={`river-${idx}`}>
+                                {formatActionWithPlayer(action)}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      ) : null}
+                      {Array.isArray(hand.showdown?.revealedCards) &&
+                      hand.showdown.revealedCards.length > 0 ? (
+                        <div className="hand-breakdown-street">
+                          <strong>Revealed cards</strong>
+                          {hand.showdown.revealedCards.map((entry, idx) => (
+                            <span key={`show-${idx}`}>
+                              {entry.player}:{" "}
+                              {(entry.cards || []).join(" ") || "Unknown"}
                             </span>
                           ))}
                         </div>
                       ) : null}
-                    </article>
-                  );
-                })}
-                {visibleOpponentPlayers.length === 0 ? (
-                  <p className="hand-review-empty">
-                    No opponents match the current filter.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <p className="hand-review-empty">
-          Parse hands to unlock Tournament Summary, Stats, Audit, and Opponent
-          Snapshot.
-        </p>
-      )}
+                    </div>
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {parsedHands.length > 0 && filteredParsedHands.length === 0 ? (
+          <p className="hand-review-empty">
+            No parsed hands match the selected outcome status.
+          </p>
+        ) : null}
       </div>
 
+      <div className="hand-review-pane hand-review-pane-right">
+        {hasTournamentSummary || hasHandAudit || hasOpponentSnapshot ? (
+          <div className="hand-insights">
+            <div
+              className="hand-insights-tabs"
+              role="tablist"
+              aria-label="Insights tabs"
+            >
+              {hasTournamentSummary ? (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={insightsTab === "tournament"}
+                  className={`hand-insights-tab ${
+                    insightsTab === "tournament" ? "active" : ""
+                  }`}
+                  onClick={() => setInsightsTab("tournament")}
+                >
+                  Tournament Summary
+                </button>
+              ) : null}
+              {hasTournamentSummary ? (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={insightsTab === "stats"}
+                  className={`hand-insights-tab ${
+                    insightsTab === "stats" ? "active" : ""
+                  }`}
+                  onClick={() => setInsightsTab("stats")}
+                >
+                  Tournament Stats
+                </button>
+              ) : null}
+              {hasHandAudit ? (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={insightsTab === "audit"}
+                  className={`hand-insights-tab ${
+                    insightsTab === "audit" ? "active" : ""
+                  }`}
+                  onClick={() => setInsightsTab("audit")}
+                >
+                  Hand Audit
+                </button>
+              ) : null}
+              {hasOpponentSnapshot ? (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={insightsTab === "opponents"}
+                  className={`hand-insights-tab ${
+                    insightsTab === "opponents" ? "active" : ""
+                  }`}
+                  onClick={() => setInsightsTab("opponents")}
+                >
+                  Opponent Snapshot
+                </button>
+              ) : null}
+            </div>
+
+            {insightsTab === "tournament" && hasTournamentSummary ? (
+              <div className="tournament-summary">
+                <div className="tournament-summary-head">
+                  <h3>Tournament Summary</h3>
+                  <span>
+                    Sample: {tournamentSummary.sampleHands} returned hands
+                  </span>
+                </div>
+                {tournamentCoachSummary ? (
+                  <div className="tournament-coach-summary">
+                    <h4>Coach Summary</h4>
+                    {tournamentCoachSummary.rating ? (
+                      <>
+                        <p>
+                          <strong>Tournament rating:</strong>{" "}
+                          {tournamentCoachSummary.rating.score10Label} (
+                          {tournamentCoachSummary.rating.scorePctLabel})
+                        </p>
+                        {tournamentCoachSummary.rating.prelimNote ? (
+                          <p className="hand-review-empty">
+                            {tournamentCoachSummary.rating.prelimNote}
+                          </p>
+                        ) : null}
+                        {tournamentCoachSummary.rating.topDrags.length > 0 ? (
+                          <details className="coach-drags-pill">
+                            <summary>
+                              Biggest drags (
+                              {tournamentCoachSummary.rating.topDrags.length})
+                            </summary>
+                            <div className="tournament-summary-flags">
+                              {tournamentCoachSummary.rating.topDrags.map(
+                                (drag, idx) => (
+                                  <p
+                                    key={`coach-rating-drag-${idx}`}
+                                    className="trend-flag watch"
+                                  >
+                                    {drag.label}: -{drag.points.toFixed(1)}{" "}
+                                    points
+                                  </p>
+                                ),
+                              )}
+                            </div>
+                          </details>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <p>
+                      <strong>Primary leak:</strong>{" "}
+                      {tournamentCoachSummary.primaryLeak}
+                    </p>
+                    {tournamentCoachSummary.secondaryLeak ? (
+                      <p>
+                        <strong>Secondary leak:</strong>{" "}
+                        {tournamentCoachSummary.secondaryLeak}
+                      </p>
+                    ) : null}
+                    <p>
+                      <strong>Key stats:</strong>
+                    </p>
+                    <div className="tournament-summary-flags">
+                      {tournamentCoachSummary.evidence.map((line, idx) => (
+                        <p
+                          key={`coach-evidence-${idx}`}
+                          className="trend-flag watch"
+                        >
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                    <p>
+                      <strong>Quick fixes:</strong>
+                    </p>
+                    <div className="tournament-summary-flags">
+                      {tournamentCoachSummary.actions.map((line, idx) => (
+                        <p
+                          key={`coach-action-${idx}`}
+                          className="trend-flag good"
+                        >
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {postflopIpHighlights.length > 0 ? (
+                  <div className="tournament-coach-summary">
+                    <h4>Postflop IP Highlights</h4>
+                    <div className="tournament-summary-flags">
+                      {postflopIpHighlights.map((line, idx) => (
+                        <p
+                          key={`postflop-ip-highlight-${idx}`}
+                          className="trend-flag watch"
+                        >
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="tournament-ai-review">
+                  <button
+                    type="button"
+                    onClick={runSummaryReview}
+                    disabled={loadingSummaryReview || !tournamentSummaryPayload}
+                  >
+                    {loadingSummaryReview
+                      ? "Reviewing summary..."
+                      : "AI Review Summary"}
+                  </button>
+                  {summaryReviewError ? (
+                    <p className="hand-review-error">{summaryReviewError}</p>
+                  ) : null}
+                  {summaryReview ? (
+                    <div className="tournament-ai-review-card">
+                      <p className="tournament-ai-paragraph">
+                        {buildAiSummaryParagraph(summaryReview)}
+                      </p>
+                      {aiSummaryActions.length > 0 ? (
+                        <>
+                          <p>
+                            <strong>Priority fixes:</strong>
+                          </p>
+                          <div className="tournament-summary-flags">
+                            {aiSummaryActions.slice(0, 4).map((line, idx) => (
+                              <p
+                                key={`ai-summary-action-${idx}`}
+                                className="trend-flag good"
+                              >
+                                {ensureSentenceEnding(line)}
+                              </p>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                      {aiSummaryWarnings.length > 0 ? (
+                        <>
+                          <p>
+                            <strong>Watch-outs:</strong>
+                          </p>
+                          <div className="tournament-summary-flags">
+                            {aiSummaryWarnings.slice(0, 3).map((line, idx) => (
+                              <p
+                                key={`ai-summary-warning-${idx}`}
+                                className="trend-flag watch"
+                              >
+                                {ensureSentenceEnding(line)}
+                              </p>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {insightsTab === "stats" && hasTournamentSummary ? (
+              <div className="tournament-summary">
+                <div className="tournament-summary-head">
+                  <h3>Tournament Stats</h3>
+                  <span>
+                    Sample: {tournamentSummary.sampleHands} returned hands
+                  </span>
+                </div>
+                <details className="summary-section">
+                  <summary>Core KPIs</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Entered pot: {percentLabel(tournamentSummary.enteredPct)}{" "}
+                      ({tournamentSummary.enteredHands}/
+                      {tournamentSummary.totalHands})
+                    </span>
+                    <span>
+                      Folded preflop:{" "}
+                      {percentLabel(tournamentSummary.preflopFoldPct)} (
+                      {tournamentSummary.preflopFolds}/
+                      {tournamentSummary.totalHands})
+                    </span>
+                    <span>
+                      Preflop fold warning threshold:{" "}
+                      {percentLabel(tournamentSummary.preflopFoldWarnThreshold)}
+                      {tournamentSummary.totalHands < 40
+                        ? " (inactive under 40-hand sample)"
+                        : ""}
+                    </span>
+                    <span>
+                      Seat distribution (late/early/blinds):{" "}
+                      {tournamentSummary.enteredLate}/
+                      {tournamentSummary.enteredEarly}/
+                      {tournamentSummary.enteredBlind}
+                    </span>
+                    <span>
+                      Avg entry stack:{" "}
+                      {tournamentSummary.avgEntryStackBb !== null
+                        ? `${tournamentSummary.avgEntryStackBb.toFixed(1)} BB`
+                        : "n/a"}
+                    </span>
+                  </div>
+                </details>
+
+                <details className="summary-section">
+                  <summary>Opening</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      No-raise spots - raised:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown
+                          .openedWhenNoRaiseBeforeHero,
+                        tournamentSummary.preflopBreakdown
+                          .noRaiseBeforeHeroSpots,
+                      )}
+                    </span>
+                  </div>
+                  {tournamentSummary.preflopBreakdown.openByPositionRows.filter(
+                    (row) => row.spots >= 6,
+                  ).length > 0 ? (
+                    <div className="tournament-summary-statuses">
+                      {tournamentSummary.preflopBreakdown.openByPositionRows
+                        .filter((row) => row.spots >= 6)
+                        .map((row) => (
+                          <span key={`open-${row.position}`}>
+                            Open {row.position}:{" "}
+                            {formatRateWithConfidence(row.opens, row.spots)}
+                          </span>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      Not enough opening samples by position yet (need at least
+                      6).
+                    </p>
+                  )}
+                </details>
+
+                <details className="summary-section">
+                  <summary>Defending</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Facing-open spots - defended:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown.defendedFacingOpen,
+                        tournamentSummary.preflopBreakdown.facingOpenSpots,
+                      )}
+                    </span>
+                    <span>
+                      Blind folds vs open (SB+BB):{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown.blindFoldFacingOpen,
+                        tournamentSummary.preflopBreakdown.blindFacingOpenSpots,
+                      )}
+                    </span>
+                    <span>
+                      SB folds vs open:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown.sbFoldFacingOpen,
+                        tournamentSummary.preflopBreakdown.sbFacingOpenSpots,
+                      )}
+                    </span>
+                    <span>
+                      BB folds vs open:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown.bbFoldFacingOpen,
+                        tournamentSummary.preflopBreakdown.bbFacingOpenSpots,
+                      )}
+                    </span>
+                  </div>
+                  {tournamentSummary.preflopBreakdown.defendByPositionRows.filter(
+                    (row) => row.spots >= 6,
+                  ).length > 0 ? (
+                    <div className="tournament-summary-statuses">
+                      {tournamentSummary.preflopBreakdown.defendByPositionRows
+                        .filter((row) => row.spots >= 6)
+                        .map((row) => (
+                          <span key={`defend-${row.position}`}>
+                            Defend {row.position}:{" "}
+                            {formatRateWithConfidence(row.defends, row.spots)}
+                          </span>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      Not enough defend samples by position yet (need at least
+                      6).
+                    </p>
+                  )}
+                </details>
+
+                <details className="summary-section">
+                  <summary>Vs Reraise</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Faced reraise after aggression - folded:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown
+                          .foldedAfterFacingReraise,
+                        tournamentSummary.preflopBreakdown
+                          .facedReraiseAfterAggressionSpots,
+                      )}
+                    </span>
+                    <span>
+                      Called then faced raise - folded:{" "}
+                      {formatRateWithConfidence(
+                        tournamentSummary.preflopBreakdown
+                          .callThenFoldedToRaise,
+                        tournamentSummary.preflopBreakdown
+                          .callThenFacedRaiseSpots,
+                      )}
+                    </span>
+                  </div>
+                </details>
+
+                <details className="summary-section">
+                  <summary>Postflop And Outcomes</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Won without showdown:{" "}
+                      {percentLabel(tournamentSummary.noShowdownWinPct)} of
+                      entered
+                    </span>
+                    <span>
+                      Postflop no-showdown wins:{" "}
+                      {percentLabel(tournamentSummary.postflopNoShowdownPct)} of
+                      entered
+                    </span>
+                    <span>
+                      Showdown win rate:{" "}
+                      {tournamentSummary.showdownSamples > 0
+                        ? percentLabel(tournamentSummary.showdownWinPct)
+                        : "n/a"}
+                    </span>
+                    <span>
+                      Late-street fold share:{" "}
+                      {tournamentSummary.foldedFlop +
+                        tournamentSummary.foldedTurn +
+                        tournamentSummary.foldedRiver >
+                      0
+                        ? percentLabel(tournamentSummary.lateStreetFoldPct)
+                        : "n/a"}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-flags">
+                    {tournamentSummary.flags.map((flag, idx) => (
+                      <p
+                        key={`flag-${idx}`}
+                        className={`trend-flag ${flag.level}`}
+                      >
+                        {flag.text}
+                      </p>
+                    ))}
+                  </div>
+                </details>
+
+                <details className="summary-section">
+                  <summary>Raw Status Counts</summary>
+                  {tournamentSummary.topStatuses.length > 0 ? (
+                    <div className="tournament-summary-statuses">
+                      {tournamentSummary.topStatuses.map(([status, count]) => (
+                        <span key={status}>
+                          {status}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No status counts available.
+                    </p>
+                  )}
+                </details>
+              </div>
+            ) : null}
+
+            {insightsTab === "audit" && hasHandAudit ? (
+              <div className="tournament-summary">
+                <div className="tournament-summary-head">
+                  <h3>Hand Audit</h3>
+                  <span>Sample: {parsedHands.length} parsed hands</span>
+                </div>
+                <details className="summary-section">
+                  <summary>Preflop Opportunity Audit (MVP)</summary>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      RFI spots scored: {preflopOpportunityAudit.rfiSpotsScored}
+                    </span>
+                    <span>
+                      Facing-open spots scored:{" "}
+                      {preflopOpportunityAudit.facingOpenSpotsScored}
+                    </span>
+                    <span>
+                      Vs 3-bet spots scored:{" "}
+                      {preflopOpportunityAudit.vs3BetSpotsScored}
+                    </span>
+                    <span>
+                      Missing hole cards:{" "}
+                      {preflopOpportunityAudit.unknownCardsSpots}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Missed opens (chart-qualified):{" "}
+                      {preflopOpportunityAudit.missedOpen.count}/
+                      {preflopOpportunityAudit.expectedOpenSpots}
+                    </span>
+                    <span>
+                      Missed defends (chart-qualified):{" "}
+                      {preflopOpportunityAudit.missedDefend.count}/
+                      {preflopOpportunityAudit.expectedDefendSpots}
+                    </span>
+                    <span>
+                      Overfold vs 3-bet (chart-qualified):{" "}
+                      {preflopOpportunityAudit.overfoldVs3Bet.count}/
+                      {preflopOpportunityAudit.expectedContinueVs3BetSpots}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-flags">
+                    {preflopOpportunityAudit.quickFixes.map((line, idx) => (
+                      <p
+                        key={`audit-fix-${idx}`}
+                        className={`trend-flag ${
+                          line.startsWith("No dominant") ? "good" : "watch"
+                        }`}
+                      >
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+
+                  <p>
+                    <strong>Top missed opens:</strong>
+                  </p>
+                  {preflopOpportunityAudit.missedOpen.topCombos.length > 0 ? (
+                    <div className="tournament-summary-statuses">
+                      {preflopOpportunityAudit.missedOpen.topCombos.map(
+                        (row) => (
+                          <button
+                            type="button"
+                            key={`missed-open-${row.position}-${row.handCode}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              row.sampleHandKey &&
+                              selectedAuditHandKey === row.sampleHandKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(row)}
+                            disabled={!hasAuditReference(row)}
+                          >
+                            {row.handCode} ({row.position}) x{row.count}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No repeated missed open combos flagged.
+                    </p>
+                  )}
+
+                  <p>
+                    <strong>Top missed defends:</strong>
+                  </p>
+                  {preflopOpportunityAudit.missedDefend.topCombos.length > 0 ? (
+                    <div className="tournament-summary-statuses">
+                      {preflopOpportunityAudit.missedDefend.topCombos.map(
+                        (row) => (
+                          <button
+                            type="button"
+                            key={`missed-defend-${row.position}-${row.handCode}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              row.sampleHandKey &&
+                              selectedAuditHandKey === row.sampleHandKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(row)}
+                            disabled={!hasAuditReference(row)}
+                          >
+                            {row.handCode} ({row.position}) x{row.count}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No repeated missed defend combos flagged.
+                    </p>
+                  )}
+
+                  <p>
+                    <strong>Top overfolds vs 3-bet:</strong>
+                  </p>
+                  {preflopOpportunityAudit.overfoldVs3Bet.topCombos.length >
+                  0 ? (
+                    <div className="tournament-summary-statuses">
+                      {preflopOpportunityAudit.overfoldVs3Bet.topCombos.map(
+                        (row) => (
+                          <button
+                            type="button"
+                            key={`missed-3bet-${row.position}-${row.handCode}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              row.sampleHandKey &&
+                              selectedAuditHandKey === row.sampleHandKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(row)}
+                            disabled={!hasAuditReference(row)}
+                          >
+                            {row.handCode} ({row.position}) x{row.count}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No repeated overfold-vs-3-bet combos flagged.
+                    </p>
+                  )}
+
+                  {preflopOpportunityAudit.missedOpen.examples.length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Example missed opens:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {preflopOpportunityAudit.missedOpen.examples.map(
+                          (event) => (
+                            <button
+                              type="button"
+                              key={`missed-open-example-${event.handId}-${event.playedAt}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                event.handKey &&
+                                selectedAuditHandKey === event.handKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(event)}
+                              disabled={!hasAuditReference(event)}
+                            >
+                              {event.handId}: {event.position} {event.handCode}{" "}
+                              {event.actualAction} - {event.recommendation}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+                </details>
+
+                <details className="summary-section">
+                  <summary>Postflop In Position Audit (MVP)</summary>
+                  <p className="hand-review-empty">
+                    Scope: heads-up flop/turn/river spots where hero acts in
+                    position.
+                  </p>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      IP HU flop spots scored:{" "}
+                      {postflopInPositionAudit.ipHeadsUpFlopSpots}
+                    </span>
+                    <span>
+                      IP HU turn spots scored:{" "}
+                      {postflopInPositionAudit.ipHeadsUpTurnSpots}
+                    </span>
+                    <span>
+                      IP HU river spots scored:{" "}
+                      {postflopInPositionAudit.ipHeadsUpRiverSpots}
+                    </span>
+                    <span>
+                      IP c-bet opportunities:{" "}
+                      {postflopInPositionAudit.ipCbetOpportunities}
+                    </span>
+                    <span>
+                      IP stab opportunities:{" "}
+                      {postflopInPositionAudit.ipStabOpportunities}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      IP spots facing flop bet:{" "}
+                      {postflopInPositionAudit.ipFacingFlopBetSpots}
+                    </span>
+                    <span>
+                      IP spots facing turn bet:{" "}
+                      {postflopInPositionAudit.ipFacingTurnBetSpots}
+                    </span>
+                    <span>
+                      IP spots facing river bet:{" "}
+                      {postflopInPositionAudit.ipFacingRiverBetSpots}
+                    </span>
+                    <span>
+                      Strong made vs turn/river bet spots:{" "}
+                      {
+                        postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots
+                      }
+                    </span>
+                  </div>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Missed IP c-bet on favorable flop:{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.missedIpCbetFavorable.count,
+                        postflopInPositionAudit.ipCbetOpportunities,
+                      )}
+                    </span>
+                    <span>
+                      Missed IP stab on favorable flop:{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.missedIpStabFavorable.count,
+                        postflopInPositionAudit.ipStabOpportunities,
+                      )}
+                    </span>
+                    <span>
+                      Likely light IP flop folds:{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.lightIpFoldFlop.count,
+                        postflopInPositionAudit.ipFacingFlopBetSpots,
+                      )}
+                    </span>
+                    <span>
+                      Likely light IP turn folds:{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.lightIpFoldTurn.count,
+                        postflopInPositionAudit.ipFacingTurnBetSpots,
+                      )}
+                    </span>
+                    <span>
+                      Likely light IP river folds:{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.lightIpFoldRiver.count,
+                        postflopInPositionAudit.ipFacingRiverBetSpots,
+                      )}
+                    </span>
+                    <span>
+                      Missed IP value-raises (turn/river):{" "}
+                      {rateCountLabel(
+                        postflopInPositionAudit.missedIpValueRaise.count,
+                        postflopInPositionAudit.ipStrongMadeFacingTurnRiverBetSpots,
+                      )}
+                    </span>
+                    <span>
+                      Missing hole cards:{" "}
+                      {postflopInPositionAudit.unknownCardsSpots}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-flags">
+                    {postflopInPositionAudit.quickFixes.map((line, idx) => (
+                      <p
+                        key={`postflop-audit-fix-${idx}`}
+                        className={`trend-flag ${
+                          line.startsWith("No dominant") ? "good" : "watch"
+                        }`}
+                      >
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+
+                  {postflopInPositionAudit.missedIpCbetFavorable.topCombos
+                    .length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Top missed IP c-bets (favorable flop):</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.missedIpCbetFavorable.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-cbet-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.missedIpStabFavorable.topCombos
+                    .length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Top missed IP stabs (favorable flop):</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.missedIpStabFavorable.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-stab-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.lightIpFoldFlop.topCombos.length >
+                  0 ? (
+                    <>
+                      <p>
+                        <strong>Top likely light IP flop folds:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.lightIpFoldFlop.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-flop-fold-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.lightIpFoldTurn.topCombos.length >
+                  0 ? (
+                    <>
+                      <p>
+                        <strong>Top likely light IP turn folds:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.lightIpFoldTurn.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-turn-fold-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.lightIpFoldRiver.topCombos.length >
+                  0 ? (
+                    <>
+                      <p>
+                        <strong>Top likely light IP river folds:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.lightIpFoldRiver.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-river-fold-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.missedIpValueRaise.topCombos.length >
+                  0 ? (
+                    <>
+                      <p>
+                        <strong>
+                          Top missed IP value-raises (turn/river):
+                        </strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.missedIpValueRaise.topCombos.map(
+                          (row) => (
+                            <button
+                              type="button"
+                              key={`postflop-value-raise-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {postflopInPositionAudit.missedIpValueRaise.examples.length >
+                  0 ? (
+                    <>
+                      <p>
+                        <strong>Example missed IP value-raises:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {postflopInPositionAudit.missedIpValueRaise.examples.map(
+                          (event) => (
+                            <button
+                              type="button"
+                              key={`postflop-value-raise-example-${event.handId}-${event.playedAt}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                event.handKey &&
+                                selectedAuditHandKey === event.handKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(event)}
+                              disabled={!hasAuditReference(event)}
+                            >
+                              {event.handId}: {event.position} {event.handCode}{" "}
+                              {event.actualAction} - {event.recommendation}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+                </details>
+              </div>
+            ) : null}
+
+            {insightsTab === "opponents" && hasOpponentSnapshot ? (
+              <div className="opponent-snapshot">
+                <div className="opponent-snapshot-head">
+                  <h3>Opponent Snapshot</h3>
+                  <span>
+                    {visibleOpponentPlayers.length}/
+                    {opponentSnapshot?.totalOpponents || opponentPlayers.length}{" "}
+                    players across {opponentSnapshot?.totalHandsTracked || 0}{" "}
+                    hands
+                  </span>
+                </div>
+                <div className="opponent-snapshot-toolbar">
+                  <label>
+                    View
+                    <select
+                      value={opponentFilter}
+                      onChange={(event) =>
+                        setOpponentFilter(event.target.value)
+                      }
+                    >
+                      <option value="all">All opponents</option>
+                      <option value="current_table">
+                        Current table (best guess)
+                      </option>
+                    </select>
+                  </label>
+                  <p className="opponent-snapshot-note">
+                    Best guess uses latest hand
+                    {currentTableGuess?.playedAt
+                      ? ` (${currentTableGuess.playedAt})`
+                      : ""}
+                    .
+                  </p>
+                </div>
+                <div className="opponent-snapshot-list">
+                  {visibleOpponentPlayers.map((player) => {
+                    const tendencyLabels = extractTendencyLabels(player);
+                    const playNoteLine = formatPlayNote(player);
+                    return (
+                      <article
+                        key={player.player}
+                        className="opponent-snapshot-row"
+                      >
+                        <div className="opponent-snapshot-row-head">
+                          <strong>{player.player}</strong>
+                          <span>{player.handsSeen} hands</span>
+                          <span>{formatLatestSeat(player.latestSeat)}</span>
+                          <span>{formatChipStack(player.latestStack)}</span>
+                          {player.lastSeenAt ? (
+                            <span>Last: {player.lastSeenAt}</span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="opponent-copy-button"
+                            onClick={() =>
+                              copyOpponentTendencies(
+                                player.player,
+                                tendencyLabels,
+                                playNoteLine,
+                              )
+                            }
+                            disabled={
+                              tendencyLabels.length === 0 && !playNoteLine
+                            }
+                          >
+                            {copiedOpponentKey === player.player
+                              ? "Copied"
+                              : "Copy tendencies"}
+                          </button>
+                        </div>
+                        <div className="opponent-snapshot-metrics">
+                          <span>
+                            Entered pot: {formatPercentCount(player.enteredPot)}
+                          </span>
+                          <span>
+                            Folded preflop:{" "}
+                            {formatPercentCount(player.foldedPreflop)}
+                          </span>
+                          <span>
+                            Raised preflop:{" "}
+                            {formatPercentCount(player.preflopRaise)}
+                          </span>
+                          <span>
+                            Fold to preflop raise:{" "}
+                            {formatPercentCount(player.foldToPreflopRaise)}
+                          </span>
+                          <span>
+                            Postflop aggression:{" "}
+                            {formatAggression(player.postflopAggression)}
+                          </span>
+                        </div>
+                        {playNoteLine ? (
+                          <p className="opponent-play-note">
+                            <strong>Play note:</strong> {playNoteLine}
+                          </p>
+                        ) : null}
+                        {tendencyLabels.length > 0 ? (
+                          <div className="opponent-snapshot-tags">
+                            {tendencyLabels.map((label) => (
+                              <span
+                                key={`${player.player}-${label}`}
+                                className="opponent-tag"
+                              >
+                                {label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                  {visibleOpponentPlayers.length === 0 ? (
+                    <p className="hand-review-empty">
+                      No opponents match the current filter.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="hand-review-empty">
+            Parse hands to unlock Tournament Summary, Stats, Audit, and Opponent
+            Snapshot.
+          </p>
+        )}
+      </div>
+
+      {pendingTournamentSave ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal hand-review-modal">
+            <div className="modal-header">
+              <h3 className="modal-title">Confirm Tournament Save</h3>
+              <button
+                type="button"
+                className="hand-review-modal-close"
+                onClick={() => setPendingTournamentSave(null)}
+                disabled={loadingTournamentSave}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                <strong>Tournament ID:</strong>{" "}
+                {pendingTournamentSave.tournamentId}
+              </p>
+              <p>
+                <strong>Tournament name:</strong>{" "}
+                {pendingTournamentSave.tournamentName || "Tournament upload"}
+              </p>
+              <p>
+                <strong>Date:</strong>{" "}
+                {formatDateTimeLabelFromEpoch(
+                  pendingTournamentSave.playedAtEpoch,
+                )}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                onClick={saveTournament}
+                disabled={loadingTournamentSave}
+              >
+                {loadingTournamentSave ? "Saving..." : "Continue"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingTournamentSave(null)}
+                disabled={loadingTournamentSave}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {savedTournamentModalOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal hand-review-modal">
+            <div className="modal-header">
+              <h3 className="modal-title">Load Saved Tournament</h3>
+            </div>
+            <div className="modal-body">
+              {loadingSavedTournaments ? (
+                <p className="hand-review-empty">
+                  Loading saved tournaments...
+                </p>
+              ) : null}
+              {savedTournamentError ? (
+                <p className="hand-review-error">{savedTournamentError}</p>
+              ) : null}
+              {!loadingSavedTournaments &&
+              !savedTournamentError &&
+              savedTournaments.length === 0 ? (
+                <p className="hand-review-empty">No saved tournaments yet.</p>
+              ) : null}
+              {!loadingSavedTournaments && savedTournaments.length > 0 ? (
+                <div className="hand-review-saved-list">
+                  {savedTournaments.map((item) => {
+                    const id = String(item?.tournamentId || "").trim();
+                    const name = String(item?.tournamentName || "").trim();
+                    const playedAt = item?.tournamentPlayedAt || null;
+                    const handCount = Number(item?.summary?.totalHands) || 0;
+                    const isSelected = selectedSavedTournamentId === id;
+                    return (
+                      <label
+                        key={id}
+                        className={`hand-review-saved-item ${
+                          isSelected ? "selected" : ""
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() =>
+                            setSelectedSavedTournamentId((prev) =>
+                              prev === id ? "" : id,
+                            )
+                          }
+                          disabled={
+                            Boolean(loadingSavedTournamentId) ||
+                            Boolean(deletingSavedTournamentId)
+                          }
+                        />
+                        <span className="hand-review-saved-file">
+                          {id} - {name || "Tournament upload"}{" "}
+                          <span className="hand-review-saved-file-meta">
+                            ({formatDateTimeLabel(playedAt)} | {handCount}{" "}
+                            hands)
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                onClick={closeSavedTournamentModal}
+                disabled={
+                  Boolean(loadingSavedTournamentId) ||
+                  Boolean(deletingSavedTournamentId)
+                }
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="danger-action"
+                onClick={deleteSelectedSavedTournament}
+                disabled={
+                  Boolean(loadingSavedTournamentId) ||
+                  Boolean(deletingSavedTournamentId) ||
+                  !selectedSavedTournamentId
+                }
+              >
+                {deletingSavedTournamentId ? "Deleting..." : "Delete"}
+              </button>
+              <button
+                type="button"
+                onClick={loadSelectedSavedTournament}
+                disabled={
+                  Boolean(loadingSavedTournamentId) ||
+                  Boolean(deletingSavedTournamentId) ||
+                  !selectedSavedTournamentId
+                }
+              >
+                {loadingSavedTournamentId ? "Loading..." : "Load"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
