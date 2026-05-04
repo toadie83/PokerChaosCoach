@@ -15,6 +15,14 @@ import {
   parseGgTournamentHistory,
   sortHands,
 } from "./handHistoryService.js";
+import {
+  deleteTournamentUpload,
+  getTournamentUpload,
+  initDatabase,
+  isDatabaseConfigured,
+  listTournamentUploads,
+  upsertTournamentUpload,
+} from "./db.js";
 
 dotenv.config();
 
@@ -228,6 +236,18 @@ const summaryReviewSchema = z.object({
   model: z.string().trim().optional(),
 });
 
+const tournamentUploadSchema = z.object({
+  historyText: z.string().trim().min(1).max(2_000_000),
+  heroName: z.string().trim().min(1).max(64).optional().default("Hero"),
+  tournamentId: z.string().trim().min(1).max(80).optional(),
+  tournamentName: z.string().trim().max(160).optional(),
+  uploadSource: z.string().trim().min(1).max(40).optional().default("ggpoker"),
+});
+
+const tournamentIdParamSchema = z.object({
+  tournamentId: z.string().trim().min(1).max(80),
+});
+
 function sanitizeHandForStreetFairness(hand) {
   const clone = JSON.parse(JSON.stringify(hand ?? {}));
   const heroName = String(clone?.heroName || "Hero");
@@ -354,6 +374,60 @@ function buildOpponentLookup(opponentSnapshot) {
       });
   }
   return lookup;
+}
+
+function summarizeTournamentHands(allHands, filteredHands, heroName, sortDirection, limit) {
+  const heroFoldedPreflopCount = allHands.filter((hand) =>
+    Boolean(hand?.heroPreflop?.didFold)
+  ).length;
+  const heroEnteredPreflopCount = allHands.filter(
+    (hand) => Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold)
+  ).length;
+
+  return {
+    heroName,
+    totalHands: allHands.length,
+    filteredHands: filteredHands.length,
+    returnedHands: Math.min(filteredHands.length, limit),
+    heroFoldedPreflopCount,
+    heroEnteredPreflopCount,
+    sort: sortDirection,
+  };
+}
+
+function resolveTournamentPlayedAtEpoch(hands) {
+  const epochs = (Array.isArray(hands) ? hands : [])
+    .map((hand) => Number(hand?.playedAtEpoch))
+    .filter((value) => Number.isFinite(value));
+  if (!epochs.length) return null;
+  return Math.min(...epochs);
+}
+
+function resolveTournamentIdFromHands(hands, requestedTournamentId) {
+  const requested = typeof requestedTournamentId === "string"
+    ? requestedTournamentId.trim()
+    : "";
+  const ids = Array.from(
+    new Set(
+      hands
+        .map((hand) => String(hand?.tournamentId || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (requested) {
+    return { tournamentId: requested, ids };
+  }
+
+  if (ids.length === 1) {
+    return { tournamentId: ids[0], ids };
+  }
+
+  if (ids.length === 0) {
+    return { tournamentId: "", ids };
+  }
+
+  return { tournamentId: "", ids };
 }
 
 function attachOpponentContextToHand(hand, opponentLookup) {
@@ -497,6 +571,275 @@ app.post("/hand-history/parse", requireAuth, requireFeature("review"), async (re
 });
 
 app.post(
+  "/tournaments/upload",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsed = tournamentUploadSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const allHands = parseGgTournamentHistory(parsed.data.historyText, {
+        heroName: parsed.data.heroName,
+      });
+      if (!allHands.length) {
+        return res.status(400).json({
+          error:
+            "No valid hands were found in the upload. Verify the hand history format.",
+        });
+      }
+
+      const { tournamentId, ids } = resolveTournamentIdFromHands(
+        allHands,
+        parsed.data.tournamentId
+      );
+      if (!tournamentId) {
+        return res.status(400).json({
+          error:
+            "Unable to resolve a single tournament ID from this upload. Provide tournamentId explicitly.",
+          detectedTournamentIds: ids,
+        });
+      }
+
+      let resolvedTournamentId = tournamentId;
+      let tournamentHands = allHands.filter(
+        (hand) => String(hand?.tournamentId || "").trim() === tournamentId
+      );
+      if (!tournamentHands.length && ids.length === 1) {
+        resolvedTournamentId = ids[0];
+        tournamentHands = allHands.filter(
+          (hand) => String(hand?.tournamentId || "").trim() === resolvedTournamentId
+        );
+      }
+      if (!tournamentHands.length) {
+        return res.status(400).json({
+          error:
+            "No hands matched the provided tournamentId in this upload.",
+          tournamentId: resolvedTournamentId,
+          detectedTournamentIds: ids,
+        });
+      }
+
+      const filtered = filterHandsForReview(tournamentHands, {
+        includeOnlyHeroDidNotFoldPreflop: false,
+      });
+      const sorted = sortHands(filtered, "newest");
+      const tournamentPlayedAtEpoch =
+        resolveTournamentPlayedAtEpoch(tournamentHands);
+      const summary = summarizeTournamentHands(
+        tournamentHands,
+        filtered,
+        parsed.data.heroName,
+        "newest",
+        sorted.length
+      );
+      const opponents = buildOpponentSnapshot(tournamentHands, {
+        heroName: parsed.data.heroName,
+        minHands: 1,
+      });
+      const compactHands = sorted.map(compactHandForApi);
+
+      const saved = await upsertTournamentUpload({
+        userId: req.auth?.userId || "",
+        tournamentId: resolvedTournamentId,
+        heroName: parsed.data.heroName,
+        tournamentName: parsed.data.tournamentName,
+        tournamentPlayedAtEpoch,
+        uploadSource: parsed.data.uploadSource,
+        historyText: parsed.data.historyText,
+        parsedHands: compactHands,
+        opponentSnapshot: opponents,
+        summary,
+      });
+
+      return res.json({
+        saved: {
+          tournamentId: saved.tournamentId,
+          heroName: saved.heroName,
+          tournamentName: saved.tournamentName,
+          tournamentPlayedAt: saved.tournamentPlayedAt,
+          updatedAt: saved.updatedAt,
+          createdAt: saved.createdAt,
+        },
+        summary,
+        resolvedTournamentId:
+          resolvedTournamentId !== tournamentId ? resolvedTournamentId : undefined,
+      });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament upload error", error);
+      return res.status(500).json({
+        error: "Failed to upload tournament history. Please try again.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/tournaments",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    try {
+      const items = await listTournamentUploads(req.auth?.userId || "");
+      return res.json({ tournaments: items });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament list error", error);
+      return res.status(500).json({
+        error: "Failed to list tournaments.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/tournaments/:tournamentId",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsedParams = tournamentIdParamSchema.safeParse(req.params ?? {});
+    if (!parsedParams.success) {
+      return res.status(400).json({
+        error: "Invalid tournament ID",
+        details: parsedParams.error.flatten(),
+      });
+    }
+
+    try {
+      const record = await getTournamentUpload(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
+      if (!record) {
+        return res.status(404).json({ error: "Tournament upload not found." });
+      }
+
+      return res.json({
+        tournament: {
+          tournamentId: record.tournamentId,
+          heroName: record.heroName,
+          tournamentName: record.tournamentName,
+          tournamentPlayedAt: record.tournamentPlayedAt,
+          uploadSource: record.uploadSource,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          summary: record.summary || {},
+          opponents: record.opponentSnapshot || {},
+          hands: Array.isArray(record.parsedHands) ? record.parsedHands : [],
+          historyText: record.historyText || "",
+        },
+      });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament get error", error);
+      return res.status(500).json({
+        error: "Failed to load tournament upload.",
+      });
+    }
+  }
+);
+
+app.delete(
+  "/tournaments/:tournamentId",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsedParams = tournamentIdParamSchema.safeParse(req.params ?? {});
+    if (!parsedParams.success) {
+      return res.status(400).json({
+        error: "Invalid tournament ID",
+        details: parsedParams.error.flatten(),
+      });
+    }
+
+    try {
+      const deleted = await deleteTournamentUpload(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
+      if (!deleted) {
+        return res.status(404).json({ error: "Tournament upload not found." });
+      }
+      return res.json({ ok: true, deletedTournamentId: parsedParams.data.tournamentId });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament delete error", error);
+      return res.status(500).json({
+        error: "Failed to delete tournament upload.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/tournaments/:tournamentId/delete",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsedParams = tournamentIdParamSchema.safeParse(req.params ?? {});
+    if (!parsedParams.success) {
+      return res.status(400).json({
+        error: "Invalid tournament ID",
+        details: parsedParams.error.flatten(),
+      });
+    }
+
+    try {
+      const deleted = await deleteTournamentUpload(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
+      if (!deleted) {
+        return res.status(404).json({ error: "Tournament upload not found." });
+      }
+      return res.json({ ok: true, deletedTournamentId: parsedParams.data.tournamentId });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Tournament delete error", error);
+      return res.status(500).json({
+        error: "Failed to delete tournament upload.",
+      });
+    }
+  }
+);
+
+app.post(
   "/hand-history/review",
   requireAuth,
   requireFeature("review"),
@@ -603,4 +946,22 @@ function startServer(port, attempts = 0) {
   return server;
 }
 
-startServer(BASE_PORT);
+async function boot() {
+  if (isDatabaseConfigured()) {
+    try {
+      await initDatabase();
+      console.log("[pokerchaos-backend] Postgres initialized.");
+    } catch (error) {
+      console.error("[pokerchaos-backend] Failed to initialize Postgres", error);
+      process.exit(1);
+    }
+  } else {
+    console.warn(
+      "[pokerchaos-backend] Postgres not configured. Tournament uploads are disabled."
+    );
+  }
+
+  startServer(BASE_PORT);
+}
+
+boot();

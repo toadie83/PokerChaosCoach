@@ -1005,6 +1005,21 @@ button {
   border-color: var(--review-border);
 }
 
+[data-theme="light"] .hand-review-saved-item {
+  border-color: var(--review-border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+[data-theme="light"] .hand-review-saved-item:hover {
+  border-color: #b8cae0;
+  background: #f2f8ff;
+}
+
+[data-theme="light"] .hand-review-saved-item.selected {
+  border-color: #7db1ff;
+  background: #eaf3ff;
+}
+
 [data-theme="light"] .hand-row,
 [data-theme="light"] .hand-review-card,
 [data-theme="light"] .opponent-snapshot-row,
@@ -1230,6 +1245,23 @@ button {
   display: block;
 }
 
+.hand-review-upload-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.hand-review-upload-choice button {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
 .hand-review-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1253,6 +1285,64 @@ button {
 .hand-review-error {
   margin: 0;
   color: #fca5a5;
+}
+
+.hand-review-success {
+  margin: 0;
+  color: #86efac;
+}
+
+.hand-review-modal {
+  max-width: 620px;
+}
+
+.hand-review-saved-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.hand-review-saved-item {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 6px 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.hand-review-saved-item.selected {
+  border-color: rgba(96, 165, 250, 0.8);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.hand-review-saved-item input[type="checkbox"] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.hand-review-saved-file {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.88rem;
+}
+
+.hand-review-saved-file-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.danger-action {
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  color: #fecaca !important;
+  background: rgba(127, 29, 29, 0.35) !important;
 }
 
 .hand-review-empty {

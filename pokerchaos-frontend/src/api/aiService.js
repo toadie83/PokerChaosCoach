@@ -19,3 +19,21 @@ export async function requestEntitlements() {
 export async function requestTournamentSummaryReview(payload) {
   return postJson("/hand-history/summary-review", payload);
 }
+
+export async function requestTournamentUpload(payload) {
+  return postJson("/tournaments/upload", payload);
+}
+
+export async function requestSavedTournaments() {
+  return getJson("/tournaments");
+}
+
+export async function requestSavedTournament(tournamentId) {
+  const safeId = encodeURIComponent(String(tournamentId || "").trim());
+  return getJson(`/tournaments/${safeId}`);
+}
+
+export async function requestDeleteSavedTournament(tournamentId) {
+  const safeId = encodeURIComponent(String(tournamentId || "").trim());
+  return postJson(`/tournaments/${safeId}/delete`, {});
+}
