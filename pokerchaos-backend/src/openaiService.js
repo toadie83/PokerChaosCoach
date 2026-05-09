@@ -1367,6 +1367,435 @@ function normalizeSummaryReviewResponse(parsed, completion, summaryContext = {})
   };
 }
 
+function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
+  const asString = (value) => String(value || "").trim();
+  const asStringList = (value, max = 8) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .slice(0, max)
+      : [];
+  const escapeRegex = (value) =>
+    String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const toSeatLabel = (opponent) => {
+    const explicit = asString(opponent?.seatLabel);
+    if (explicit && !/unknown/i.test(explicit)) return explicit;
+    const seatNumber = Number(opponent?.latestSeat?.number);
+    if (Number.isFinite(seatNumber)) return `Seat ${seatNumber}`;
+    return "";
+  };
+  const aliasPairs = [];
+
+  const opponents = Array.isArray(tableContext?.opponents)
+    ? tableContext.opponents
+    : [];
+  for (const opponent of opponents) {
+    const playerId = asString(opponent?.player);
+    const seatLabel = toSeatLabel(opponent);
+    if (playerId && seatLabel && playerId.toLowerCase() !== seatLabel.toLowerCase()) {
+      aliasPairs.push({ playerId, seatLabel });
+    }
+  }
+  aliasPairs.sort((a, b) => b.playerId.length - a.playerId.length);
+  const rewritePlayerIdsToSeats = (line) => {
+    let out = asString(line);
+    if (!out) return "";
+    for (const alias of aliasPairs) {
+      const pattern = new RegExp(`\\b${escapeRegex(alias.playerId)}\\b`, "gi");
+      out = out.replace(pattern, alias.seatLabel);
+    }
+    out = out.replace(/\b(Seat\s+\d+)\s*\([^)]*\)/gi, "$1");
+    return out;
+  };
+
+  const strongSampleOpponents = opponents.filter(
+    (item) => Number(item?.handsSeen) >= 12
+  );
+  const maxHandsSeen = opponents.reduce((best, item) => {
+    const hands = Number(item?.handsSeen);
+    if (!Number.isFinite(hands)) return best;
+    return Math.max(best, hands);
+  }, 0);
+
+  const heuristicExploits = [];
+  for (const opponent of strongSampleOpponents) {
+    const seatLabel = toSeatLabel(opponent);
+    const playerId = asString(opponent?.player);
+    const name = seatLabel || playerId || "Opponent";
+    const foldToRaisePct = Number(opponent?.foldToPreflopRaise?.pct);
+    const foldToRaiseSample = Number(opponent?.foldToPreflopRaise?.total);
+    if (
+      Number.isFinite(foldToRaisePct) &&
+      Number.isFinite(foldToRaiseSample) &&
+      foldToRaiseSample >= 8 &&
+      foldToRaisePct >= 68
+    ) {
+      heuristicExploits.push(
+        `${name} overfolds after facing raises (${foldToRaisePct.toFixed(1)}% over ${foldToRaiseSample} spots); pressure opens and 3-bets more.`
+      );
+    }
+
+    const vpip = Number(opponent?.enteredPot?.pct);
+    const pfr = Number(opponent?.preflopRaise?.pct);
+    if (
+      Number.isFinite(vpip) &&
+      Number.isFinite(pfr) &&
+      vpip >= 36 &&
+      pfr <= 16
+    ) {
+      heuristicExploits.push(
+        `${name} looks loose-passive (VPIP ${vpip.toFixed(1)} / PFR ${pfr.toFixed(1)}); isolate wider and value-bet bigger postflop.`
+      );
+    }
+
+    const postFreq = Number(opponent?.postflopAggression?.frequencyPct);
+    const postDecisions = Number(opponent?.postflopAggression?.decisions);
+    if (
+      Number.isFinite(postFreq) &&
+      Number.isFinite(postDecisions) &&
+      postDecisions >= 8 &&
+      postFreq <= 22
+    ) {
+      heuristicExploits.push(
+        `${name} is passive postflop (${postFreq.toFixed(1)}% aggression frequency); add delayed stabs after checks.`
+      );
+    }
+    if (
+      Number.isFinite(postFreq) &&
+      Number.isFinite(postDecisions) &&
+      postDecisions >= 8 &&
+      postFreq >= 45
+    ) {
+      heuristicExploits.push(
+        `${name} is high-aggression postflop (${postFreq.toFixed(1)}% aggression frequency); tighten thin bluffs and bluff-catch selectively.`
+      );
+    }
+  }
+
+  const modelPlan = rewritePlayerIdsToSeats(parsed?.table_plan);
+  const modelExploits = asStringList(parsed?.priority_exploits, 6).map(
+    rewritePlayerIdsToSeats
+  );
+  const modelAvoid = asStringList(parsed?.avoid_traps, 6).map(
+    rewritePlayerIdsToSeats
+  );
+  const modelAdjustments = asStringList(parsed?.next_hour_adjustments, 8).map(
+    rewritePlayerIdsToSeats
+  );
+  const modelWarnings = asStringList(parsed?.sample_warnings, 8).map(
+    rewritePlayerIdsToSeats
+  );
+  const confidenceRaw = asString(parsed?.confidence).toLowerCase();
+  const confidenceFromSample =
+    strongSampleOpponents.length >= 3 || maxHandsSeen >= 30
+      ? "high"
+      : strongSampleOpponents.length >= 1 || maxHandsSeen >= 12
+        ? "medium"
+        : "low";
+  const confidence = ["low", "medium", "high"].includes(confidenceRaw)
+    ? confidenceRaw
+    : confidenceFromSample;
+
+  const tableLabel = asString(tableContext?.tableContext?.tableId) || "current table";
+  const heuristicPlan = `Play a disciplined exploit strategy at ${tableLabel}: attack clear preflop leaks, avoid marginal high-variance spots versus unknowns, and keep adjustments tied to sampled tendencies.`;
+  const fallbackAdjustments = [
+    "Open wider from late position when blinds overfold to pressure.",
+    "Versus sticky callers, trim pure bluffs and emphasize thin value.",
+    "Versus high-aggression players, check stronger bluff-catchers and reduce auto c-bets.",
+    "Re-check assumptions every orbit and downgrade reads below 8 opportunities.",
+  ];
+  const fallbackAvoid = [
+    "Do not over-adjust to players with tiny samples.",
+    "Avoid forcing big river bluffs into passive calling profiles.",
+    "Do not flatten too many opens out of position versus aggressive opponents.",
+  ];
+  const sampleWarnings = [];
+  if (opponents.length < 3) {
+    sampleWarnings.push("Current table read is based on a small opponent pool.");
+  }
+  if (maxHandsSeen > 0 && maxHandsSeen < 8) {
+    sampleWarnings.push(
+      `Largest opponent sample is only ${maxHandsSeen} hands; confidence should stay low.`
+    );
+  }
+
+  const usage = completion?.usage
+    ? {
+        prompt_tokens: completion.usage.prompt_tokens ?? null,
+        completion_tokens: completion.usage.completion_tokens ?? null,
+        total_tokens: completion.usage.total_tokens ?? null,
+      }
+    : null;
+
+  const priorityExploits = dedupeList(
+    [...modelExploits, ...heuristicExploits].map(rewritePlayerIdsToSeats),
+    6
+  );
+  const nextHourAdjustmentsRaw = dedupeList(
+    (
+      modelAdjustments.length > 0
+        ? modelAdjustments
+        : [...heuristicExploits.slice(0, 3), ...fallbackAdjustments]
+    ).map(rewritePlayerIdsToSeats),
+    9
+  );
+  const nextHourAdjustments = nextHourAdjustmentsRaw.filter(
+    (line) =>
+      !priorityExploits.some(
+        (exploit) => exploit.toLowerCase() === String(line).toLowerCase()
+      )
+  );
+  const safeAdjustments =
+    nextHourAdjustments.length > 0
+      ? nextHourAdjustments.slice(0, 7)
+      : dedupeList(fallbackAdjustments.map(rewritePlayerIdsToSeats), 4);
+
+  return {
+    table_plan: modelPlan || heuristicPlan,
+    priority_exploits: priorityExploits,
+    avoid_traps: dedupeList(
+      modelAvoid.length > 0 ? modelAvoid : fallbackAvoid,
+      5
+    ),
+    next_hour_adjustments: safeAdjustments,
+    sample_warnings: dedupeList([...modelWarnings, ...sampleWarnings], 6),
+    confidence,
+    usage,
+  };
+}
+
+function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
+  const asString = (value) => String(value || "").trim();
+  const asStringList = (value, max = 8) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .slice(0, max)
+      : [];
+  const issueCounts =
+    icmContext?.issueCounts && typeof icmContext.issueCounts === "object"
+      ? icmContext.issueCounts
+      : {};
+  const sortedIssues = Object.entries(issueCounts).sort((a, b) => b[1] - a[1]);
+  const topIssue = sortedIssues[0]?.[0] || "";
+  const secondaryIssue = sortedIssues[1]?.[0] || "";
+  const flaggedCount = Number(icmContext?.flagged?.count) || 0;
+  const openSpots = Number(icmContext?.openSpots) || 0;
+  const pressureEligibleSpots = Number(icmContext?.pressureEligibleSpots) || 0;
+  const missedPressureSpots = Number(icmContext?.missedPressureSpots) || 0;
+  const facingJamSpots = Number(icmContext?.facingJamSpots) || 0;
+  const avgStackBb = Number(icmContext?.avgHeroStackBb);
+
+  const primaryHeuristicByIssue = {
+    missed_icm_pressure: "Missing late-stage pressure opportunities in position",
+    missed_stack_pressure: "Not applying enough stack pressure on shorter blinds",
+    too_loose_icm_open: "Opening/jamming too loose at late-stage stack depths",
+    loose_jam_call_icm: "Calling all-ins too loose in ICM-heavy spots",
+    too_tight_icm_defend: "Overfolding defend spots when stack depth allows continues",
+    too_tight_jam_fold_icm: "Overfolding versus jams in likely continue spots",
+    passive_short_stack_line: "Using passive short-stack lines instead of jam/fold",
+  };
+
+  const primaryLeakHeuristic =
+    primaryHeuristicByIssue[topIssue] ||
+    (flaggedCount > 0
+      ? "Late-stage ICM spots show mixed pressure and continue leaks"
+      : "No dominant ICM leak in the current sample");
+  const secondaryLeakHeuristic =
+    primaryHeuristicByIssue[secondaryIssue] ||
+    (facingJamSpots >= 3
+      ? "Review all-in continue thresholds versus jams"
+      : "No clear secondary ICM leak");
+
+  const evidenceHeuristic = [];
+  evidenceHeuristic.push(
+    `Flagged ICM spots: ${flaggedCount}/${Number(icmContext?.lateLevelHands) || 0}.`
+  );
+  if (openSpots > 0) {
+    evidenceHeuristic.push(`Open spots reviewed: ${openSpots}.`);
+  }
+  if (pressureEligibleSpots > 0) {
+    evidenceHeuristic.push(
+      `Pressure-eligible spots: ${missedPressureSpots}/${pressureEligibleSpots} missed.`
+    );
+  }
+  if (facingJamSpots > 0) {
+    evidenceHeuristic.push(`Facing-jam spots reviewed: ${facingJamSpots}.`);
+  }
+  if (Number.isFinite(avgStackBb)) {
+    evidenceHeuristic.push(`Average stack depth in sample: ${avgStackBb.toFixed(1)} BB.`);
+  }
+
+  const actionsHeuristic = Array.isArray(icmContext?.quickFixes)
+    ? icmContext.quickFixes.map((line) => asString(line)).filter(Boolean)
+    : [];
+  if (actionsHeuristic.length === 0) {
+    actionsHeuristic.push(
+      "No dominant ICM leak from this sample. Keep collecting late-stage hands and review pressure spots."
+    );
+  }
+
+  const warningsHeuristic = Array.isArray(icmContext?.warnings)
+    ? icmContext.warnings.map((line) => asString(line)).filter(Boolean)
+    : [];
+
+  const modelPrimary = asString(parsed?.primary_leak);
+  const modelSecondary = asString(parsed?.secondary_leak);
+  const modelEvidence = asStringList(parsed?.evidence, 8);
+  const modelActions = asStringList(parsed?.actions, 8);
+  const modelWarnings = asStringList(parsed?.warnings, 8);
+  const modelConfidence = asString(parsed?.confidence).toLowerCase();
+  const confidence =
+    ["low", "medium", "high"].includes(modelConfidence)
+      ? modelConfidence
+      : ["low", "medium", "high"].includes(asString(icmContext?.confidence))
+        ? asString(icmContext?.confidence)
+        : flaggedCount >= 6
+          ? "high"
+          : flaggedCount >= 3
+            ? "medium"
+            : "low";
+
+  const usage = completion?.usage
+    ? {
+        prompt_tokens: completion.usage.prompt_tokens ?? null,
+        completion_tokens: completion.usage.completion_tokens ?? null,
+        total_tokens: completion.usage.total_tokens ?? null,
+      }
+    : null;
+
+  return {
+    primary_leak: modelPrimary || primaryLeakHeuristic,
+    secondary_leak: modelSecondary || secondaryLeakHeuristic,
+    evidence: dedupeList(
+      modelEvidence.length > 0 ? [...modelEvidence, ...evidenceHeuristic] : evidenceHeuristic,
+      8
+    ),
+    actions: dedupeList(
+      modelActions.length > 0 ? [...modelActions, ...actionsHeuristic] : actionsHeuristic,
+      8
+    ),
+    warnings: dedupeList([...modelWarnings, ...warningsHeuristic], 8),
+    confidence,
+    usage,
+  };
+}
+
+function normalizeBlindDefenseReviewResponse(
+  parsed,
+  completion,
+  blindContext = {}
+) {
+  const asString = (value) => String(value || "").trim();
+  const asStringList = (value, max = 8) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .slice(0, max)
+      : [];
+  const totalSpots = Number(blindContext?.totalBlindDefenseSpots) || 0;
+  const likelyContinueSpots = Number(blindContext?.likelyContinueSpots) || 0;
+  const missedContinues = Number(blindContext?.missedContinues?.count) || 0;
+  const missedSb3BetPressure = Number(blindContext?.missedSb3BetPressure?.count) || 0;
+  const classRows = Array.isArray(blindContext?.handClassRows)
+    ? blindContext.handClassRows
+    : [];
+  const topClass = classRows[0];
+  const issueCounts =
+    blindContext?.issueCounts && typeof blindContext.issueCounts === "object"
+      ? blindContext.issueCounts
+      : {};
+  const topIssue = Object.entries(issueCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+
+  const primaryByIssue = {
+    missed_sb_3bet_pressure: "Underusing SB 3-bet pressure against late opens",
+    missed_blind_continue: "Overfolding likely blind continue spots versus opens",
+  };
+  const primaryLeakHeuristic =
+    primaryByIssue[topIssue] ||
+    (missedContinues > 0
+      ? "Overfolding in blind-defense spots"
+      : "No dominant blind-defense leak in this sample");
+  const secondaryLeakHeuristic =
+    missedSb3BetPressure > 0
+      ? "Missed stack-pressure reraises from SB"
+      : missedContinues > 0
+        ? "Missed continues concentrated in specific hand classes"
+        : "No clear secondary blind-defense leak";
+
+  const evidenceHeuristic = [];
+  evidenceHeuristic.push(`Blind defense spots reviewed: ${totalSpots}.`);
+  evidenceHeuristic.push(
+    `Likely continue spots: ${missedContinues}/${likelyContinueSpots}.`
+  );
+  if (missedSb3BetPressure > 0) {
+    evidenceHeuristic.push(
+      `Likely SB 3-bet pressure spots folded: ${missedSb3BetPressure}.`
+    );
+  }
+  if (topClass?.label) {
+    evidenceHeuristic.push(
+      `Most frequent missed class: ${topClass.label} (${Number(topClass.count) || 0}).`
+    );
+  }
+
+  const actionsHeuristic = Array.isArray(blindContext?.quickFixes)
+    ? blindContext.quickFixes.map((line) => asString(line)).filter(Boolean)
+    : [];
+  if (actionsHeuristic.length === 0) {
+    actionsHeuristic.push(
+      "No dominant blind-defense issue detected; keep collecting sample and re-check missed continue classes."
+    );
+  }
+  const warningsHeuristic = Array.isArray(blindContext?.warnings)
+    ? blindContext.warnings.map((line) => asString(line)).filter(Boolean)
+    : [];
+
+  const modelPrimary = asString(parsed?.primary_leak);
+  const modelSecondary = asString(parsed?.secondary_leak);
+  const modelEvidence = asStringList(parsed?.evidence, 8);
+  const modelActions = asStringList(parsed?.actions, 8);
+  const modelWarnings = asStringList(parsed?.warnings, 8);
+  const modelConfidence = asString(parsed?.confidence).toLowerCase();
+  const confidence =
+    ["low", "medium", "high"].includes(modelConfidence)
+      ? modelConfidence
+      : ["low", "medium", "high"].includes(asString(blindContext?.confidence))
+        ? asString(blindContext?.confidence)
+        : totalSpots >= 30
+          ? "high"
+          : totalSpots >= 12
+            ? "medium"
+            : "low";
+
+  const usage = completion?.usage
+    ? {
+        prompt_tokens: completion.usage.prompt_tokens ?? null,
+        completion_tokens: completion.usage.completion_tokens ?? null,
+        total_tokens: completion.usage.total_tokens ?? null,
+      }
+    : null;
+
+  return {
+    primary_leak: modelPrimary || primaryLeakHeuristic,
+    secondary_leak: modelSecondary || secondaryLeakHeuristic,
+    evidence: dedupeList(
+      modelEvidence.length > 0 ? [...modelEvidence, ...evidenceHeuristic] : evidenceHeuristic,
+      8
+    ),
+    actions: dedupeList(
+      modelActions.length > 0 ? [...modelActions, ...actionsHeuristic] : actionsHeuristic,
+      8
+    ),
+    warnings: dedupeList([...modelWarnings, ...warningsHeuristic], 8),
+    confidence,
+    usage,
+  };
+}
+
 export async function getAggressionPrompt(context = {}, instruction) {
   const persona = String(context?.persona || "chaos_shark");
   const requestedModel =
@@ -1542,6 +1971,162 @@ Instruction: ${
   });
 
   return normalizeSummaryReviewResponse(parsed, completion, summaryContext);
+}
+
+export async function reviewCurrentTableHint(
+  tableContext = {},
+  instruction,
+  requestedModel
+) {
+  const model =
+    typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
+
+  const system = `You are a tournament poker table-exploit advisor.
+Given current-table opponent tendencies and session summary context, provide practical next-hour adjustments.
+Stay sample-aware and avoid overconfident reads on tiny samples.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "table_plan": "string",
+  "priority_exploits": ["string"],
+  "avoid_traps": ["string"],
+  "next_hour_adjustments": ["string"],
+  "sample_warnings": ["string"],
+  "confidence": "low|medium|high"
+}
+
+Rules:
+- Focus advice on the current table only, not generic tournament strategy.
+- Prefer seat references (e.g. "Seat 4") over raw player IDs.
+- Anchor exploit lines to provided tendencies whenever possible.
+- Keep output concise and actionable (max 5 items per list).
+- Flag low-confidence reads when denominators are small (<8 spots or <12 hands seen).
+- Avoid mentioning hidden-card certainty or solver-perfect claims.`;
+
+  const user = `Current table context:
+${JSON.stringify(tableContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Give a practical current-table plan for the next hour with specific exploits and cautions."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.25,
+    top_p: 0.7,
+    max_tokens: 420,
+    model,
+  });
+
+  return normalizeTableHintResponse(parsed, completion, tableContext);
+}
+
+export async function reviewIcmSpotSummary(
+  icmContext = {},
+  instruction,
+  requestedModel
+) {
+  const model =
+    typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
+
+  const system = `You are a tournament poker late-stage ICM analyst.
+Given a heuristic audit of recent high-level hands, identify where the player missed pressure or misapplied risk.
+Keep feedback practical and sample-aware; do not claim exact solver/ICM model outputs.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "primary_leak": "string",
+  "secondary_leak": "string",
+  "evidence": ["string"],
+  "actions": ["string"],
+  "warnings": ["string"],
+  "confidence": "low|medium|high"
+}
+
+Rules:
+- Prioritize pressure application leaks in position when stack coverage supports it.
+- Include stack-depth framing (in BB) in at least one evidence/action line when available.
+- Keep lists concise (max 5 items each).
+- Treat this as heuristic ICM proxy review unless payout/ladder inputs are explicitly provided.`;
+
+  const user = `ICM spot audit context:
+${JSON.stringify(icmContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Review these late-stage spots and identify where pressure should increase or risk should tighten."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.25,
+    top_p: 0.7,
+    max_tokens: 360,
+    model,
+  });
+
+  return normalizeIcmReviewResponse(parsed, completion, icmContext);
+}
+
+export async function reviewBlindDefenseSummary(
+  blindContext = {},
+  instruction,
+  requestedModel
+) {
+  const model =
+    typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
+
+  const system = `You are a tournament poker blind-defense analyst.
+Given blind-defense spot summaries across a full tournament sample, identify the most important defend leaks.
+Focus on missed continues and SB 3-bet pressure opportunities, with practical next-study guidance.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "primary_leak": "string",
+  "secondary_leak": "string",
+  "evidence": ["string"],
+  "actions": ["string"],
+  "warnings": ["string"],
+  "confidence": "low|medium|high"
+}
+
+Rules:
+- Prioritize actionable blind-defense fixes over generic preflop advice.
+- When relevant, call out hand-class patterns (e.g., suited connectors, broadways, Ax).
+- Include SB 3-bet pressure guidance when missed SB pressure candidates are present.
+- Keep lists concise (max 5 items each).
+- Treat this as chart-based heuristic review unless solver/payout model context is provided.`;
+
+  const user = `Blind defense audit context:
+${JSON.stringify(blindContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Review these blind-defense misses and summarize what hand classes and pressure lines to work on."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.25,
+    top_p: 0.7,
+    max_tokens: 360,
+    model,
+  });
+
+  return normalizeBlindDefenseReviewResponse(parsed, completion, blindContext);
 }
 
 async function runChaosCoach(context = {}, instruction, model) {

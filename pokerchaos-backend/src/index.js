@@ -5,6 +5,9 @@ import { z } from "zod";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import {
   getAggressionPrompt,
+  reviewBlindDefenseSummary,
+  reviewIcmSpotSummary,
+  reviewCurrentTableHint,
   reviewTournamentHand,
   reviewTournamentSummary,
 } from "./openaiService.js";
@@ -232,6 +235,26 @@ const handReviewSchema = z.object({
 
 const summaryReviewSchema = z.object({
   summary: z.record(z.any()),
+  instruction: z.string().trim().max(700).optional(),
+  model: z.string().trim().optional(),
+});
+
+const icmReviewSchema = z.object({
+  icmSummary: z.record(z.any()),
+  instruction: z.string().trim().max(700).optional(),
+  model: z.string().trim().optional(),
+});
+
+const blindDefenseReviewSchema = z.object({
+  blindDefenseSummary: z.record(z.any()),
+  instruction: z.string().trim().max(700).optional(),
+  model: z.string().trim().optional(),
+});
+
+const tableHintSchema = z.object({
+  tableContext: z.record(z.any()),
+  opponents: z.array(z.record(z.any())).optional().default([]),
+  sessionSummary: z.record(z.any()).optional(),
   instruction: z.string().trim().max(700).optional(),
   model: z.string().trim().optional(),
 });
@@ -921,6 +944,121 @@ app.post(
       return res.status(502).json({
         error:
           "Failed to review tournament summary with AI. Please try again in a moment.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/hand-history/icm-review",
+  requireAuth,
+  requireFeature("review"),
+  requireReviewAi,
+  async (req, res) => {
+    const parsed = icmReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const review = await reviewIcmSpotSummary(
+        parsed.data.icmSummary,
+        parsed.data.instruction,
+        parsed.data.model
+      );
+      return res.json({ review });
+    } catch (error) {
+      console.error("[pokerchaos-backend] ICM review error", error);
+      return res.status(502).json({
+        error: "Failed to review ICM spots with AI. Please try again in a moment.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/hand-history/blind-defense-review",
+  requireAuth,
+  requireFeature("review"),
+  requireReviewAi,
+  async (req, res) => {
+    const parsed = blindDefenseReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const review = await reviewBlindDefenseSummary(
+        parsed.data.blindDefenseSummary,
+        parsed.data.instruction,
+        parsed.data.model
+      );
+      return res.json({ review });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Blind defense review error", error);
+      return res.status(502).json({
+        error:
+          "Failed to review blind defense spots with AI. Please try again in a moment.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/hand-history/table-hint",
+  requireAuth,
+  requireFeature("review"),
+  requireReviewAi,
+  async (req, res) => {
+    const parsed = tableHintSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const tableHintContext = {
+        tableContext: parsed.data.tableContext || {},
+        opponents: Array.isArray(parsed.data.opponents)
+          ? parsed.data.opponents
+          : [],
+        sessionSummary:
+          parsed.data.sessionSummary &&
+          typeof parsed.data.sessionSummary === "object"
+            ? parsed.data.sessionSummary
+            : {},
+      };
+      const review = await reviewCurrentTableHint(
+        tableHintContext,
+        parsed.data.instruction,
+        parsed.data.model
+      );
+      return res.json({ review });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Current table hint error", error);
+      return res.status(502).json({
+        error:
+          "Failed to generate current table hint with AI. Please try again in a moment.",
       });
     }
   }

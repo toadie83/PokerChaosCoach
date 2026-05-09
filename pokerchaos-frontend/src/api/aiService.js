@@ -20,6 +20,18 @@ export async function requestTournamentSummaryReview(payload) {
   return postJson("/hand-history/summary-review", payload);
 }
 
+export async function requestIcmSpotReview(payload) {
+  return postJson("/hand-history/icm-review", payload);
+}
+
+export async function requestBlindDefenseReview(payload) {
+  return postJson("/hand-history/blind-defense-review", payload);
+}
+
+export async function requestTableHintReview(payload) {
+  return postJson("/hand-history/table-hint", payload);
+}
+
 export async function requestTournamentUpload(payload) {
   return postJson("/tournaments/upload", payload);
 }
