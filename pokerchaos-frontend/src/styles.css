@@ -981,6 +981,7 @@ button {
 [data-theme="light"] .audit-chip-button,
 [data-theme="light"] .hand-review-scores span,
 [data-theme="light"] .opponent-copy-button,
+[data-theme="light"] .opponent-ai-hint-button,
 [data-theme="light"] .hand-review-selection-tools button,
 [data-theme="light"] .hand-review-actions button,
 [data-theme="light"] .hand-review-summary span,
@@ -988,6 +989,12 @@ button {
   border-color: var(--review-chip-border);
   background: var(--review-chip-bg);
   color: var(--text);
+}
+
+[data-theme="light"] .opponent-ai-hint-button:hover:not(:disabled) {
+  border-color: #e3a24c;
+  background: #fff1dd;
+  color: #7a3e00;
 }
 
 [data-theme="light"] .audit-chip-button:hover:not(:disabled) {
@@ -1669,6 +1676,40 @@ button {
   margin: 0;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.opponent-table-ai-review {
+  display: grid;
+  gap: 8px;
+}
+
+.opponent-ai-hint-button {
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.14);
+  color: #fde68a;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.opponent-ai-hint-button:hover:not(:disabled) {
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.opponent-ai-hint-button.loading {
+  opacity: 0.85;
+}
+
+.opponent-ai-hint-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .opponent-snapshot-list {

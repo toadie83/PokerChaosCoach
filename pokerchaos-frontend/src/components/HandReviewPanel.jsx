@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  requestBlindDefenseReview,
   requestDeleteSavedTournament,
   requestHandHistoryParse,
   requestHandHistoryReview,
+  requestIcmSpotReview,
   requestSavedTournament,
   requestSavedTournaments,
+  requestTableHintReview,
   requestTournamentUpload,
   requestTournamentSummaryReview,
 } from "../api/aiService.js";
@@ -84,11 +87,14 @@ function formatAggression(aggression) {
 
 function formatLatestSeat(latestSeat) {
   const number = Number(latestSeat?.number);
-  const position = String(latestSeat?.position || "").trim();
   const hasNumber = Number.isFinite(number) && number > 0;
-  if (hasNumber && position) return `Seat ${number} (${position})`;
   if (hasNumber) return `Seat ${number}`;
-  if (position) return position;
+  return "Seat unknown";
+}
+
+function formatSeatNumber(value) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return `Seat ${number}`;
   return "Seat unknown";
 }
 
@@ -599,6 +605,29 @@ function buildAiSummaryParagraph(review) {
   return parts.join(" ");
 }
 
+function buildTableHintParagraph(review) {
+  if (!review || typeof review !== "object") return "";
+  const plan = String(review.table_plan || "").trim();
+  const exploits = normalizeInsightLines(review.priority_exploits, 8)
+    .slice(0, 2)
+    .map(ensureSentenceEnding)
+    .join(" ");
+  const adjustments = normalizeInsightLines(review.next_hour_adjustments, 8)
+    .slice(0, 2)
+    .map(ensureSentenceEnding)
+    .join(" ");
+  const confidence = String(review.confidence || "").trim().toLowerCase();
+
+  const parts = [];
+  if (plan) parts.push(ensureSentenceEnding(plan));
+  if (exploits) parts.push(`Priority exploits: ${exploits}`);
+  if (adjustments) parts.push(`Next-hour adjustments: ${adjustments}`);
+  if (confidence && ["low", "medium", "high"].includes(confidence)) {
+    parts.push(`Confidence: ${confidence}.`);
+  }
+  return parts.join(" ");
+}
+
 const TIME_FILTER_OPTIONS = [
   { code: "all_time", label: "All time", ms: null },
   { code: "last_1h", label: "Last 1 hour", ms: 60 * 60 * 1000 },
@@ -975,6 +1004,25 @@ function buildPreflopRangeModel() {
 }
 
 const PRE_FLOP_RANGE_MODEL = buildPreflopRangeModel();
+const ICM_TIGHT_OPEN_RANGE_MODEL = {
+  UTG: makeRangeSet(["99+", "AJS+", "AQO+", "KQS"]),
+  "UTG+1": makeRangeSet(["88+", "AJS+", "AQO+", "KQS"]),
+  LJ: makeRangeSet(["77+", "ATS+", "AQO+", "KQS", "QJS"]),
+  HJ: makeRangeSet(["66+", "ATS+", "AJO+", "KQS", "KJS", "QJS"]),
+  CO: makeRangeSet(["55+", "A9S+", "ATO+", "KTS+", "KQO", "QTS+", "JTS"]),
+  BTN: makeRangeSet(["44+", "A8S+", "ATO+", "KTS+", "KQO", "QTS+", "JTS"]),
+  SB: makeRangeSet(["66+", "ATS+", "AJO+", "KQS", "KJS", "QJS"]),
+};
+const ICM_JAM_CALL_RANGE_MODEL = {
+  UTG: makeRangeSet(["JJ+", "AKS", "AKO", "AQS"]),
+  "UTG+1": makeRangeSet(["JJ+", "AKS", "AKO", "AQS"]),
+  LJ: makeRangeSet(["TT+", "AKS", "AKO", "AQS"]),
+  HJ: makeRangeSet(["99+", "AKS", "AKO", "AQS", "AJS"]),
+  CO: makeRangeSet(["99+", "AKS", "AKO", "AQS", "AJS"]),
+  BTN: makeRangeSet(["88+", "AJS+", "AQO+", "KQS"]),
+  SB: makeRangeSet(["99+", "AKS", "AKO", "AQS"]),
+  BB: makeRangeSet(["88+", "AJS+", "AQO+", "KQS"]),
+};
 
 function rangeContains(rangeMap, position, handCode) {
   if (!position || !handCode) return false;
@@ -1020,6 +1068,27 @@ function summarizeAuditEvents(events) {
       .slice(0, 8),
     examples: (events || []).slice(0, 6),
   };
+}
+
+function parseLevelNumber(rawLevel) {
+  const match = /(\d+)/.exec(String(rawLevel || "").trim());
+  if (!match) return null;
+  const level = Number(match[1]);
+  return Number.isFinite(level) ? level : null;
+}
+
+function getSeatStackByPosition(hand, position) {
+  const seats = Array.isArray(hand?.seats) ? hand.seats : [];
+  const target = String(position || "").trim().toUpperCase();
+  if (!target) return null;
+  for (const seat of seats) {
+    const seatPos = normalizePositionForRanges(seat?.position);
+    if (seatPos !== target) continue;
+    const chips = Number(seat?.chips);
+    if (!Number.isFinite(chips) || chips <= 0) return null;
+    return chips;
+  }
+  return null;
 }
 
 function buildPreflopOpportunityAudit(hands) {
@@ -1270,6 +1339,608 @@ function buildPreflopOpportunityAudit(hands) {
       ...looseContinueVs3BetSummary,
     },
     quickFixes,
+  };
+}
+
+function rankValueFromCode(rank) {
+  const idx = HAND_RANK_INDEX[String(rank || "").toUpperCase()];
+  return Number.isFinite(idx) ? idx + 2 : null;
+}
+
+function classifyBlindDefenseHand(handCode) {
+  const code = String(handCode || "").trim().toUpperCase();
+  if (!code) return "Unknown";
+  if (/^([2-9TJQKA])\1$/.test(code)) return "Pocket pairs";
+
+  const match = /^([2-9TJQKA])([2-9TJQKA])(S|O)$/.exec(code);
+  if (!match) return "Other offsuit/suited";
+  const r1 = match[1];
+  const r2 = match[2];
+  const suitFlag = match[3];
+  const v1 = rankValueFromCode(r1);
+  const v2 = rankValueFromCode(r2);
+  const highCards = new Set(["T", "J", "Q", "K", "A"]);
+  const bothBroadway = highCards.has(r1) && highCards.has(r2);
+  const gap = Number.isFinite(v1) && Number.isFinite(v2) ? Math.abs(v1 - v2) : null;
+  const hasAce = r1 === "A" || r2 === "A";
+
+  if (suitFlag === "S" && gap === 1) return "Suited connectors";
+  if (suitFlag === "S" && bothBroadway) return "Suited broadways";
+  if (suitFlag === "O" && bothBroadway) return "Offsuit broadways";
+  if (suitFlag === "S" && hasAce) return "Suited Ax";
+  if (suitFlag === "O" && hasAce) return "Offsuit Ax";
+  if (suitFlag === "S") return "Suited gappers/other";
+  return "Offsuit non-broadway";
+}
+
+function resolvePreflopAggressorBeforeHero(hand, heroDecisionIndex) {
+  const preflopActions = Array.isArray(hand?.actionsByStreet?.preflop)
+    ? hand.actionsByStreet.preflop
+    : [];
+  let aggressor = null;
+  for (let i = 0; i < preflopActions.length; i += 1) {
+    if (i >= heroDecisionIndex) break;
+    const action = preflopActions[i];
+    if (!isPreflopAggressiveAction(action)) continue;
+    const player = String(action?.player || "").trim();
+    if (!player) continue;
+    aggressor = player;
+  }
+  if (!aggressor) return null;
+  const seats = Array.isArray(hand?.seats) ? hand.seats : [];
+  const seat = seats.find((row) => String(row?.player || "").trim() === aggressor);
+  return {
+    player: aggressor,
+    position: normalizePositionForRanges(seat?.position) || "Unknown",
+  };
+}
+
+const BLIND_SB_3BET_PRESSURE_RANGE = makeRangeSet([
+  "77+",
+  "A9S+",
+  "AJO+",
+  "KTS+",
+  "KQO",
+  "QTS+",
+  "JTS",
+]);
+
+function buildBlindDefenseAudit(hands) {
+  const list = Array.isArray(hands) ? hands : [];
+  const missedContinueEvents = [];
+  const blindFoldEvents = [];
+  const categoryCounts = new Map();
+  const sb3BetCandidateEvents = [];
+  const byIssue = new Map();
+
+  let totalBlindDefenseSpots = 0;
+  let sbDefenseSpots = 0;
+  let bbDefenseSpots = 0;
+  let unknownCardsSpots = 0;
+  let likelyContinueSpots = 0;
+
+  for (const hand of list) {
+    const heroName = String(hand?.heroName || "").trim();
+    const preflopActions = Array.isArray(hand?.actionsByStreet?.preflop)
+      ? hand.actionsByStreet.preflop
+      : [];
+    if (!heroName || preflopActions.length === 0) continue;
+
+    const position = normalizePositionForRanges(hand?.heroPosition);
+    if (position !== "SB" && position !== "BB") continue;
+
+    let firstHeroDecisionIndex = -1;
+    let firstHeroDecision = null;
+    for (let i = 0; i < preflopActions.length; i += 1) {
+      const action = preflopActions[i];
+      if (String(action?.player || "").trim() !== heroName) continue;
+      if (!isPreflopDecisionAction(action)) continue;
+      firstHeroDecisionIndex = i;
+      firstHeroDecision = action;
+      break;
+    }
+    if (firstHeroDecisionIndex < 0 || !firstHeroDecision) continue;
+
+    const priorAggression = preflopActions
+      .slice(0, firstHeroDecisionIndex)
+      .some(
+        (action) =>
+          String(action?.player || "").trim() !== heroName &&
+          isPreflopAggressiveAction(action),
+      );
+    if (!priorAggression) continue;
+
+    totalBlindDefenseSpots += 1;
+    if (position === "SB") sbDefenseSpots += 1;
+    if (position === "BB") bbDefenseSpots += 1;
+
+    const handCode = normalizeHeroHandCode(hand?.heroCards);
+    if (!handCode) {
+      unknownCardsSpots += 1;
+      continue;
+    }
+
+    const firstType = normalizeActionType(firstHeroDecision);
+    const didFold = firstType === "fold";
+    const shouldDefend = rangeContains(
+      PRE_FLOP_RANGE_MODEL.defendVsOpen,
+      position,
+      handCode,
+    );
+    if (shouldDefend) likelyContinueSpots += 1;
+
+    const baseEvent = {
+      handKey: handKey(hand),
+      handId: hand?.handId || "Unknown",
+      playedAt: hand?.playedAt || "Unknown",
+      level: parseLevelNumber(hand?.level),
+      position,
+      handCode,
+      handClass: classifyBlindDefenseHand(handCode),
+      actualAction: firstType || "unknown",
+    };
+
+    if (didFold) {
+      blindFoldEvents.push({
+        ...baseEvent,
+        type: "blind_fold",
+        chartShouldDefend: shouldDefend,
+        recommendation: shouldDefend
+          ? "Likely continue candidate (call or 3-bet mix)."
+          : "Likely standard fold unless exploitative read says otherwise.",
+      });
+    }
+
+    if (!(shouldDefend && didFold)) continue;
+
+    categoryCounts.set(
+      baseEvent.handClass,
+      (categoryCounts.get(baseEvent.handClass) || 0) + 1,
+    );
+    missedContinueEvents.push({
+      ...baseEvent,
+      type: "missed_blind_continue",
+      recommendation: "Likely defend candidate was folded.",
+    });
+
+    const aggressor = resolvePreflopAggressorBeforeHero(hand, firstHeroDecisionIndex);
+    const openerPos = String(aggressor?.position || "").trim();
+    const lateOpen = openerPos === "CO" || openerPos === "BTN";
+    const sb3BetCandidate =
+      position === "SB" &&
+      lateOpen &&
+      BLIND_SB_3BET_PRESSURE_RANGE.has(handCode);
+    if (sb3BetCandidate) {
+      sb3BetCandidateEvents.push({
+        ...baseEvent,
+        type: "missed_sb_3bet_pressure",
+        openerPosition: openerPos,
+        recommendation:
+          "SB vs late open: likely 3-bet pressure candidate was folded.",
+      });
+      byIssue.set(
+        "missed_sb_3bet_pressure",
+        (byIssue.get("missed_sb_3bet_pressure") || 0) + 1,
+      );
+    } else {
+      byIssue.set(
+        "missed_blind_continue",
+        (byIssue.get("missed_blind_continue") || 0) + 1,
+      );
+    }
+  }
+
+  const missedSummary = summarizeAuditEvents(missedContinueEvents);
+  const blindFoldSummary = summarizeAuditEvents(blindFoldEvents);
+  const sb3BetSummary = summarizeAuditEvents(sb3BetCandidateEvents);
+  const categoryRows = Array.from(categoryCounts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, 8);
+  const issueCounts = Object.fromEntries(
+    Array.from(byIssue.entries()).sort((a, b) => b[1] - a[1]),
+  );
+
+  const quickFixes = [];
+  const topCategory = categoryRows[0];
+  if (topCategory) {
+    quickFixes.push(
+      `Most missed blind continues are in ${topCategory.label.toLowerCase()} (${topCategory.count}). Drill these first.`,
+    );
+  }
+  if (sb3BetCandidateEvents.length > 0) {
+    quickFixes.push(
+      `SB pressure vs late opens is underused (${sb3BetCandidateEvents.length} likely 3-bet spots folded).`,
+    );
+  }
+  if (quickFixes.length === 0) {
+    quickFixes.push(
+      "No dominant blind-defense leak in current sample.",
+    );
+  }
+
+  const confidence = confidenceFromSample(totalBlindDefenseSpots);
+  const warnings = [];
+  if (totalBlindDefenseSpots < 12) {
+    warnings.push("Blind-defense sample is small; treat findings as low confidence.");
+  }
+  warnings.push("Baseline uses chart heuristics; exploit adjustments can override specific spots.");
+
+  return {
+    totalBlindDefenseSpots,
+    sbDefenseSpots,
+    bbDefenseSpots,
+    likelyContinueSpots,
+    unknownCardsSpots,
+    confidence,
+    issueCounts,
+    handClassRows: categoryRows,
+    missedContinues: {
+      count: missedContinueEvents.length,
+      ...missedSummary,
+    },
+    blindFolds: {
+      count: blindFoldEvents.length,
+      shouldDefendCount: blindFoldEvents.filter((event) => event.chartShouldDefend).length,
+      ...blindFoldSummary,
+    },
+    missedSb3BetPressure: {
+      count: sb3BetCandidateEvents.length,
+      ...sb3BetSummary,
+    },
+    quickFixes,
+    warnings,
+  };
+}
+
+function buildIcmSpotAudit(hands, options = {}) {
+  const list = Array.isArray(hands) ? [...hands] : [];
+  const recentLimit =
+    Number.isFinite(Number(options?.recentLimit)) && Number(options.recentLimit) > 0
+      ? Math.floor(Number(options.recentLimit))
+      : 40;
+  const levelThreshold =
+    Number.isFinite(Number(options?.levelThreshold)) &&
+    Number(options.levelThreshold) > 0
+      ? Math.floor(Number(options.levelThreshold))
+      : 25;
+  const sortedRecentHands = list
+    .sort(
+      (a, b) => (Number(getHandPlayedAtEpoch(b)) || 0) - (Number(getHandPlayedAtEpoch(a)) || 0),
+    )
+    .slice(0, recentLimit);
+  const levelFilteredHands = sortedRecentHands.filter((hand) => {
+    const levelNumber = parseLevelNumber(hand?.level);
+    return Number.isFinite(levelNumber) && levelNumber >= levelThreshold;
+  });
+  const flaggedEvents = [];
+  const blindFoldEvents = [];
+  const byType = new Map();
+  let unknownCardsSpots = 0;
+  let openSpots = 0;
+  let facingAggressionSpots = 0;
+  let facingJamSpots = 0;
+  let pressureEligibleSpots = 0;
+  let missedPressureSpots = 0;
+  let stackBbSamples = 0;
+  let stackBbTotal = 0;
+
+  const pushFlag = (event) => {
+    flaggedEvents.push(event);
+    const key = String(event?.type || "other");
+    byType.set(key, (byType.get(key) || 0) + 1);
+  };
+
+  for (const hand of levelFilteredHands) {
+    const heroName = String(hand?.heroName || "").trim();
+    const preflopActions = Array.isArray(hand?.actionsByStreet?.preflop)
+      ? hand.actionsByStreet.preflop
+      : [];
+    if (!heroName || preflopActions.length === 0) continue;
+
+    const position = normalizePositionForRanges(hand?.heroPosition) || "Unknown";
+    const handCode = normalizeHeroHandCode(hand?.heroCards);
+    if (!handCode) {
+      unknownCardsSpots += 1;
+      continue;
+    }
+
+    const bigBlind = Number(hand?.blinds?.bigBlind);
+    const heroStack = Number(hand?.heroStack);
+    const heroStackBb =
+      Number.isFinite(bigBlind) &&
+      bigBlind > 0 &&
+      Number.isFinite(heroStack) &&
+      heroStack > 0
+        ? heroStack / bigBlind
+        : null;
+    if (Number.isFinite(heroStackBb)) {
+      stackBbTotal += Number(heroStackBb);
+      stackBbSamples += 1;
+    }
+
+    let firstHeroDecisionIndex = -1;
+    let firstHeroDecision = null;
+    for (let i = 0; i < preflopActions.length; i += 1) {
+      const action = preflopActions[i];
+      if (String(action?.player || "").trim() !== heroName) continue;
+      if (!isPreflopDecisionAction(action)) continue;
+      firstHeroDecisionIndex = i;
+      firstHeroDecision = action;
+      break;
+    }
+    if (firstHeroDecisionIndex < 0 || !firstHeroDecision) continue;
+
+    const firstType = normalizeActionType(firstHeroDecision);
+    const didAggress = isPreflopAggressiveAction(firstHeroDecision);
+    const priorActions = preflopActions.slice(0, firstHeroDecisionIndex);
+    const priorAggression = priorActions.some(
+      (action) =>
+        String(action?.player || "").trim() !== heroName &&
+        isPreflopAggressiveAction(action),
+    );
+    const priorJam = priorActions.some(
+      (action) =>
+        String(action?.player || "").trim() !== heroName &&
+        normalizeActionType(action) === "jam",
+    );
+
+    const levelNumber = parseLevelNumber(hand?.level);
+    const baseEvent = {
+      handKey: handKey(hand),
+      handId: hand?.handId || "Unknown",
+      playedAt: hand?.playedAt || "Unknown",
+      level: Number.isFinite(levelNumber) ? levelNumber : null,
+      position,
+      handCode,
+      stackBb:
+        Number.isFinite(heroStackBb) && heroStackBb > 0
+          ? Number(heroStackBb.toFixed(1))
+          : null,
+      actualAction: firstType || "unknown",
+    };
+
+    if (!priorAggression) {
+      openSpots += 1;
+      const shouldOpenIcm = rangeContains(
+        ICM_TIGHT_OPEN_RANGE_MODEL,
+        position,
+        handCode,
+      );
+      const latePositions = new Set(["CO", "BTN", "SB"]);
+      const inLatePosition = latePositions.has(position);
+      const sbStack = getSeatStackByPosition(hand, "SB");
+      const bbStack = getSeatStackByPosition(hand, "BB");
+      const sbStackBb =
+        Number.isFinite(Number(sbStack)) && Number.isFinite(bigBlind) && bigBlind > 0
+          ? Number(sbStack) / bigBlind
+          : null;
+      const bbStackBb =
+        Number.isFinite(Number(bbStack)) && Number.isFinite(bigBlind) && bigBlind > 0
+          ? Number(bbStack) / bigBlind
+          : null;
+      const coversSb =
+        Number.isFinite(heroStack) && Number.isFinite(Number(sbStack))
+          ? heroStack >= Number(sbStack) * 1.2
+          : false;
+      const coversBb =
+        Number.isFinite(heroStack) && Number.isFinite(Number(bbStack))
+          ? heroStack >= Number(bbStack) * 1.2
+          : false;
+      const shortBlindPresent =
+        (Number.isFinite(sbStackBb) && sbStackBb <= 18) ||
+        (Number.isFinite(bbStackBb) && bbStackBb <= 18);
+      const pressureEligible =
+        inLatePosition &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb >= 10 &&
+        heroStackBb <= 35 &&
+        shortBlindPresent &&
+        (coversSb || coversBb);
+      if (pressureEligible) {
+        pressureEligibleSpots += 1;
+      }
+
+      if (
+        shouldOpenIcm &&
+        !didAggress &&
+        !pressureEligible &&
+        inLatePosition &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb >= 10 &&
+        heroStackBb <= 30
+      ) {
+        pushFlag({
+          ...baseEvent,
+          type: "missed_icm_pressure",
+          recommendation: "Open or jam more often in this late-position ICM pressure spot.",
+          reason:
+            "Late-position pressure spot was passed despite a chart-qualified open hand.",
+        });
+      }
+      if (shouldOpenIcm && !didAggress && pressureEligible) {
+        missedPressureSpots += 1;
+        pushFlag({
+          ...baseEvent,
+          type: "missed_stack_pressure",
+          recommendation:
+            "Apply more preflop pressure here: you cover at least one short blind from a late position.",
+          reason:
+            "Late-position stack leverage over short blinds was available but not used.",
+        });
+      }
+
+      if (
+        !shouldOpenIcm &&
+        didAggress &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb <= 18
+      ) {
+        pushFlag({
+          ...baseEvent,
+          type: "too_loose_icm_open",
+          recommendation: "Tighten opens/jams with short stacks at high levels.",
+          reason:
+            "Short-stack ICM proxy suggests this open/jam is too loose for late-stage pressure dynamics.",
+        });
+      }
+
+      if (
+        shouldOpenIcm &&
+        firstType === "call" &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb <= 12
+      ) {
+        pushFlag({
+          ...baseEvent,
+          type: "passive_short_stack_line",
+          recommendation: "Prefer jam-or-fold decisions over passive calls with short stacks.",
+          reason:
+            "Short-stack preflop line was passive in a spot that is usually jam/fold under ICM pressure.",
+        });
+      }
+      continue;
+    }
+
+    facingAggressionSpots += 1;
+    if (priorJam) facingJamSpots += 1;
+
+    const shouldDefendVsOpen = rangeContains(
+      PRE_FLOP_RANGE_MODEL.defendVsOpen,
+      position,
+      handCode,
+    );
+    if ((position === "SB" || position === "BB") && firstType === "fold") {
+      blindFoldEvents.push({
+        ...baseEvent,
+        type: "blind_fold_vs_open",
+        recommendation: shouldDefendVsOpen
+          ? "Likely continue candidate (call/3-bet mix) rather than fold."
+          : "Likely standard fold unless exploit suggests otherwise.",
+        chartShouldDefend: shouldDefendVsOpen,
+      });
+    }
+    if (
+      shouldDefendVsOpen &&
+      firstType === "fold" &&
+      Number.isFinite(heroStackBb) &&
+      heroStackBb >= 12 &&
+      heroStackBb <= 25 &&
+      (position === "BB" || position === "SB")
+    ) {
+      pushFlag({
+        ...baseEvent,
+        type: "too_tight_icm_defend",
+        recommendation:
+          "Defend slightly wider from blinds against opens when stack depth allows.",
+        reason:
+          "Blind defense folded a hand that is usually defendable at this stack depth.",
+      });
+    }
+
+    if (priorJam) {
+      const shouldContinueVsJam = rangeContains(
+        ICM_JAM_CALL_RANGE_MODEL,
+        position,
+        handCode,
+      );
+      if (
+        firstType !== "fold" &&
+        !shouldContinueVsJam &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb <= 24
+      ) {
+        pushFlag({
+          ...baseEvent,
+          type: "loose_jam_call_icm",
+          recommendation: "Tighten call-offs versus all-ins in high-level ICM spots.",
+          reason:
+            "All-in continue appears too loose for this late-stage stack depth.",
+        });
+      } else if (
+        firstType === "fold" &&
+        shouldContinueVsJam &&
+        Number.isFinite(heroStackBb) &&
+        heroStackBb <= 20
+      ) {
+        pushFlag({
+          ...baseEvent,
+          type: "too_tight_jam_fold_icm",
+          recommendation: "Continue more often versus jams with this hand class.",
+          reason:
+            "Folded a likely continue hand in a late-stage all-in confrontation.",
+        });
+      }
+    }
+  }
+
+  const typeSummary = Array.from(byType.entries()).sort((a, b) => b[1] - a[1]);
+  const topIssue = typeSummary[0]?.[0] || "";
+  const quickFixes = [];
+  if (topIssue === "missed_icm_pressure") {
+    quickFixes.push(
+      "Apply more late-position pressure with chart-qualified opens/jams between roughly 10-30 BB.",
+    );
+  }
+  if (topIssue === "missed_stack_pressure") {
+    quickFixes.push(
+      "When you cover short blinds from CO/BTN/SB, increase pressure frequency with your stronger opens.",
+    );
+  }
+  if (topIssue === "too_loose_icm_open" || topIssue === "loose_jam_call_icm") {
+    quickFixes.push(
+      "Tighten high-variance opens and call-offs at short to medium stacks in late levels.",
+    );
+  }
+  if (topIssue === "too_tight_icm_defend" || topIssue === "too_tight_jam_fold_icm") {
+    quickFixes.push(
+      "Avoid overfolding defend/call spots that remain profitable at current stack depths.",
+    );
+  }
+  if (quickFixes.length === 0) {
+    quickFixes.push(
+      "No dominant ICM-style leak in the current last-40 late-level sample.",
+    );
+  }
+
+  const avgStackBb =
+    stackBbSamples > 0 ? Number((stackBbTotal / stackBbSamples).toFixed(1)) : null;
+  const summary = summarizeAuditEvents(flaggedEvents);
+  const blindFoldSummary = summarizeAuditEvents(blindFoldEvents);
+  const blindFoldShouldDefendCount = blindFoldEvents.filter(
+    (row) => Boolean(row?.chartShouldDefend),
+  ).length;
+  const confidence = confidenceFromSample(levelFilteredHands.length);
+  const warnings = [
+    "This is a heuristic ICM proxy (no payout ladder or remaining-field payouts yet).",
+    "Use it to prioritize review spots; treat edge cases as medium/low confidence.",
+  ];
+
+  return {
+    recentLimit,
+    levelThreshold,
+    recentHandsSampled: sortedRecentHands.length,
+    lateLevelHands: levelFilteredHands.length,
+    openSpots,
+    facingAggressionSpots,
+    facingJamSpots,
+    pressureEligibleSpots,
+    missedPressureSpots,
+    unknownCardsSpots,
+    avgHeroStackBb: avgStackBb,
+    confidence,
+    issueCounts: Object.fromEntries(typeSummary),
+    blindFoldSpots: {
+      count: blindFoldEvents.length,
+      shouldDefendCount: blindFoldShouldDefendCount,
+      ...blindFoldSummary,
+    },
+    flagged: {
+      count: flaggedEvents.length,
+      ...summary,
+    },
+    quickFixes,
+    warnings,
   };
 }
 
@@ -1797,9 +2468,15 @@ export default function HandReviewPanel() {
   const [loadingReview, setLoadingReview] = useState(false);
   const [quickReviewHandKey, setQuickReviewHandKey] = useState("");
   const [loadingSummaryReview, setLoadingSummaryReview] = useState(false);
+  const [loadingBlindDefenseReview, setLoadingBlindDefenseReview] = useState(false);
+  const [loadingIcmReview, setLoadingIcmReview] = useState(false);
+  const [loadingTableHintReview, setLoadingTableHintReview] = useState(false);
   const [loadingTournamentSave, setLoadingTournamentSave] = useState(false);
   const [error, setError] = useState("");
   const [summaryReviewError, setSummaryReviewError] = useState("");
+  const [blindDefenseReviewError, setBlindDefenseReviewError] = useState("");
+  const [icmReviewError, setIcmReviewError] = useState("");
+  const [tableHintReviewError, setTableHintReviewError] = useState("");
   const [saveTournamentError, setSaveTournamentError] = useState("");
   const [saveTournamentSuccess, setSaveTournamentSuccess] = useState("");
   const [pendingTournamentSave, setPendingTournamentSave] = useState(null);
@@ -1815,6 +2492,9 @@ export default function HandReviewPanel() {
   const [parseResult, setParseResult] = useState(null);
   const [reviewsByHandKey, setReviewsByHandKey] = useState({});
   const [summaryReview, setSummaryReview] = useState(null);
+  const [blindDefenseReview, setBlindDefenseReview] = useState(null);
+  const [icmReview, setIcmReview] = useState(null);
+  const [tableHintReview, setTableHintReview] = useState(null);
   const [selectedHandKeys, setSelectedHandKeys] = useState(() => new Set());
   const [selectedAuditHandKey, setSelectedAuditHandKey] = useState("");
   const [pendingAuditScrollKey, setPendingAuditScrollKey] = useState("");
@@ -1856,6 +2536,18 @@ export default function HandReviewPanel() {
     }
     return map;
   }, [currentTableGuessPlayers]);
+  const latestParsedHand = useMemo(() => {
+    return parsedHands.reduce((best, hand) => {
+      if (!best) return hand;
+      const bestEpoch = Number(getHandPlayedAtEpoch(best)) || 0;
+      const handEpoch = Number(getHandPlayedAtEpoch(hand)) || 0;
+      return handEpoch > bestEpoch ? hand : best;
+    }, null);
+  }, [parsedHands]);
+  const currentHeroSeatLabel = useMemo(() => {
+    if (!latestParsedHand) return "Seat unknown";
+    return formatSeatNumber(latestParsedHand?.heroSeat);
+  }, [latestParsedHand]);
   const visibleOpponentPlayers = useMemo(() => {
     if (opponentFilter !== "current_table") return opponentPlayers;
     return opponentPlayers
@@ -2310,6 +3002,18 @@ export default function HandReviewPanel() {
     () => buildPreflopOpportunityAudit(parsedHands),
     [parsedHands],
   );
+  const blindDefenseAudit = useMemo(
+    () => buildBlindDefenseAudit(parsedHands),
+    [parsedHands],
+  );
+  const icmSpotAudit = useMemo(
+    () =>
+      buildIcmSpotAudit(parsedHands, {
+        recentLimit: 40,
+        levelThreshold: 25,
+      }),
+    [parsedHands],
+  );
   const postflopInPositionAudit = useMemo(
     () => buildPostflopInPositionAudit(parsedHands),
     [parsedHands],
@@ -2433,6 +3137,38 @@ export default function HandReviewPanel() {
     () => normalizeInsightLines(summaryReview?.warnings, 6),
     [summaryReview],
   );
+  const aiBlindDefenseActions = useMemo(
+    () => normalizeInsightLines(blindDefenseReview?.actions, 6),
+    [blindDefenseReview],
+  );
+  const aiBlindDefenseWarnings = useMemo(
+    () => normalizeInsightLines(blindDefenseReview?.warnings, 6),
+    [blindDefenseReview],
+  );
+  const aiIcmActions = useMemo(
+    () => normalizeInsightLines(icmReview?.actions, 6),
+    [icmReview],
+  );
+  const aiIcmWarnings = useMemo(
+    () => normalizeInsightLines(icmReview?.warnings, 6),
+    [icmReview],
+  );
+  const aiTableHintExploits = useMemo(
+    () => normalizeInsightLines(tableHintReview?.priority_exploits, 6),
+    [tableHintReview],
+  );
+  const aiTableHintAdjustments = useMemo(
+    () => normalizeInsightLines(tableHintReview?.next_hour_adjustments, 7),
+    [tableHintReview],
+  );
+  const aiTableHintWarnings = useMemo(
+    () =>
+      normalizeInsightLines(
+        [...(tableHintReview?.avoid_traps || []), ...(tableHintReview?.sample_warnings || [])],
+        7,
+      ),
+    [tableHintReview],
+  );
   const tournamentCoachSummary = useMemo(
     () => buildTournamentCoachSummary(tournamentSummary, postflopIpAuditDigest),
     [tournamentSummary, postflopIpAuditDigest],
@@ -2460,6 +3196,158 @@ export default function HandReviewPanel() {
       topStatuses: tournamentSummary.topStatuses,
     };
   }, [tournamentSummary, postflopIpAuditDigest, tournamentCoachSummary]);
+  const icmReviewPayload = useMemo(() => {
+    if (!icmSpotAudit || Number(icmSpotAudit?.lateLevelHands) <= 0) return null;
+    return {
+      ...icmSpotAudit,
+      flagged: {
+        count: Number(icmSpotAudit?.flagged?.count) || 0,
+        byPosition: Array.isArray(icmSpotAudit?.flagged?.byPosition)
+          ? icmSpotAudit.flagged.byPosition
+          : [],
+        topCombos: Array.isArray(icmSpotAudit?.flagged?.topCombos)
+          ? icmSpotAudit.flagged.topCombos
+          : [],
+        examples: Array.isArray(icmSpotAudit?.flagged?.examples)
+          ? icmSpotAudit.flagged.examples
+          : [],
+      },
+    };
+  }, [icmSpotAudit]);
+  const blindDefenseReviewPayload = useMemo(() => {
+    if (!blindDefenseAudit || Number(blindDefenseAudit.totalBlindDefenseSpots) <= 0) {
+      return null;
+    }
+    return {
+      ...blindDefenseAudit,
+      handClassRows: Array.isArray(blindDefenseAudit.handClassRows)
+        ? blindDefenseAudit.handClassRows
+        : [],
+      missedContinues: {
+        count: Number(blindDefenseAudit?.missedContinues?.count) || 0,
+        byPosition: Array.isArray(blindDefenseAudit?.missedContinues?.byPosition)
+          ? blindDefenseAudit.missedContinues.byPosition
+          : [],
+        topCombos: Array.isArray(blindDefenseAudit?.missedContinues?.topCombos)
+          ? blindDefenseAudit.missedContinues.topCombos
+          : [],
+        examples: Array.isArray(blindDefenseAudit?.missedContinues?.examples)
+          ? blindDefenseAudit.missedContinues.examples
+          : [],
+      },
+      missedSb3BetPressure: {
+        count: Number(blindDefenseAudit?.missedSb3BetPressure?.count) || 0,
+        topCombos: Array.isArray(blindDefenseAudit?.missedSb3BetPressure?.topCombos)
+          ? blindDefenseAudit.missedSb3BetPressure.topCombos
+          : [],
+        examples: Array.isArray(blindDefenseAudit?.missedSb3BetPressure?.examples)
+          ? blindDefenseAudit.missedSb3BetPressure.examples
+          : [],
+      },
+      blindFolds: {
+        count: Number(blindDefenseAudit?.blindFolds?.count) || 0,
+        shouldDefendCount: Number(blindDefenseAudit?.blindFolds?.shouldDefendCount) || 0,
+      },
+    };
+  }, [blindDefenseAudit]);
+  const hasCurrentTableSelection =
+    opponentFilter === "current_table" && visibleOpponentPlayers.length > 0;
+  const recentCurrentTableHands = useMemo(() => {
+    if (!hasCurrentTableSelection || currentTablePlayerSet.size === 0) return [];
+    return [...parsedHands]
+      .filter((hand) => {
+        const seats = Array.isArray(hand?.seats) ? hand.seats : [];
+        return seats.some((seat) => {
+          const player = String(seat?.player || "").trim();
+          return player && currentTablePlayerSet.has(player);
+        });
+      })
+      .sort(
+        (a, b) => (Number(getHandPlayedAtEpoch(b)) || 0) - (Number(getHandPlayedAtEpoch(a)) || 0),
+      )
+      .slice(0, 40)
+      .map((hand) => {
+        const tableId = String(hand?.table?.id || "").trim() || null;
+        const seatCount = Array.isArray(hand?.seats) ? hand.seats.length : 0;
+        const opponentsInHand = (Array.isArray(hand?.seats) ? hand.seats : [])
+          .map((seat) => String(seat?.player || "").trim())
+          .filter(
+            (player) =>
+              player &&
+              player !== String(hand?.heroName || "").trim() &&
+              currentTablePlayerSet.has(player),
+          );
+        return {
+          handId: String(hand?.handId || "").trim() || null,
+          playedAt: String(hand?.playedAt || "").trim() || null,
+          tableId,
+          seatCount,
+          heroPosition: String(hand?.heroPosition || "").trim() || null,
+          heroOutcome: {
+            code: String(hand?.heroOutcome?.code || "").trim() || null,
+            label: String(hand?.heroOutcome?.label || "").trim() || null,
+          },
+          opponentsInHand,
+        };
+      });
+  }, [
+    hasCurrentTableSelection,
+    currentTablePlayerSet,
+    parsedHands,
+  ]);
+  const tableHintPayload = useMemo(() => {
+    if (!hasCurrentTableSelection) return null;
+    const tablePlayers = visibleOpponentPlayers.map((player) => {
+      const playerId = String(player?.player || "").trim() || null;
+      const seatLabelRaw = formatLatestSeat(player?.latestSeat);
+      const seatLabel =
+        seatLabelRaw && seatLabelRaw !== "Seat unknown" ? seatLabelRaw : null;
+      return {
+        player: playerId,
+        seatLabel,
+        handsSeen: Number(player?.handsSeen) || 0,
+        latestSeat: player?.latestSeat || null,
+        latestStack: Number.isFinite(Number(player?.latestStack))
+          ? Number(player.latestStack)
+          : null,
+        enteredPot: player?.enteredPot || null,
+        foldedPreflop: player?.foldedPreflop || null,
+        preflopRaise: player?.preflopRaise || null,
+        foldToPreflopRaise: player?.foldToPreflopRaise || null,
+        postflopAggression: player?.postflopAggression || null,
+        tags: Array.isArray(player?.tags)
+          ? player.tags
+              .map((tag) => String(tag?.label || tag?.code || "").trim())
+              .filter(Boolean)
+          : [],
+        playNote: player?.playNote || null,
+        lastSeenAt: String(player?.lastSeenAt || "").trim() || null,
+      };
+    });
+
+    return {
+      tableContext: {
+        tableId: String(currentTableGuess?.tableId || "").trim() || null,
+        maxPlayers: Number.isFinite(Number(currentTableGuess?.maxPlayers))
+          ? Number(currentTableGuess.maxPlayers)
+          : null,
+        playedAt: String(currentTableGuess?.playedAt || "").trim() || null,
+        activeOpponents: tablePlayers.length,
+        players: Array.isArray(currentTableGuess?.players)
+          ? currentTableGuess.players
+          : [],
+        recentHands: recentCurrentTableHands,
+      },
+      opponents: tablePlayers,
+      sessionSummary: tournamentSummaryPayload || undefined,
+    };
+  }, [
+    hasCurrentTableSelection,
+    visibleOpponentPlayers,
+    currentTableGuess,
+    recentCurrentTableHands,
+    tournamentSummaryPayload,
+  ]);
 
   const parsePayload = useMemo(
     () => ({
@@ -2501,6 +3389,41 @@ export default function HandReviewPanel() {
       setInsightsTab("opponents");
     }
   }, [insightsTab, hasTournamentSummary, hasHandAudit, hasOpponentSnapshot]);
+
+  useEffect(() => {
+    if (opponentFilter === "current_table" && visibleOpponentPlayers.length > 0) {
+      return;
+    }
+    if (tableHintReview || tableHintReviewError) {
+      setTableHintReview(null);
+      setTableHintReviewError("");
+    }
+  }, [
+    opponentFilter,
+    visibleOpponentPlayers.length,
+    tableHintReview,
+    tableHintReviewError,
+  ]);
+
+  useEffect(() => {
+    if (Number(icmSpotAudit?.lateLevelHands) > 0) return;
+    if (icmReview || icmReviewError) {
+      setIcmReview(null);
+      setIcmReviewError("");
+    }
+  }, [icmSpotAudit?.lateLevelHands, icmReview, icmReviewError]);
+
+  useEffect(() => {
+    if (Number(blindDefenseAudit?.totalBlindDefenseSpots) > 0) return;
+    if (blindDefenseReview || blindDefenseReviewError) {
+      setBlindDefenseReview(null);
+      setBlindDefenseReviewError("");
+    }
+  }, [
+    blindDefenseAudit?.totalBlindDefenseSpots,
+    blindDefenseReview,
+    blindDefenseReviewError,
+  ]);
 
   useEffect(() => {
     if (!selectedAuditHandKey) return;
@@ -2622,6 +3545,12 @@ export default function HandReviewPanel() {
     setReviewsByHandKey({});
     setSummaryReview(null);
     setSummaryReviewError("");
+    setBlindDefenseReview(null);
+    setBlindDefenseReviewError("");
+    setIcmReview(null);
+    setIcmReviewError("");
+    setTableHintReview(null);
+    setTableHintReviewError("");
     setOutcomeFilter("all");
     setTimeFilter("all_time");
     setSelectedHandKeys(new Set());
@@ -2645,6 +3574,12 @@ export default function HandReviewPanel() {
     setReviewsByHandKey({});
     setSummaryReview(null);
     setSummaryReviewError("");
+    setBlindDefenseReview(null);
+    setBlindDefenseReviewError("");
+    setIcmReview(null);
+    setIcmReviewError("");
+    setTableHintReview(null);
+    setTableHintReviewError("");
     try {
       const res = await requestHandHistoryParse(parsePayload);
       setParseResult(res);
@@ -2809,6 +3744,12 @@ export default function HandReviewPanel() {
       setSaveTournamentSuccess("");
       setSummaryReview(null);
       setSummaryReviewError("");
+      setBlindDefenseReview(null);
+      setBlindDefenseReviewError("");
+      setIcmReview(null);
+      setIcmReviewError("");
+      setTableHintReview(null);
+      setTableHintReviewError("");
       setReviewsByHandKey({});
       setSelectedHandKeys(new Set());
       setOutcomeFilter("all");
@@ -2949,6 +3890,73 @@ export default function HandReviewPanel() {
     }
   };
 
+  const runBlindDefenseReview = async () => {
+    if (!blindDefenseReviewPayload) {
+      setBlindDefenseReviewError(
+        "Need blind defense spots first before requesting AI review.",
+      );
+      return;
+    }
+    setBlindDefenseReviewError("");
+    setLoadingBlindDefenseReview(true);
+    try {
+      const res = await requestBlindDefenseReview({
+        blindDefenseSummary: blindDefenseReviewPayload,
+      });
+      setBlindDefenseReview(res?.review || null);
+    } catch (err) {
+      setBlindDefenseReviewError(
+        err?.message || "Failed to review blind defense spots with AI.",
+      );
+    } finally {
+      setLoadingBlindDefenseReview(false);
+    }
+  };
+
+  const runIcmReview = async () => {
+    if (!icmReviewPayload) {
+      setIcmReviewError(
+        "Need late-stage hands first (Level 25+) before requesting ICM review.",
+      );
+      return;
+    }
+    setIcmReviewError("");
+    setLoadingIcmReview(true);
+    try {
+      const res = await requestIcmSpotReview({
+        icmSummary: icmReviewPayload,
+      });
+      setIcmReview(res?.review || null);
+    } catch (err) {
+      setIcmReviewError(
+        err?.message || "Failed to review ICM spots with AI.",
+      );
+    } finally {
+      setLoadingIcmReview(false);
+    }
+  };
+
+  const runTableHintReview = async () => {
+    if (!tableHintPayload || !hasCurrentTableSelection) {
+      setTableHintReviewError(
+        "Select Current table with visible opponents before requesting this hint.",
+      );
+      return;
+    }
+    setTableHintReviewError("");
+    setLoadingTableHintReview(true);
+    try {
+      const res = await requestTableHintReview(tableHintPayload);
+      setTableHintReview(res?.review || null);
+    } catch (err) {
+      setTableHintReviewError(
+        err?.message || "Failed to generate current table hint with AI.",
+      );
+    } finally {
+      setLoadingTableHintReview(false);
+    }
+  };
+
   const toggleHandSelection = (hand) => {
     const key = handKey(hand);
     setSelectedHandKeys((previous) => {
@@ -3062,6 +4070,12 @@ export default function HandReviewPanel() {
                   setReviewsByHandKey({});
                   setSummaryReview(null);
                   setSummaryReviewError("");
+                  setBlindDefenseReview(null);
+                  setBlindDefenseReviewError("");
+                  setIcmReview(null);
+                  setIcmReviewError("");
+                  setTableHintReview(null);
+                  setTableHintReviewError("");
                   setOutcomeFilter("all");
                   setTimeFilter("all_time");
                   setSelectedHandKeys(new Set());
@@ -4015,6 +5029,351 @@ export default function HandReviewPanel() {
                 </details>
 
                 <details className="summary-section">
+                  <summary>Blind Defence (Full Tournament)</summary>
+                  <p className="hand-review-empty">
+                    Blind-focused audit for SB/BB versus opens across the full
+                    parsed tournament sample.
+                  </p>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Blind defense spots: {blindDefenseAudit.totalBlindDefenseSpots}
+                    </span>
+                    <span>SB spots: {blindDefenseAudit.sbDefenseSpots}</span>
+                    <span>BB spots: {blindDefenseAudit.bbDefenseSpots}</span>
+                    <span>
+                      Likely continue spots: {blindDefenseAudit.likelyContinueSpots}
+                    </span>
+                    <span>
+                      Missed likely continues: {blindDefenseAudit.missedContinues.count}
+                    </span>
+                    <span>
+                      Missed SB 3-bet pressure:{" "}
+                      {blindDefenseAudit.missedSb3BetPressure.count}
+                    </span>
+                    <span>
+                      Confidence: {confidenceLabel(blindDefenseAudit.confidence)}
+                    </span>
+                  </div>
+                  {blindDefenseAudit.handClassRows.length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Missed-continue hand classes:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {blindDefenseAudit.handClassRows.map((row) => (
+                          <span key={`blind-class-${row.label}`}>
+                            {row.label}: {row.count}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                  {blindDefenseAudit.missedContinues.topCombos.length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Likely continue combos you folded:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {blindDefenseAudit.missedContinues.topCombos
+                          .slice(0, 8)
+                          .map((row) => (
+                            <button
+                              type="button"
+                              key={`blind-missed-continue-${row.position}-${row.handCode}`}
+                              className={`audit-chip-button ${
+                                selectedAuditHandKey &&
+                                row.sampleHandKey &&
+                                selectedAuditHandKey === row.sampleHandKey
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => openAuditHand(row)}
+                              disabled={!hasAuditReference(row)}
+                            >
+                              {row.handCode} ({row.position}) x{row.count}
+                            </button>
+                          ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No repeated blind-continue misses flagged.
+                    </p>
+                  )}
+                  <div className="tournament-summary-flags">
+                    {blindDefenseAudit.quickFixes.map((line, idx) => (
+                      <p
+                        key={`blind-fix-${idx}`}
+                        className={`trend-flag ${
+                          line.startsWith("No dominant") ? "good" : "watch"
+                        }`}
+                      >
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="tournament-summary-flags">
+                    {blindDefenseAudit.warnings.map((line, idx) => (
+                      <p key={`blind-warning-${idx}`} className="trend-flag watch">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="tournament-ai-review">
+                    <button
+                      type="button"
+                      onClick={runBlindDefenseReview}
+                      disabled={loadingBlindDefenseReview || !blindDefenseReviewPayload}
+                    >
+                      {loadingBlindDefenseReview
+                        ? "Reviewing blind defense..."
+                        : "AI Review Blind Defence"}
+                    </button>
+                    {blindDefenseReviewError ? (
+                      <p className="hand-review-error">{blindDefenseReviewError}</p>
+                    ) : null}
+                    {blindDefenseReview ? (
+                      <div className="tournament-ai-review-card">
+                        <p className="tournament-ai-paragraph">
+                          {buildAiSummaryParagraph(blindDefenseReview)}
+                        </p>
+                        {aiBlindDefenseActions.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Priority fixes:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiBlindDefenseActions.slice(0, 4).map((line, idx) => (
+                                <p key={`ai-blind-action-${idx}`} className="trend-flag good">
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                        {aiBlindDefenseWarnings.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Watch-outs:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiBlindDefenseWarnings.slice(0, 4).map((line, idx) => (
+                                <p key={`ai-blind-warning-${idx}`} className="trend-flag watch">
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </details>
+
+                <details className="summary-section">
+                  <summary>ICM Spots (Last 40 Hands, Level 25+)</summary>
+                  <p className="hand-review-empty">
+                    Heuristic late-stage ICM proxy focused on preflop pressure,
+                    defend, and all-in continue spots.
+                  </p>
+                  <div className="tournament-summary-metrics">
+                    <span>
+                      Recent hands sampled: {icmSpotAudit.recentHandsSampled}/
+                      {icmSpotAudit.recentLimit}
+                    </span>
+                    <span>
+                      Late-level hands (L{icmSpotAudit.levelThreshold}+):{" "}
+                      {icmSpotAudit.lateLevelHands}
+                    </span>
+                    <span>Flagged spots: {icmSpotAudit.flagged.count}</span>
+                    <span>
+                      Confidence: {confidenceLabel(icmSpotAudit.confidence)}
+                    </span>
+                    <span>
+                      Avg hero stack:{" "}
+                      {icmSpotAudit.avgHeroStackBb !== null
+                        ? `${icmSpotAudit.avgHeroStackBb} BB`
+                        : "n/a"}
+                    </span>
+                    <span>
+                      Unknown hole cards skipped: {icmSpotAudit.unknownCardsSpots}
+                    </span>
+                  </div>
+                  <div className="tournament-summary-metrics">
+                    <span>Open spots: {icmSpotAudit.openSpots}</span>
+                    <span>
+                      Facing aggression spots: {icmSpotAudit.facingAggressionSpots}
+                    </span>
+                    <span>
+                      Facing jam spots: {icmSpotAudit.facingJamSpots}
+                    </span>
+                    <span>
+                      Pressure-eligible spots: {icmSpotAudit.pressureEligibleSpots}
+                    </span>
+                    <span>
+                      Missed stack-pressure spots: {icmSpotAudit.missedPressureSpots}
+                    </span>
+                    <span>
+                      SB/BB fold spots captured: {icmSpotAudit.blindFoldSpots.count}
+                    </span>
+                    <span>
+                      SB/BB folds that were likely continues:{" "}
+                      {icmSpotAudit.blindFoldSpots.shouldDefendCount}
+                    </span>
+                  </div>
+                  {Object.entries(icmSpotAudit.issueCounts || {}).length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Top issue buckets:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {Object.entries(icmSpotAudit.issueCounts || {})
+                          .slice(0, 5)
+                          .map(([type, count]) => (
+                            <span key={`icm-issue-${type}`}>
+                              {type.replace(/_/g, " ")}: {count}
+                            </span>
+                          ))}
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="tournament-summary-flags">
+                    {icmSpotAudit.quickFixes.map((line, idx) => (
+                      <p
+                        key={`icm-fix-${idx}`}
+                        className={`trend-flag ${
+                          line.startsWith("No dominant") ? "good" : "watch"
+                        }`}
+                      >
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="tournament-summary-flags">
+                    {icmSpotAudit.warnings.map((line, idx) => (
+                      <p key={`icm-warning-${idx}`} className="trend-flag watch">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="tournament-ai-review">
+                    <button
+                      type="button"
+                      onClick={runIcmReview}
+                      disabled={loadingIcmReview || !icmReviewPayload}
+                    >
+                      {loadingIcmReview
+                        ? "Reviewing ICM spots..."
+                        : "AI Review ICM Spots"}
+                    </button>
+                    {icmReviewError ? (
+                      <p className="hand-review-error">{icmReviewError}</p>
+                    ) : null}
+                    {icmReview ? (
+                      <div className="tournament-ai-review-card">
+                        <p className="tournament-ai-paragraph">
+                          {buildAiSummaryParagraph(icmReview)}
+                        </p>
+                        {aiIcmActions.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Priority fixes:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiIcmActions.slice(0, 4).map((line, idx) => (
+                                <p key={`ai-icm-action-${idx}`} className="trend-flag good">
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                        {aiIcmWarnings.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Watch-outs:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiIcmWarnings.slice(0, 4).map((line, idx) => (
+                                <p key={`ai-icm-warning-${idx}`} className="trend-flag watch">
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  {icmSpotAudit.blindFoldSpots.examples.length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Sample SB/BB fold spots:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {icmSpotAudit.blindFoldSpots.examples.map((event) => (
+                          <button
+                            type="button"
+                            key={`icm-blind-fold-${event.handId}-${event.playedAt}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              event.handKey &&
+                              selectedAuditHandKey === event.handKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(event)}
+                            disabled={!hasAuditReference(event)}
+                          >
+                            {event.handId}: L{event.level || "?"} {event.position}{" "}
+                            {event.handCode}{" "}
+                            {event.stackBb !== null ? `(${event.stackBb}bb)` : ""}{" "}
+                            fold -{" "}
+                            {event.chartShouldDefend
+                              ? "likely continue"
+                              : "likely standard fold"}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                  {icmSpotAudit.flagged.examples.length > 0 ? (
+                    <>
+                      <p>
+                        <strong>Example flagged ICM spots:</strong>
+                      </p>
+                      <div className="tournament-summary-statuses">
+                        {icmSpotAudit.flagged.examples.map((event) => (
+                          <button
+                            type="button"
+                            key={`icm-spot-${event.handId}-${event.playedAt}-${event.type}`}
+                            className={`audit-chip-button ${
+                              selectedAuditHandKey &&
+                              event.handKey &&
+                              selectedAuditHandKey === event.handKey
+                                ? "active"
+                                : ""
+                            }`}
+                            onClick={() => openAuditHand(event)}
+                            disabled={!hasAuditReference(event)}
+                          >
+                            {event.handId}: L{event.level || "?"} {event.position}{" "}
+                            {event.handCode}{" "}
+                            {event.stackBb !== null ? `(${event.stackBb}bb)` : ""}{" "}
+                            {event.actualAction} - {event.recommendation}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="hand-review-empty">
+                      No concrete ICM-style spots flagged in the current last-40
+                      late-level sample.
+                    </p>
+                  )}
+                </details>
+
+                <details className="summary-section">
                   <summary>Postflop In Position Audit (MVP)</summary>
                   <p className="hand-review-empty">
                     Scope: heads-up flop/turn/river spots where hero acts in
@@ -4372,7 +5731,96 @@ export default function HandReviewPanel() {
                       : ""}
                     .
                   </p>
+                  {opponentFilter === "current_table" ? (
+                    <p className="opponent-snapshot-note">
+                      Hero seat: {currentHeroSeatLabel}.
+                    </p>
+                  ) : null}
                 </div>
+                {opponentFilter === "current_table" ? (
+                  <div className="opponent-table-ai-review">
+                    <button
+                      type="button"
+                      className={`opponent-ai-hint-button ${
+                        loadingTableHintReview ? "loading" : ""
+                      }`}
+                      onClick={runTableHintReview}
+                      disabled={loadingTableHintReview || !tableHintPayload}
+                      title="AI hint for current table"
+                      aria-label="AI hint for current table"
+                    >
+                      <span aria-hidden="true">
+                        {loadingTableHintReview ? "..." : "⚡"}
+                      </span>
+                      <span>
+                        {loadingTableHintReview
+                          ? "Reviewing table..."
+                          : "AI Table Hint"}
+                      </span>
+                    </button>
+                    {tableHintReviewError ? (
+                      <p className="hand-review-error">{tableHintReviewError}</p>
+                    ) : null}
+                    {tableHintReview ? (
+                      <div className="tournament-ai-review-card">
+                        <p className="tournament-ai-paragraph">
+                          {buildTableHintParagraph(tableHintReview)}
+                        </p>
+                        {aiTableHintExploits.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Priority exploits:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiTableHintExploits.slice(0, 4).map((line, idx) => (
+                                <p
+                                  key={`ai-table-exploit-${idx}`}
+                                  className="trend-flag good"
+                                >
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                        {aiTableHintAdjustments.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Next hour adjustments:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiTableHintAdjustments.slice(0, 5).map((line, idx) => (
+                                <p
+                                  key={`ai-table-adjustment-${idx}`}
+                                  className="trend-flag good"
+                                >
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                        {aiTableHintWarnings.length > 0 ? (
+                          <>
+                            <p>
+                              <strong>Watch-outs:</strong>
+                            </p>
+                            <div className="tournament-summary-flags">
+                              {aiTableHintWarnings.slice(0, 4).map((line, idx) => (
+                                <p
+                                  key={`ai-table-warning-${idx}`}
+                                  className="trend-flag watch"
+                                >
+                                  {ensureSentenceEnding(line)}
+                                </p>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="opponent-snapshot-list">
                   {visibleOpponentPlayers.map((player) => {
                     const tendencyLabels = extractTendencyLabels(player);
@@ -4383,9 +5831,9 @@ export default function HandReviewPanel() {
                         className="opponent-snapshot-row"
                       >
                         <div className="opponent-snapshot-row-head">
-                          <strong>{player.player}</strong>
+                          <strong>{formatLatestSeat(player.latestSeat)}</strong>
+                          <span>{player.player}</span>
                           <span>{player.handsSeen} hands</span>
-                          <span>{formatLatestSeat(player.latestSeat)}</span>
                           <span>{formatChipStack(player.latestStack)}</span>
                           {player.lastSeenAt ? (
                             <span>Last: {player.lastSeenAt}</span>
