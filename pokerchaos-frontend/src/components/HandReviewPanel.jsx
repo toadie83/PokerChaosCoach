@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  requestBillingCheckoutSession,
+  requestBillingPortalSession,
+  requestBillingStatus,
   requestBlindDefenseReview,
   requestDeleteSavedTournament,
   requestHandHistoryParse,
@@ -2455,6 +2458,35 @@ function hasAuditReference(event) {
   return Boolean(handId || playedAt);
 }
 
+function getErrorCode(error) {
+  if (!error) return "";
+  const direct = String(error?.code || "").trim();
+  if (direct) return direct;
+  const payloadCode = String(error?.payload?.code || "").trim();
+  if (payloadCode) return payloadCode;
+  return "";
+}
+
+function isUpgradeRequiredError(error) {
+  const code = getErrorCode(error);
+  return (
+    code === "AI_TRIAL_TOKENS_EXHAUSTED" ||
+    code === "AI_TRIAL_TOKENS_INSUFFICIENT" ||
+    code === "AI_MONTHLY_TOKEN_LIMIT_REACHED"
+  );
+}
+
+function publishTrialTokenUpdate(remainingTokens) {
+  if (typeof window === "undefined") return;
+  const numeric = Number(remainingTokens);
+  if (!Number.isFinite(numeric) || numeric < 0) return;
+  window.dispatchEvent(
+    new CustomEvent("pcc:trial-tokens-updated", {
+      detail: { remainingTokens: numeric },
+    }),
+  );
+}
+
 export default function HandReviewPanel() {
   const [heroName, setHeroName] = useState("Hero");
   const [historyText, setHistoryText] = useState("");
@@ -2485,12 +2517,22 @@ export default function HandReviewPanel() {
   const [loadingSavedTournaments, setLoadingSavedTournaments] = useState(false);
   const [savedTournaments, setSavedTournaments] = useState([]);
   const [savedTournamentError, setSavedTournamentError] = useState("");
+  const [billingStatus, setBillingStatus] = useState(null);
+  const [billingStatusError, setBillingStatusError] = useState("");
+  const [loadingBillingStatus, setLoadingBillingStatus] = useState(false);
+  const [billingActionLoading, setBillingActionLoading] = useState("");
+  const [billingActionError, setBillingActionError] = useState("");
+  const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
+  const [aiAccessErrorCode, setAiAccessErrorCode] = useState("");
   const [selectedSavedTournamentId, setSelectedSavedTournamentId] =
     useState("");
   const [loadingSavedTournamentId, setLoadingSavedTournamentId] = useState("");
   const [deletingSavedTournamentId, setDeletingSavedTournamentId] = useState("");
   const [parseResult, setParseResult] = useState(null);
   const [reviewsByHandKey, setReviewsByHandKey] = useState({});
+  const [expandedReviewLogicKeys, setExpandedReviewLogicKeys] = useState(
+    () => new Set(),
+  );
   const [summaryReview, setSummaryReview] = useState(null);
   const [blindDefenseReview, setBlindDefenseReview] = useState(null);
   const [icmReview, setIcmReview] = useState(null);
@@ -2506,6 +2548,85 @@ export default function HandReviewPanel() {
   const handRowRefs = useRef(new Map());
 
   const canSubmit = historyText.trim().length > 0;
+  const hasActiveSubscription = Boolean(
+    billingStatus?.subscription?.status &&
+      String(billingStatus.subscription.status).toLowerCase() === "active",
+  );
+  const trialRemainingTokens = Number(
+    billingStatus?.trial?.remainingTokens || 0,
+  );
+  const aiUpgradePromptMessage = useMemo(() => {
+    if (aiAccessErrorCode === "AI_MONTHLY_TOKEN_LIMIT_REACHED") {
+      return hasActiveSubscription
+        ? "Your monthly AI token limit is reached. Manage your plan to continue."
+        : "Your current AI limit is reached. Upgrade to continue AI reviews.";
+    }
+    if (aiAccessErrorCode === "AI_TRIAL_TOKENS_INSUFFICIENT") {
+      return "This request is larger than your remaining trial credits. Upgrade to continue.";
+    }
+    if (aiAccessErrorCode === "AI_TRIAL_TOKENS_EXHAUSTED") {
+      return "Your free AI trial credits are used. Upgrade to continue AI reviews.";
+    }
+    return "AI access is limited for this account. Upgrade or manage your plan to continue.";
+  }, [aiAccessErrorCode, hasActiveSubscription]);
+
+  const loadBillingStatus = async () => {
+    setLoadingBillingStatus(true);
+    setBillingStatusError("");
+    try {
+      const status = await requestBillingStatus();
+      setBillingStatus(status || null);
+    } catch (error) {
+      setBillingStatusError(
+        error?.message || "Failed to load billing subscription status.",
+      );
+    } finally {
+      setLoadingBillingStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBillingStatus();
+  }, []);
+
+  const openUpgradeCheckout = async () => {
+    if (billingActionLoading) return;
+    setBillingActionError("");
+    setBillingActionLoading("checkout");
+    try {
+      const session = await requestBillingCheckoutSession({});
+      const url = String(session?.url || "").trim();
+      if (!url) {
+        throw new Error("Checkout URL was not returned by the server.");
+      }
+      window.location.assign(url);
+    } catch (error) {
+      setBillingActionError(error?.message || "Failed to start checkout.");
+    } finally {
+      setBillingActionLoading("");
+    }
+  };
+
+  const openBillingPortal = async () => {
+    if (billingActionLoading) return;
+    setBillingActionError("");
+    setBillingActionLoading("portal");
+    try {
+      const session = await requestBillingPortalSession({});
+      const url = String(session?.url || "").trim();
+      if (!url) {
+        throw new Error("Portal URL was not returned by the server.");
+      }
+      window.location.assign(url);
+    } catch (error) {
+      setBillingActionError(
+        error?.message || "Failed to open billing subscription portal.",
+      );
+    } finally {
+      setBillingActionLoading("");
+    }
+  };
+
   const parsedHands = Array.isArray(parseResult?.hands)
     ? parseResult.hands
     : [];
@@ -3543,6 +3664,7 @@ export default function HandReviewPanel() {
     setSaveTournamentSuccess("");
     setParseResult(null);
     setReviewsByHandKey({});
+    setExpandedReviewLogicKeys(new Set());
     setSummaryReview(null);
     setSummaryReviewError("");
     setBlindDefenseReview(null);
@@ -3572,6 +3694,7 @@ export default function HandReviewPanel() {
     setLoadingParse(true);
     setQuickReviewHandKey("");
     setReviewsByHandKey({});
+    setExpandedReviewLogicKeys(new Set());
     setSummaryReview(null);
     setSummaryReviewError("");
     setBlindDefenseReview(null);
@@ -3751,6 +3874,7 @@ export default function HandReviewPanel() {
       setTableHintReview(null);
       setTableHintReviewError("");
       setReviewsByHandKey({});
+      setExpandedReviewLogicKeys(new Set());
       setSelectedHandKeys(new Set());
       setOutcomeFilter("all");
       setTimeFilter("all_time");
@@ -3810,6 +3934,8 @@ export default function HandReviewPanel() {
       return;
     }
     setError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setLoadingReview(true);
     try {
       const reviewPayload = {
@@ -3819,6 +3945,7 @@ export default function HandReviewPanel() {
         reviewPayload.opponentSnapshot = opponentSnapshot;
       }
       const res = await requestHandHistoryReview(reviewPayload);
+      publishTrialTokenUpdate(res?.summary?.monthlyUsage?.trialRemainingTokens);
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
@@ -3829,7 +3956,14 @@ export default function HandReviewPanel() {
         }
         return next;
       });
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setError(err?.message || "Failed to review hands.");
     } finally {
       setLoadingReview(false);
@@ -3841,6 +3975,8 @@ export default function HandReviewPanel() {
     const singleKey = handKey(hand);
     if (!singleKey) return;
     setError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setQuickReviewHandKey(singleKey);
     try {
       const reviewPayload = {
@@ -3850,6 +3986,7 @@ export default function HandReviewPanel() {
         reviewPayload.opponentSnapshot = opponentSnapshot;
       }
       const res = await requestHandHistoryReview(reviewPayload);
+      publishTrialTokenUpdate(res?.summary?.monthlyUsage?.trialRemainingTokens);
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
@@ -3860,7 +3997,14 @@ export default function HandReviewPanel() {
         }
         return next;
       });
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setError(err?.message || "Failed to review hand.");
     } finally {
       setQuickReviewHandKey("");
@@ -3875,13 +4019,23 @@ export default function HandReviewPanel() {
       return;
     }
     setSummaryReviewError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setLoadingSummaryReview(true);
     try {
       const res = await requestTournamentSummaryReview({
         summary: tournamentSummaryPayload,
       });
+      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
       setSummaryReview(res?.review || null);
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setSummaryReviewError(
         err?.message || "Failed to review tournament summary with AI.",
       );
@@ -3898,13 +4052,23 @@ export default function HandReviewPanel() {
       return;
     }
     setBlindDefenseReviewError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setLoadingBlindDefenseReview(true);
     try {
       const res = await requestBlindDefenseReview({
         blindDefenseSummary: blindDefenseReviewPayload,
       });
+      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
       setBlindDefenseReview(res?.review || null);
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setBlindDefenseReviewError(
         err?.message || "Failed to review blind defense spots with AI.",
       );
@@ -3921,13 +4085,23 @@ export default function HandReviewPanel() {
       return;
     }
     setIcmReviewError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setLoadingIcmReview(true);
     try {
       const res = await requestIcmSpotReview({
         icmSummary: icmReviewPayload,
       });
+      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
       setIcmReview(res?.review || null);
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setIcmReviewError(
         err?.message || "Failed to review ICM spots with AI.",
       );
@@ -3944,11 +4118,21 @@ export default function HandReviewPanel() {
       return;
     }
     setTableHintReviewError("");
+    setShowUpgradePrompt(false);
+    setAiAccessErrorCode("");
     setLoadingTableHintReview(true);
     try {
       const res = await requestTableHintReview(tableHintPayload);
+      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
       setTableHintReview(res?.review || null);
+      setShowUpgradePrompt(false);
+      setAiAccessErrorCode("");
     } catch (err) {
+      if (isUpgradeRequiredError(err)) {
+        setShowUpgradePrompt(true);
+        setAiAccessErrorCode(getErrorCode(err));
+        loadBillingStatus();
+      }
       setTableHintReviewError(
         err?.message || "Failed to generate current table hint with AI.",
       );
@@ -3975,6 +4159,16 @@ export default function HandReviewPanel() {
 
   const clearSelection = () => {
     setSelectedHandKeys(new Set());
+  };
+
+  const toggleReviewLogic = (rowKey) => {
+    if (!rowKey) return;
+    setExpandedReviewLogicKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
+      return next;
+    });
   };
 
   return (
@@ -4068,6 +4262,7 @@ export default function HandReviewPanel() {
                   setSaveTournamentSuccess("");
                   setPendingTournamentSave(null);
                   setReviewsByHandKey({});
+                  setExpandedReviewLogicKeys(new Set());
                   setSummaryReview(null);
                   setSummaryReviewError("");
                   setBlindDefenseReview(null);
@@ -4131,6 +4326,45 @@ export default function HandReviewPanel() {
         )}
 
         {error ? <p className="hand-review-error">{error}</p> : null}
+        {showUpgradePrompt ? (
+          <div className="ai-upgrade-prompt">
+            <p>{aiUpgradePromptMessage}</p>
+            <div className="ai-upgrade-prompt-actions">
+              <button
+                type="button"
+                onClick={
+                  hasActiveSubscription ? openBillingPortal : openUpgradeCheckout
+                }
+                disabled={Boolean(billingActionLoading)}
+              >
+                {billingActionLoading === "checkout"
+                  ? "Opening checkout..."
+                  : billingActionLoading === "portal"
+                    ? "Opening portal..."
+                    : hasActiveSubscription
+                      ? "Manage plan"
+                      : "Upgrade AI"}
+              </button>
+              {loadingBillingStatus ? (
+                <span className="ai-upgrade-prompt-meta">Checking billing…</span>
+              ) : null}
+              {!hasActiveSubscription ? (
+                <span className="ai-upgrade-prompt-meta">
+                  Trial tokens left:{" "}
+                  {Number.isFinite(trialRemainingTokens)
+                    ? trialRemainingTokens.toLocaleString()
+                    : "0"}
+                </span>
+              ) : null}
+            </div>
+            {billingActionError ? (
+              <p className="hand-review-error">{billingActionError}</p>
+            ) : null}
+            {billingStatusError ? (
+              <p className="hand-review-error">{billingStatusError}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         {parseResult?.summary ? (
           <div className="hand-review-summary">
@@ -4214,6 +4448,7 @@ export default function HandReviewPanel() {
               const isAuditTarget = selectedAuditHandKey === rowKey;
               const isQuickReviewLoading = quickReviewHandKey === rowKey;
               const attachedReview = reviewsByHandKey[rowKey];
+              const isReviewLogicExpanded = expandedReviewLogicKeys.has(rowKey);
               return (
                 <article
                   key={rowKey}
@@ -4297,12 +4532,41 @@ export default function HandReviewPanel() {
                         </span>
                       </div>
                       <p>
-                        <strong>Leak:</strong> {attachedReview.primary_leak}
+                        <strong>Summary:</strong> {attachedReview.primary_leak}
                       </p>
                       <p>
                         <strong>Better line:</strong>{" "}
                         {attachedReview.better_line}
                       </p>
+                      {(attachedReview.what_was_good || attachedReview.reasoning) && (
+                        <div className="hand-review-logic">
+                          <button
+                            type="button"
+                            className="hand-review-logic-toggle"
+                            onClick={() => toggleReviewLogic(rowKey)}
+                          >
+                            {isReviewLogicExpanded
+                              ? "Hide full logic"
+                              : "Reveal full logic"}
+                          </button>
+                          {isReviewLogicExpanded ? (
+                            <div className="hand-review-logic-body">
+                              {attachedReview.what_was_good ? (
+                                <p>
+                                  <strong>What was good:</strong>{" "}
+                                  {attachedReview.what_was_good}
+                                </p>
+                              ) : null}
+                              {attachedReview.reasoning ? (
+                                <p>
+                                  <strong>Reasoning:</strong>{" "}
+                                  {attachedReview.reasoning}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                   <details className="hand-breakdown">

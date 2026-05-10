@@ -10,12 +10,19 @@ import {
 } from "@clerk/react";
 import App from "./App.jsx";
 import ReviewApp from "./ReviewApp.jsx";
-import { requestEntitlements } from "./api/aiService.js";
+import AboutModal from "./components/AboutModal.jsx";
+import {
+  requestBillingCheckoutSession,
+  requestBillingPortalSession,
+  requestEntitlements,
+} from "./api/aiService.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
 import "./styles.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = "/review";
+const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
+const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SECTION_CONFIG = [
   {
     path: "/review",
@@ -31,7 +38,7 @@ const SECTION_CONFIG = [
     feature: "coach",
     component: App,
     lockedText:
-      "Coach access is private. Add this user to COACH_ALLOWED_USER_IDS to unlock it.",
+      "Coach allows users to run hand simulations and receive AI powered strategic insights. Coach access is currently disabled for all accounts as we are finalizing the feature. Please stay tuned for updates and release announcements.",
   },
 ];
 const ROUTE_LOOKUP = new Map(SECTION_CONFIG.map((item) => [item.path, item]));
@@ -45,7 +52,7 @@ function normalizeRoutePath(pathname) {
 
 function useAppRoute() {
   const [routePath, setRoutePath] = useState(() =>
-    normalizeRoutePath(window.location.pathname)
+    normalizeRoutePath(window.location.pathname),
   );
 
   useEffect(() => {
@@ -70,7 +77,7 @@ function useAppRoute() {
       else window.history.pushState({}, "", normalized);
       setRoutePath(normalized);
     },
-    [routePath]
+    [routePath],
   );
 
   return { routePath, navigate };
@@ -83,7 +90,11 @@ function EntitlementGateCard({ title, detail, actionLabel, onAction }) {
         <h1 className="title">{title}</h1>
         <p className="sub">{detail}</p>
         {actionLabel && onAction ? (
-          <button type="button" className="feature-gate-button" onClick={onAction}>
+          <button
+            type="button"
+            className="feature-gate-button"
+            onClick={onAction}
+          >
             {actionLabel}
           </button>
         ) : null}
@@ -92,7 +103,55 @@ function EntitlementGateCard({ title, detail, actionLabel, onAction }) {
   );
 }
 
-function AppFooter() {
+function hasSeenAboutModal() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage?.getItem(ABOUT_SEEN_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markAboutModalSeen() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage?.setItem(ABOUT_SEEN_STORAGE_KEY, "1");
+  } catch {}
+}
+
+function TrialInfoModal({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal trial-info-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h2 className="modal-title">About Trial AI Tokens</h2>
+          <button type="button" className="link-btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="modal-body">
+          <p>
+            New users receive <strong>100,000 trial AI tokens</strong>, which is
+            approximately <strong>20 AI reviews</strong> based on typical usage.
+          </p>
+          <p>
+            After trial credits are used, AI features move to a paid plan to
+            support API costs and server maintenance.
+          </p>
+          <p>All non-AI features remain free forever.</p>
+          <p>Thank You for trying out the PlaybackPoker service!</p>
+          <p>-- Trev</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppFooter({ onOpenAbout }) {
   return (
     <footer className="app-footer">
       <div className="app-footer-inner">
@@ -103,6 +162,13 @@ function AppFooter() {
             discretion. Hand-history input is not saved for model training.
           </p>
         </details>
+        <button
+          type="button"
+          className="app-footer-link app-footer-button"
+          onClick={onOpenAbout}
+        >
+          About
+        </button>
         <a className="app-footer-link" href="mailto:qacopilotdev@gmail.com">
           Contact me
         </a>
@@ -114,6 +180,8 @@ function AppFooter() {
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
   const [theme, setTheme] = useState(() => {
     try {
       const saved = window.localStorage?.getItem("pcc_theme");
@@ -125,6 +193,9 @@ function SignedInShell() {
   const [entitlements, setEntitlements] = useState(null);
   const [entitlementsStatus, setEntitlementsStatus] = useState("loading"); // loading | ready | error
   const [entitlementsError, setEntitlementsError] = useState("");
+  const [billingActionStatus, setBillingActionStatus] = useState("");
+  const [billingActionLoading, setBillingActionLoading] = useState("");
+  const [trialInfoOpen, setTrialInfoOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -136,11 +207,78 @@ function SignedInShell() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn) {
       setAuthTokenFetcher(null);
+      setAboutPromptChecked(false);
+      setAboutOpen(false);
       return;
     }
     setAuthTokenFetcher(() => getToken());
     return () => setAuthTokenFetcher(null);
   }, [getToken, isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || aboutPromptChecked) return;
+    setAboutPromptChecked(true);
+    if (!hasSeenAboutModal()) {
+      setAboutOpen(true);
+    }
+  }, [aboutPromptChecked, isLoaded, isSignedIn]);
+
+  const handleCloseAbout = useCallback(() => {
+    markAboutModalSeen();
+    setAboutOpen(false);
+  }, []);
+
+  const handleOpenAbout = useCallback(() => {
+    setAboutOpen(true);
+  }, []);
+
+  const handleOpenTrialInfo = useCallback(() => {
+    setTrialInfoOpen(true);
+  }, []);
+
+  const handleCloseTrialInfo = useCallback(() => {
+    setTrialInfoOpen(false);
+  }, []);
+
+  const openBillingCheckout = useCallback(async () => {
+    if (billingActionLoading) return;
+    setBillingActionStatus("");
+    setBillingActionLoading("checkout");
+    try {
+      const session = await requestBillingCheckoutSession({});
+      const url = String(session?.url || "").trim();
+      if (!url) {
+        throw new Error("Checkout URL was not returned by the server.");
+      }
+      window.location.assign(url);
+    } catch (error) {
+      setBillingActionStatus(
+        error?.message || "Failed to start upgrade checkout.",
+      );
+    } finally {
+      setBillingActionLoading("");
+    }
+  }, [billingActionLoading]);
+
+  const openBillingPortal = useCallback(async () => {
+    if (billingActionLoading) return;
+    setBillingActionStatus("");
+    setBillingActionLoading("portal");
+    try {
+      const session = await requestBillingPortalSession({});
+      const url = String(session?.url || "").trim();
+      if (!url) {
+        throw new Error("Billing portal URL was not returned by the server.");
+      }
+      window.location.assign(url);
+    } catch (error) {
+      setBillingActionStatus(
+        error?.message || "Failed to open subscription portal.",
+      );
+    } finally {
+      setBillingActionLoading("");
+    }
+  }, [billingActionLoading]);
 
   const loadEntitlements = useCallback(async () => {
     if (!isLoaded || !isSignedIn) return;
@@ -160,16 +298,53 @@ function SignedInShell() {
     loadEntitlements();
   }, [loadEntitlements]);
 
+  useEffect(() => {
+    const handleTrialTokenUpdate = (event) => {
+      const nextRemaining = Number(event?.detail?.remainingTokens);
+      if (!Number.isFinite(nextRemaining) || nextRemaining < 0) return;
+      setEntitlements((previous) => {
+        if (!previous || typeof previous !== "object") return previous;
+        const billing = previous.billing || {};
+        const trial = billing.trial || {};
+        return {
+          ...previous,
+          billing: {
+            ...billing,
+            trial: {
+              ...trial,
+              remainingTokens: nextRemaining,
+            },
+          },
+        };
+      });
+    };
+    window.addEventListener(TRIAL_TOKENS_UPDATED_EVENT, handleTrialTokenUpdate);
+    return () => {
+      window.removeEventListener(
+        TRIAL_TOKENS_UPDATED_EVENT,
+        handleTrialTokenUpdate,
+      );
+    };
+  }, []);
+
   const currentSection = ROUTE_LOOKUP.get(routePath) || SECTION_CONFIG[0];
   const enabledSections = useMemo(
     () =>
       SECTION_CONFIG.filter((section) =>
-        Boolean(entitlements?.features?.[section.feature])
+        Boolean(entitlements?.features?.[section.feature]),
       ),
-    [entitlements]
+    [entitlements],
   );
   const firstEnabledPath = enabledSections[0]?.path || DEFAULT_ROUTE;
-  const canAccessCurrent = Boolean(entitlements?.features?.[currentSection.feature]);
+  const canAccessCurrent = Boolean(
+    entitlements?.features?.[currentSection.feature],
+  );
+  const hasActiveSubscription = Boolean(
+    entitlements?.billing?.hasActiveSubscription,
+  );
+  const trialRemainingTokens = Number(
+    entitlements?.billing?.trial?.remainingTokens || 0,
+  );
   const SectionComponent = currentSection.component;
 
   if (!isLoaded) return null;
@@ -195,10 +370,46 @@ function SignedInShell() {
           })}
         </div>
         <div className="auth-bar-actions">
+          {entitlementsStatus === "ready" && !hasActiveSubscription ? (
+            <button
+              type="button"
+              className="top-nav-link"
+              onClick={handleOpenTrialInfo}
+              title="About trial AI credits"
+            >
+              Trial:{" "}
+              {Number.isFinite(trialRemainingTokens)
+                ? trialRemainingTokens.toLocaleString()
+                : "0"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="top-nav-link"
-            onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))}
+            onClick={
+              hasActiveSubscription ? openBillingPortal : openBillingCheckout
+            }
+            disabled={Boolean(billingActionLoading)}
+            title={
+              hasActiveSubscription
+                ? "Manage your PlaybackPoker subscription"
+                : "Upgrade to unlock ongoing AI reviews"
+            }
+          >
+            {billingActionLoading === "checkout"
+              ? "Opening checkout..."
+              : billingActionLoading === "portal"
+                ? "Opening portal..."
+                : hasActiveSubscription
+                  ? "Manage plan"
+                  : "Upgrade AI"}
+          </button>
+          <button
+            type="button"
+            className="top-nav-link"
+            onClick={() =>
+              setTheme((value) => (value === "dark" ? "light" : "dark"))
+            }
             aria-label={
               theme === "dark"
                 ? "Switch to light mode"
@@ -210,6 +421,11 @@ function SignedInShell() {
           <UserButton />
         </div>
       </div>
+      {entitlementsStatus === "ready" && billingActionStatus ? (
+        <div className="auth-bar-meta">
+          <span>{billingActionStatus}</span>
+        </div>
+      ) : null}
 
       <ServerWakeGate>
         {entitlementsStatus === "loading" ? (
@@ -228,13 +444,17 @@ function SignedInShell() {
           />
         ) : null}
 
-        {entitlementsStatus === "ready" && canAccessCurrent ? <SectionComponent /> : null}
+        {entitlementsStatus === "ready" && canAccessCurrent ? (
+          <SectionComponent />
+        ) : null}
 
         {entitlementsStatus === "ready" && !canAccessCurrent ? (
           <EntitlementGateCard
             title={`${currentSection.label} Is Locked`}
             detail={currentSection.lockedText}
-            actionLabel={firstEnabledPath === routePath ? "" : "Open Enabled Section"}
+            actionLabel={
+              firstEnabledPath === routePath ? "" : "Open Enabled Section"
+            }
             onAction={
               firstEnabledPath === routePath
                 ? undefined
@@ -243,7 +463,9 @@ function SignedInShell() {
           />
         ) : null}
       </ServerWakeGate>
-      <AppFooter />
+      <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
+      <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
+      <AppFooter onOpenAbout={handleOpenAbout} />
     </>
   );
 }
@@ -277,7 +499,9 @@ function ServerWakeGate({ children }) {
               <p className="wake-title">
                 {status === "waking" ? "Server waking up" : "Checking server"}
               </p>
-              <p className="wake-sub">Please wait - connecting to backend services.</p>
+              <p className="wake-sub">
+                Please wait - connecting to backend services.
+              </p>
             </div>
           </div>
         </div>
@@ -304,7 +528,7 @@ function Shell() {
       </Show>
       <Show when="signed-out">
         <div className="auth-gate">
-          <h1>Poker Chaos Coach</h1>
+          <h1>Playback Poker</h1>
           <p>Sign in to access Hand Review and Coach.</p>
           <div className="auth-actions">
             <SignInButton mode="modal">
@@ -323,5 +547,5 @@ function Shell() {
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <Shell />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

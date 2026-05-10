@@ -988,6 +988,8 @@ export default function App() {
               <h1 className="title">Chaos Coach</h1>
             </div>
             <div className="panel-heading-actions">
+              {/* 
+              # removed for now - may bring back as a separate guided mode in the future
               <button
                 type="button"
                 className={`pill-toggle ${playHandOpen ? "active" : ""}`}
@@ -995,7 +997,7 @@ export default function App() {
                 title="Start a guided play hand session"
               >
                 Play Hand
-              </button>
+              </button> */}
               <button
                 type="button"
                 className={`pill-toggle ${compactMode ? "active" : ""}`}

@@ -19,11 +19,20 @@ import {
   sortHands,
 } from "./handHistoryService.js";
 import {
+  consumeAiTrialTokens,
   deleteTournamentUpload,
+  ensureAiTrialCredits,
+  getMonthlyAiUsage,
   getTournamentUpload,
+  getBillingCustomerByUserId,
+  getUserBillingAiAccess,
+  getUserIdByStripeCustomerId,
   initDatabase,
   isDatabaseConfigured,
   listTournamentUploads,
+  recordAiUsageEvent,
+  upsertBillingCustomer,
+  upsertBillingSubscription,
   upsertTournamentUpload,
 } from "./db.js";
 
@@ -38,6 +47,11 @@ const allowedOrigins = FRONTEND_ORIGIN.length > 0 ? FRONTEND_ORIGIN : undefined;
 if (!process.env.OPENAI_API_KEY) {
   console.warn("[pokerchaos-backend] OPENAI_API_KEY is not set.");
 }
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.warn(
+    "[pokerchaos-backend] STRIPE_SECRET_KEY is not set. Billing routes will be disabled."
+  );
+}
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 const clerkIssuer = process.env.CLERK_ISSUER;
@@ -50,9 +64,87 @@ const reviewAiAllowAll = String(process.env.REVIEW_AI_ALLOW_ALL || "false")
 const coachAllowAll = String(process.env.COACH_ALLOW_ALL || "false")
   .trim()
   .toLowerCase() === "true";
+const reviewAiModel = String(process.env.REVIEW_AI_MODEL || "gpt-4.1-mini")
+  .trim()
+  .toLowerCase();
+const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+const stripePriceId = String(process.env.STRIPE_PRICE_ID || "").trim();
+const stripeSuccessUrl = String(process.env.STRIPE_SUCCESS_URL || "").trim();
+const stripeCancelUrl = String(process.env.STRIPE_CANCEL_URL || "").trim();
+const stripePortalReturnUrl = String(process.env.STRIPE_PORTAL_RETURN_URL || "").trim();
+const enableAiTrial = String(process.env.AI_ENABLE_TRIAL || "true")
+  .trim()
+  .toLowerCase() !== "false";
+const aiTrialTokenGrantRaw = Number(process.env.AI_TRIAL_TOKEN_GRANT);
+const aiTrialTokenGrant =
+  Number.isFinite(aiTrialTokenGrantRaw) && aiTrialTokenGrantRaw > 0
+    ? Math.floor(aiTrialTokenGrantRaw)
+    : 100_000;
+const aiMonthlyTokenCapRaw = Number(process.env.AI_MONTHLY_TOKEN_CAP);
+const aiMonthlyTokenCap =
+  Number.isFinite(aiMonthlyTokenCapRaw) && aiMonthlyTokenCapRaw > 0
+    ? Math.floor(aiMonthlyTokenCapRaw)
+    : 2_000_000;
+const GPT_41_MINI_INPUT_COST_PER_TOKEN = 0.4 / 1_000_000;
+const GPT_41_MINI_OUTPUT_COST_PER_TOKEN = 1.6 / 1_000_000;
+const aiEstimatedHandReviewTokensPerHandRaw = Number(
+  process.env.AI_ESTIMATED_HAND_REVIEW_TOKENS_PER_HAND
+);
+const aiEstimatedSummaryTokensRaw = Number(process.env.AI_ESTIMATED_SUMMARY_TOKENS);
+const aiEstimatedIcmTokensRaw = Number(process.env.AI_ESTIMATED_ICM_TOKENS);
+const aiEstimatedBlindDefenseTokensRaw = Number(
+  process.env.AI_ESTIMATED_BLIND_DEFENSE_TOKENS
+);
+const aiEstimatedTableHintTokensRaw = Number(
+  process.env.AI_ESTIMATED_TABLE_HINT_TOKENS
+);
+const aiEstimatedHandReviewTokensPerHand =
+  Number.isFinite(aiEstimatedHandReviewTokensPerHandRaw) &&
+  aiEstimatedHandReviewTokensPerHandRaw > 0
+    ? Math.floor(aiEstimatedHandReviewTokensPerHandRaw)
+    : 5_000;
+const aiEstimatedSummaryTokens =
+  Number.isFinite(aiEstimatedSummaryTokensRaw) && aiEstimatedSummaryTokensRaw > 0
+    ? Math.floor(aiEstimatedSummaryTokensRaw)
+    : 2_500;
+const aiEstimatedIcmTokens =
+  Number.isFinite(aiEstimatedIcmTokensRaw) && aiEstimatedIcmTokensRaw > 0
+    ? Math.floor(aiEstimatedIcmTokensRaw)
+    : 2_500;
+const aiEstimatedBlindDefenseTokens =
+  Number.isFinite(aiEstimatedBlindDefenseTokensRaw) &&
+  aiEstimatedBlindDefenseTokensRaw > 0
+    ? Math.floor(aiEstimatedBlindDefenseTokensRaw)
+    : 2_500;
+const aiEstimatedTableHintTokens =
+  Number.isFinite(aiEstimatedTableHintTokensRaw) &&
+  aiEstimatedTableHintTokensRaw > 0
+    ? Math.floor(aiEstimatedTableHintTokensRaw)
+    : 10_000;
 const clerkClient = clerkSecretKey
   ? createClerkClient({ secretKey: clerkSecretKey })
   : null;
+
+let stripeClientPromise = null;
+async function getStripeClient() {
+  if (!stripeSecretKey) return null;
+  if (!stripeClientPromise) {
+    stripeClientPromise = import("stripe")
+      .then((mod) => {
+        const StripeCtor = mod?.default;
+        if (!StripeCtor) {
+          throw new Error("Stripe SDK default export not found.");
+        }
+        return new StripeCtor(stripeSecretKey);
+      })
+      .catch((error) => {
+        stripeClientPromise = null;
+        throw error;
+      });
+  }
+  return stripeClientPromise;
+}
 
 const app = express();
 
@@ -62,6 +154,51 @@ app.use(
     credentials: false,
   })
 );
+
+app.post(
+  "/billing/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const stripe = await getStripeClient().catch((error) => {
+      console.error("[pokerchaos-backend] Stripe client load failed", error);
+      return null;
+    });
+    if (!stripe) {
+      return res.status(503).json({
+        error: "Stripe is not configured.",
+      });
+    }
+
+    let event = null;
+    try {
+      const signature = req.headers["stripe-signature"];
+      if (stripeWebhookSecret && signature) {
+        event = stripe.webhooks.constructEvent(
+          req.body,
+          signature,
+          stripeWebhookSecret
+        );
+      } else {
+        const textBody = Buffer.isBuffer(req.body)
+          ? req.body.toString("utf8")
+          : String(req.body || "");
+        event = JSON.parse(textBody || "{}");
+      }
+    } catch (error) {
+      console.error("[pokerchaos-backend] Stripe webhook signature error", error);
+      return res.status(400).json({ error: "Invalid webhook signature." });
+    }
+
+    try {
+      await handleStripeWebhookEvent(event, stripe);
+      return res.json({ received: true });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Stripe webhook handling error", error);
+      return res.status(500).json({ error: "Webhook handling failed." });
+    }
+  }
+);
+
 app.use(express.json({ limit: "8mb" }));
 
 app.get("/healthz", (_req, res) => {
@@ -162,6 +299,167 @@ function buildEntitlements(userId, userEmails = []) {
   };
 }
 
+async function resolveBillingAiAccessForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid || !isDatabaseConfigured()) {
+    return {
+      subscription: null,
+      hasActiveSubscription: false,
+      subscriptionStatus: null,
+      trial: {
+        userId: uid,
+        grantedTokens: 0,
+        usedTokens: 0,
+        remainingTokens: 0,
+        grantedAt: null,
+        updatedAt: null,
+      },
+      reviewAiGranted: false,
+    };
+  }
+
+  if (enableAiTrial && aiTrialTokenGrant > 0) {
+    try {
+      await ensureAiTrialCredits(uid, aiTrialTokenGrant);
+    } catch (error) {
+      console.error("[pokerchaos-backend] Failed to ensure AI trial credits", error);
+    }
+  }
+
+  return getUserBillingAiAccess(uid);
+}
+
+function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
+  const base = baseEntitlements || {};
+  const billing = billingAiAccess || {};
+  return {
+    ...base,
+    reviewAi: Boolean(base.reviewAi || billing.reviewAiGranted),
+    billing: {
+      hasActiveSubscription: Boolean(billing.hasActiveSubscription),
+      subscriptionStatus: billing.subscriptionStatus || null,
+      subscription: billing.subscription || null,
+      trial: billing.trial || null,
+    },
+  };
+}
+
+function extractSubscriptionPriceId(subscription) {
+  const priceId =
+    subscription?.items?.data?.[0]?.price?.id ||
+    subscription?.plan?.id ||
+    null;
+  return typeof priceId === "string" && priceId.trim() ? priceId.trim() : null;
+}
+
+async function syncSubscriptionFromStripeObject(
+  stripeSubscription,
+  explicitUserId = null
+) {
+  const subscriptionId = String(stripeSubscription?.id || "").trim();
+  const stripeCustomerId = String(stripeSubscription?.customer || "").trim();
+  if (!subscriptionId || !stripeCustomerId) return null;
+
+  const status = String(stripeSubscription?.status || "unknown")
+    .trim()
+    .toLowerCase();
+  const candidateUserId =
+    String(
+      explicitUserId ||
+        stripeSubscription?.metadata?.userId ||
+        stripeSubscription?.metadata?.user_id ||
+        ""
+    ).trim() || null;
+  const mappedUserId = await getUserIdByStripeCustomerId(stripeCustomerId);
+  const userId = candidateUserId || mappedUserId;
+  if (!userId) {
+    console.warn(
+      "[pokerchaos-backend] Could not map Stripe subscription to user",
+      subscriptionId
+    );
+    return null;
+  }
+  if (!mappedUserId) {
+    await upsertBillingCustomer({
+      userId,
+      stripeCustomerId,
+      email: null,
+    });
+  }
+
+  await upsertBillingSubscription({
+    userId,
+    stripeSubscriptionId: subscriptionId,
+    stripeCustomerId,
+    status,
+    priceId: extractSubscriptionPriceId(stripeSubscription),
+    currentPeriodStartEpoch:
+      Number.isFinite(Number(stripeSubscription?.current_period_start))
+        ? Number(stripeSubscription.current_period_start)
+        : null,
+    currentPeriodEndEpoch:
+      Number.isFinite(Number(stripeSubscription?.current_period_end))
+        ? Number(stripeSubscription.current_period_end)
+        : null,
+    cancelAtPeriodEnd: Boolean(stripeSubscription?.cancel_at_period_end),
+    canceledAtEpoch:
+      Number.isFinite(Number(stripeSubscription?.canceled_at))
+        ? Number(stripeSubscription.canceled_at)
+        : null,
+    raw: stripeSubscription || {},
+  });
+  return userId;
+}
+
+async function handleStripeWebhookEvent(event, stripe) {
+  const type = String(event?.type || "").trim();
+  const object = event?.data?.object || null;
+  if (!type || !object) return;
+
+  if (type === "checkout.session.completed") {
+    const customerId = String(object?.customer || "").trim();
+    const userId = String(
+      object?.client_reference_id ||
+        object?.metadata?.userId ||
+        object?.metadata?.user_id ||
+        ""
+    ).trim();
+    const email = String(object?.customer_details?.email || "").trim() || null;
+    if (userId && customerId) {
+      await upsertBillingCustomer({
+        userId,
+        stripeCustomerId: customerId,
+        email,
+      });
+      if (enableAiTrial && aiTrialTokenGrant > 0) {
+        await ensureAiTrialCredits(userId, aiTrialTokenGrant);
+      }
+    }
+
+    if (object?.subscription) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(object.subscription);
+        await syncSubscriptionFromStripeObject(sub, userId || null);
+      } catch (error) {
+        console.error(
+          "[pokerchaos-backend] Failed to retrieve subscription after checkout completion",
+          error
+        );
+      }
+    }
+    return;
+  }
+
+  if (
+    type === "customer.subscription.created" ||
+    type === "customer.subscription.updated" ||
+    type === "customer.subscription.deleted"
+  ) {
+    await syncSubscriptionFromStripeObject(object, null);
+    return;
+  }
+}
+
 async function requireAuth(req, res, next) {
   if (!clerkSecretKey) {
     return res
@@ -194,7 +492,13 @@ async function requireAuth(req, res, next) {
       }
     }
     req.auth = { userId };
-    req.entitlements = buildEntitlements(userId, userEmails);
+    const baseEntitlements = buildEntitlements(userId, userEmails);
+    const billingAiAccess = await resolveBillingAiAccessForUser(userId);
+    req.entitlements = mergeEntitlementsWithBilling(
+      baseEntitlements,
+      billingAiAccess
+    );
+    req.aiAccess = billingAiAccess;
     return next();
   } catch (error) {
     console.warn("[pokerchaos-backend] Auth failed", error);
@@ -269,6 +573,15 @@ const tournamentUploadSchema = z.object({
 
 const tournamentIdParamSchema = z.object({
   tournamentId: z.string().trim().min(1).max(80),
+});
+
+const checkoutSessionSchema = z.object({
+  successUrl: z.string().trim().url().optional(),
+  cancelUrl: z.string().trim().url().optional(),
+});
+
+const portalSessionSchema = z.object({
+  returnUrl: z.string().trim().url().optional(),
 });
 
 function sanitizeHandForStreetFairness(hand) {
@@ -495,6 +808,7 @@ function attachOpponentContextToHand(hand, opponentLookup) {
 }
 
 app.get("/me/entitlements", requireAuth, (req, res) => {
+  const trial = req.entitlements?.billing?.trial;
   return res.json({
     userId: req.auth?.userId || null,
     emails: Array.isArray(req.entitlements?.emails) ? req.entitlements.emails : [],
@@ -504,7 +818,256 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
       coach: Boolean(req.entitlements?.coach),
       admin: Boolean(req.entitlements?.admin),
     },
+    billing: {
+      hasActiveSubscription: Boolean(
+        req.entitlements?.billing?.hasActiveSubscription
+      ),
+      subscriptionStatus: req.entitlements?.billing?.subscriptionStatus || null,
+      trial: trial
+        ? {
+            grantedTokens: toNonNegativeInt(trial.grantedTokens),
+            usedTokens: toNonNegativeInt(trial.usedTokens),
+            remainingTokens: toNonNegativeInt(trial.remainingTokens),
+          }
+        : null,
+    },
   });
+});
+
+app.get("/me/ai-usage", requireAuth, async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error:
+        "Database is required for AI usage tracking. Configure DATABASE_URL and restart backend.",
+    });
+  }
+  try {
+    const userId = req.auth?.userId || "";
+    const [usage, aiAccess] = await Promise.all([
+      getMonthlyAiUsage(userId, new Date()),
+      resolveBillingAiAccessForUser(userId),
+    ]);
+    const usedTokens = toNonNegativeInt(usage.totalTokens);
+    return res.json({
+      periodMonth: usage.periodMonth,
+      limitTokens: aiMonthlyTokenCap,
+      usedTokens,
+      remainingTokens: Math.max(0, aiMonthlyTokenCap - usedTokens),
+      usedCostUsd: usage.totalCostUsd,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      inputCostUsd: usage.inputCostUsd,
+      outputCostUsd: usage.outputCostUsd,
+      model: reviewAiModel,
+      billing: {
+        hasActiveSubscription: Boolean(aiAccess.hasActiveSubscription),
+        subscriptionStatus: aiAccess.subscriptionStatus || null,
+        trialRemainingTokens: toNonNegativeInt(aiAccess?.trial?.remainingTokens),
+      },
+      pricing: {
+        inputPer1MUsd: 0.4,
+        outputPer1MUsd: 1.6,
+      },
+    });
+  } catch (error) {
+    console.error("[pokerchaos-backend] AI usage read error", error);
+    return res.status(500).json({
+      error: "Failed to read AI usage for this account.",
+    });
+  }
+});
+
+app.get("/me/billing", requireAuth, async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error:
+        "Database is required for billing data. Configure DATABASE_URL and restart backend.",
+    });
+  }
+  try {
+    const userId = req.auth?.userId || "";
+    const customer = await getBillingCustomerByUserId(userId);
+    const access = await resolveBillingAiAccessForUser(userId);
+    return res.json({
+      stripeConfigured: Boolean(stripeSecretKey && stripePriceId),
+      customer: customer
+        ? {
+            stripeCustomerId: customer.stripeCustomerId,
+            email: customer.email,
+          }
+        : null,
+      subscription: access.subscription
+        ? {
+            status: access.subscription.status,
+            priceId: access.subscription.priceId,
+            currentPeriodEnd: access.subscription.currentPeriodEnd,
+            cancelAtPeriodEnd: access.subscription.cancelAtPeriodEnd,
+          }
+        : null,
+      trial: access.trial
+        ? {
+            grantedTokens: toNonNegativeInt(access.trial.grantedTokens),
+            usedTokens: toNonNegativeInt(access.trial.usedTokens),
+            remainingTokens: toNonNegativeInt(access.trial.remainingTokens),
+          }
+        : null,
+      reviewAiGranted: Boolean(access.reviewAiGranted),
+    });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Billing status read error", error);
+    return res.status(500).json({ error: "Failed to load billing status." });
+  }
+});
+
+app.post("/billing/checkout-session", requireAuth, async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error:
+        "Database is required for billing. Configure DATABASE_URL and restart backend.",
+    });
+  }
+  if (!stripePriceId) {
+    return res.status(500).json({
+      error: "STRIPE_PRICE_ID is not configured.",
+    });
+  }
+
+  const parsed = checkoutSessionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid request body",
+      details: parsed.error.flatten(),
+    });
+  }
+
+  const successUrl = parsed.data.successUrl || stripeSuccessUrl;
+  const cancelUrl = parsed.data.cancelUrl || stripeCancelUrl;
+  if (!successUrl || !cancelUrl) {
+    return res.status(500).json({
+      error:
+        "Stripe checkout URLs are not configured. Set STRIPE_SUCCESS_URL and STRIPE_CANCEL_URL.",
+    });
+  }
+
+  const stripe = await getStripeClient().catch((error) => {
+    console.error("[pokerchaos-backend] Stripe client load failed", error);
+    return null;
+  });
+  if (!stripe) {
+    return res.status(503).json({ error: "Stripe is not configured." });
+  }
+
+  try {
+    const userId = req.auth?.userId || "";
+    const access = await resolveBillingAiAccessForUser(userId);
+    if (access.hasActiveSubscription) {
+      return res.status(409).json({
+        error: "An active subscription already exists for this account.",
+        code: "SUBSCRIPTION_ALREADY_ACTIVE",
+      });
+    }
+
+    const existingCustomer = await getBillingCustomerByUserId(userId);
+    let stripeCustomerId = existingCustomer?.stripeCustomerId || null;
+    if (!stripeCustomerId) {
+      const email = Array.isArray(req.entitlements?.emails)
+        ? req.entitlements.emails[0] || undefined
+        : undefined;
+      const customer = await stripe.customers.create({
+        email,
+        metadata: { userId },
+      });
+      stripeCustomerId = String(customer?.id || "").trim() || null;
+      if (!stripeCustomerId) {
+        throw new Error("Stripe customer creation did not return an ID.");
+      }
+      await upsertBillingCustomer({
+        userId,
+        stripeCustomerId,
+        email: email || null,
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: stripeCustomerId,
+      client_reference_id: userId,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      line_items: [{ price: stripePriceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      metadata: { userId },
+      subscription_data: {
+        metadata: { userId },
+      },
+    });
+
+    return res.json({
+      sessionId: session.id,
+      url: session.url,
+    });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Stripe checkout session error", error);
+    return res.status(502).json({
+      error: "Failed to create Stripe checkout session.",
+    });
+  }
+});
+
+app.post("/billing/portal-session", requireAuth, async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error:
+        "Database is required for billing. Configure DATABASE_URL and restart backend.",
+    });
+  }
+
+  const parsed = portalSessionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid request body",
+      details: parsed.error.flatten(),
+    });
+  }
+
+  const stripe = await getStripeClient().catch((error) => {
+    console.error("[pokerchaos-backend] Stripe client load failed", error);
+    return null;
+  });
+  if (!stripe) {
+    return res.status(503).json({ error: "Stripe is not configured." });
+  }
+
+  const returnUrl =
+    parsed.data.returnUrl || stripePortalReturnUrl || stripeCancelUrl || stripeSuccessUrl;
+  if (!returnUrl) {
+    return res.status(500).json({
+      error:
+        "Stripe portal return URL is not configured. Set STRIPE_PORTAL_RETURN_URL.",
+    });
+  }
+
+  try {
+    const userId = req.auth?.userId || "";
+    const customer = await getBillingCustomerByUserId(userId);
+    if (!customer?.stripeCustomerId) {
+      return res.status(404).json({
+        error: "No Stripe customer found for this account yet.",
+      });
+    }
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customer.stripeCustomerId,
+      return_url: returnUrl,
+    });
+    return res.json({
+      url: session.url,
+    });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Stripe portal session error", error);
+    return res.status(502).json({
+      error: "Failed to create Stripe portal session.",
+    });
+  }
 });
 
 function requireReviewAi(req, res, next) {
@@ -513,6 +1076,157 @@ function requireReviewAi(req, res, next) {
     error: "AI help currently disabled for this user.",
     requiredFeature: "reviewAi",
   });
+}
+
+function toNonNegativeInt(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.floor(numeric);
+}
+
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== "object") {
+    return {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    };
+  }
+  const promptTokens = toNonNegativeInt(usage.prompt_tokens);
+  const completionTokens = toNonNegativeInt(usage.completion_tokens);
+  const totalTokens = toNonNegativeInt(usage.total_tokens);
+  const safeTotal = totalTokens || promptTokens + completionTokens;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: safeTotal,
+  };
+}
+
+function sumUsageEntries(usageEntries = []) {
+  const aggregate = {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+  };
+  const entries = Array.isArray(usageEntries) ? usageEntries : [];
+  for (const entry of entries) {
+    const usage = normalizeUsage(entry);
+    aggregate.prompt_tokens += usage.prompt_tokens;
+    aggregate.completion_tokens += usage.completion_tokens;
+    aggregate.total_tokens += usage.total_tokens;
+  }
+  return aggregate;
+}
+
+function calculateUsageCost(usage) {
+  const safeUsage = normalizeUsage(usage);
+  const inputCostUsd =
+    safeUsage.prompt_tokens * GPT_41_MINI_INPUT_COST_PER_TOKEN;
+  const outputCostUsd =
+    safeUsage.completion_tokens * GPT_41_MINI_OUTPUT_COST_PER_TOKEN;
+  const totalCostUsd = inputCostUsd + outputCostUsd;
+  return {
+    inputCostUsd,
+    outputCostUsd,
+    totalCostUsd,
+  };
+}
+
+async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
+  if (!isDatabaseConfigured()) {
+    return res.status(503).json({
+      error:
+        "Database is required for AI usage tracking. Configure DATABASE_URL and restart backend.",
+      endpoint: endpointLabel,
+    });
+  }
+
+  const userId = req.auth?.userId || "";
+  const estimate = toNonNegativeInt(estimatedTokens);
+  try {
+    const aiAccess = req.aiAccess || (await resolveBillingAiAccessForUser(userId));
+    const hasActiveSubscription = Boolean(aiAccess?.hasActiveSubscription);
+    const trialRemainingTokens = toNonNegativeInt(
+      aiAccess?.trial?.remainingTokens
+    );
+    const shouldEnforceTrial =
+      !hasActiveSubscription &&
+      enableAiTrial &&
+      !Boolean(req.entitlements?.admin) &&
+      !reviewAiAllowAll;
+    if (shouldEnforceTrial) {
+      if (trialRemainingTokens <= 0) {
+        return res.status(429).json({
+          error:
+            "AI trial tokens are exhausted. Start a subscription to continue using AI reviews.",
+          code: "AI_TRIAL_TOKENS_EXHAUSTED",
+          endpoint: endpointLabel,
+          trialRemainingTokens: 0,
+        });
+      }
+      if (estimate > trialRemainingTokens) {
+        return res.status(429).json({
+          error:
+            "This request exceeds remaining AI trial tokens. Reduce request size or subscribe.",
+          code: "AI_TRIAL_TOKENS_INSUFFICIENT",
+          endpoint: endpointLabel,
+          trialRemainingTokens,
+          estimatedTokens: estimate,
+        });
+      }
+    }
+
+    const usage = await getMonthlyAiUsage(userId, new Date());
+    const usedTokens = toNonNegativeInt(usage.totalTokens);
+    const projectedTokens = usedTokens + estimate;
+    if (usedTokens >= aiMonthlyTokenCap || projectedTokens > aiMonthlyTokenCap) {
+      const remainingTokens = Math.max(0, aiMonthlyTokenCap - usedTokens);
+      return res.status(429).json({
+        error: "Monthly AI token limit reached for this account.",
+        code: "AI_MONTHLY_TOKEN_LIMIT_REACHED",
+        endpoint: endpointLabel,
+        limitTokens: aiMonthlyTokenCap,
+        usedTokens,
+        remainingTokens,
+        periodMonth: usage.periodMonth,
+      });
+    }
+    return null;
+  } catch (error) {
+    console.error("[pokerchaos-backend] AI quota check failed", error);
+    return res.status(500).json({
+      error: "Failed to check AI usage limits. Please try again shortly.",
+      endpoint: endpointLabel,
+    });
+  }
+}
+
+async function trackAiUsage({
+  userId,
+  endpoint,
+  model,
+  usage,
+  hasActiveSubscription = false,
+}) {
+  const safeUsage = normalizeUsage(usage);
+  const costs = calculateUsageCost(safeUsage);
+  const monthlyUsage = await recordAiUsageEvent({
+    userId,
+    endpoint,
+    model,
+    promptTokens: safeUsage.prompt_tokens,
+    completionTokens: safeUsage.completion_tokens,
+    totalTokens: safeUsage.total_tokens,
+    inputCostUsd: costs.inputCostUsd,
+    outputCostUsd: costs.outputCostUsd,
+    totalCostUsd: costs.totalCostUsd,
+  });
+  let trial = null;
+  if (enableAiTrial && !hasActiveSubscription) {
+    trial = await consumeAiTrialTokens(userId, safeUsage.total_tokens);
+  }
+  return { monthlyUsage, trial };
 }
 
 app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
@@ -880,27 +1594,65 @@ app.post(
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const estimatedTokens = Math.max(
+      1,
+      parsed.data.selectedHands.length * aiEstimatedHandReviewTokensPerHand
+    );
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      estimatedTokens,
+      "/hand-history/review"
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
       const reviews = [];
+      const usageEntries = [];
       for (const hand of parsed.data.selectedHands) {
         const compactHand = sanitizeHandForStreetFairness(hand);
         const reviewHand = attachOpponentContextToHand(compactHand, opponentLookup);
         const review = await reviewTournamentHand(
           reviewHand,
           parsed.data.instruction,
-          parsed.data.model
+          reviewAiModel
         );
+        usageEntries.push(review?.usage || null);
         reviews.push({
           hand: compactHand,
           review,
         });
       }
 
+      const aggregateUsage = sumUsageEntries(usageEntries);
+      const usageState = await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/hand-history/review",
+        model: reviewAiModel,
+        usage: aggregateUsage,
+        hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+      });
+
       return res.json({
         summary: {
           selectedHands: parsed.data.selectedHands.length,
           reviewedHands: reviews.length,
+          usage: aggregateUsage,
+          monthlyUsage: {
+            periodMonth: usageState.monthlyUsage.periodMonth,
+            usedTokens: usageState.monthlyUsage.totalTokens,
+            tokenLimit: aiMonthlyTokenCap,
+            remainingTokens: Math.max(
+              0,
+              aiMonthlyTokenCap -
+                toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+            ),
+            usedCostUsd: usageState.monthlyUsage.totalCostUsd,
+            trialRemainingTokens: toNonNegativeInt(
+              usageState.trial?.remainingTokens
+            ),
+          },
         },
         reviews,
       });
@@ -932,13 +1684,45 @@ app.post(
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      aiEstimatedSummaryTokens,
+      "/hand-history/summary-review"
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const review = await reviewTournamentSummary(
         parsed.data.summary,
         parsed.data.instruction,
-        parsed.data.model
+        reviewAiModel
       );
-      return res.json({ review });
+      const usageState = await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/hand-history/summary-review",
+        model: reviewAiModel,
+        usage: review?.usage || null,
+        hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+      });
+      return res.json({
+        review,
+        usage: normalizeUsage(review?.usage),
+        monthlyUsage: {
+          periodMonth: usageState.monthlyUsage.periodMonth,
+          usedTokens: usageState.monthlyUsage.totalTokens,
+          tokenLimit: aiMonthlyTokenCap,
+          remainingTokens: Math.max(
+            0,
+            aiMonthlyTokenCap -
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+          ),
+          usedCostUsd: usageState.monthlyUsage.totalCostUsd,
+          trialRemainingTokens: toNonNegativeInt(
+            usageState.trial?.remainingTokens
+          ),
+        },
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] Tournament summary review error", error);
       return res.status(502).json({
@@ -967,13 +1751,45 @@ app.post(
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      aiEstimatedIcmTokens,
+      "/hand-history/icm-review"
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const review = await reviewIcmSpotSummary(
         parsed.data.icmSummary,
         parsed.data.instruction,
-        parsed.data.model
+        reviewAiModel
       );
-      return res.json({ review });
+      const usageState = await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/hand-history/icm-review",
+        model: reviewAiModel,
+        usage: review?.usage || null,
+        hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+      });
+      return res.json({
+        review,
+        usage: normalizeUsage(review?.usage),
+        monthlyUsage: {
+          periodMonth: usageState.monthlyUsage.periodMonth,
+          usedTokens: usageState.monthlyUsage.totalTokens,
+          tokenLimit: aiMonthlyTokenCap,
+          remainingTokens: Math.max(
+            0,
+            aiMonthlyTokenCap -
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+          ),
+          usedCostUsd: usageState.monthlyUsage.totalCostUsd,
+          trialRemainingTokens: toNonNegativeInt(
+            usageState.trial?.remainingTokens
+          ),
+        },
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] ICM review error", error);
       return res.status(502).json({
@@ -1001,13 +1817,45 @@ app.post(
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      aiEstimatedBlindDefenseTokens,
+      "/hand-history/blind-defense-review"
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const review = await reviewBlindDefenseSummary(
         parsed.data.blindDefenseSummary,
         parsed.data.instruction,
-        parsed.data.model
+        reviewAiModel
       );
-      return res.json({ review });
+      const usageState = await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/hand-history/blind-defense-review",
+        model: reviewAiModel,
+        usage: review?.usage || null,
+        hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+      });
+      return res.json({
+        review,
+        usage: normalizeUsage(review?.usage),
+        monthlyUsage: {
+          periodMonth: usageState.monthlyUsage.periodMonth,
+          usedTokens: usageState.monthlyUsage.totalTokens,
+          tokenLimit: aiMonthlyTokenCap,
+          remainingTokens: Math.max(
+            0,
+            aiMonthlyTokenCap -
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+          ),
+          usedCostUsd: usageState.monthlyUsage.totalCostUsd,
+          trialRemainingTokens: toNonNegativeInt(
+            usageState.trial?.remainingTokens
+          ),
+        },
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] Blind defense review error", error);
       return res.status(502).json({
@@ -1036,6 +1884,14 @@ app.post(
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      aiEstimatedTableHintTokens,
+      "/hand-history/table-hint"
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const tableHintContext = {
         tableContext: parsed.data.tableContext || {},
@@ -1051,9 +1907,33 @@ app.post(
       const review = await reviewCurrentTableHint(
         tableHintContext,
         parsed.data.instruction,
-        parsed.data.model
+        reviewAiModel
       );
-      return res.json({ review });
+      const usageState = await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/hand-history/table-hint",
+        model: reviewAiModel,
+        usage: review?.usage || null,
+        hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+      });
+      return res.json({
+        review,
+        usage: normalizeUsage(review?.usage),
+        monthlyUsage: {
+          periodMonth: usageState.monthlyUsage.periodMonth,
+          usedTokens: usageState.monthlyUsage.totalTokens,
+          tokenLimit: aiMonthlyTokenCap,
+          remainingTokens: Math.max(
+            0,
+            aiMonthlyTokenCap -
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+          ),
+          usedCostUsd: usageState.monthlyUsage.totalCostUsd,
+          trialRemainingTokens: toNonNegativeInt(
+            usageState.trial?.remainingTokens
+          ),
+        },
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] Current table hint error", error);
       return res.status(502).json({
@@ -1095,7 +1975,7 @@ async function boot() {
     }
   } else {
     console.warn(
-      "[pokerchaos-backend] Postgres not configured. Tournament uploads are disabled."
+      "[pokerchaos-backend] Postgres not configured. Tournament uploads and AI usage tracking are disabled."
     );
   }
 
