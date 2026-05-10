@@ -36,10 +36,11 @@ async function requestJson(path, options = {}) {
 
   if (!res.ok) {
     const text = await res.text();
+    let payload = null;
     let message = text || res.statusText;
     if (text) {
       try {
-        const payload = JSON.parse(text);
+        payload = JSON.parse(text);
         if (payload && typeof payload.error === "string" && payload.error.trim()) {
           message = payload.error.trim();
         }
@@ -47,7 +48,14 @@ async function requestJson(path, options = {}) {
         // Keep raw text fallback when response is not JSON.
       }
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = res.status;
+    error.payload = payload;
+    error.code =
+      typeof payload?.code === "string" && payload.code.trim()
+        ? payload.code.trim()
+        : "";
+    throw error;
   }
 
   return res.json();

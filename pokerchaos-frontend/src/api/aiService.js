@@ -16,6 +16,22 @@ export async function requestEntitlements() {
   return getJson("/me/entitlements");
 }
 
+export async function requestBillingStatus() {
+  return getJson("/me/billing");
+}
+
+export async function requestAiUsageStatus() {
+  return getJson("/me/ai-usage");
+}
+
+export async function requestBillingCheckoutSession(payload = {}) {
+  return postJson("/billing/checkout-session", payload);
+}
+
+export async function requestBillingPortalSession(payload = {}) {
+  return postJson("/billing/portal-session", payload);
+}
+
 export async function requestTournamentSummaryReview(payload) {
   return postJson("/hand-history/summary-review", payload);
 }

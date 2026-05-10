@@ -192,6 +192,17 @@ body {
   gap: 8px;
 }
 
+.auth-bar-meta {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding: 0 2px 4px;
+  box-sizing: border-box;
+}
+
 .top-nav-link {
   border-radius: 999px;
   border: 1px solid var(--chip-border);
@@ -220,6 +231,27 @@ body {
   margin-top: auto;
   padding: 10px 0 6px;
   box-sizing: border-box;
+}
+
+.app-footer-centered-note {
+  width: 100%;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.app-footer-centered-note-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.trial-info-modal {
+  max-width: 560px;
 }
 
 .app-footer-inner {
@@ -263,6 +295,13 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
   white-space: nowrap;
+}
+
+.app-footer-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-weight: 400;
 }
 
 .app-footer-link:hover {
@@ -729,6 +768,62 @@ button {
   width: auto;
 }
 
+.about-modal {
+  max-width: 680px;
+}
+
+.about-modal-step {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.about-modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.about-slide-title {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.about-slide-points {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+  color: var(--text);
+}
+
+.about-modal-footer {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.about-slide-dots {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.about-slide-dot {
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  padding: 0;
+  cursor: pointer;
+}
+
+.about-slide-dot.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
 @media (max-width: 640px) {
   #root {
     padding: 24px 12px;
@@ -843,6 +938,10 @@ button {
   .rank-grid button {
     width: auto;
   }
+
+  .about-modal-footer {
+    gap: 8px;
+  }
 }
 
 .panel-heading {
@@ -891,7 +990,7 @@ button {
   gap: 16px;
   grid-template-columns: minmax(280px, 430px) minmax(0, 1fr);
   align-items: start;
-  height: calc(100vh - 132px);
+  height: max(420px, calc(100vh - 132px));
   min-height: 0;
 }
 
@@ -1037,6 +1136,21 @@ button {
 
 [data-theme="light"] .hand-row-review {
   border-top-color: var(--review-border-soft);
+}
+
+[data-theme="light"] .hand-review-logic-toggle {
+  color: #1e3a8a;
+  background: #eaf1ff;
+  border-color: #b9cffd;
+}
+
+[data-theme="light"] .hand-review-logic-toggle:hover {
+  background: #dbe8ff;
+}
+
+[data-theme="light"] .hand-review-logic-body {
+  background: #f8fbff;
+  border-color: #c8dbff;
 }
 
 [data-theme="light"] .opponent-play-note {
@@ -1292,6 +1406,31 @@ button {
 .hand-review-error {
   margin: 0;
   color: #fca5a5;
+}
+
+.ai-upgrade-prompt {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.ai-upgrade-prompt p {
+  margin: 0;
+}
+
+.ai-upgrade-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ai-upgrade-prompt-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .hand-review-success {
@@ -1907,6 +2046,36 @@ button {
 .hand-row-review p {
   margin: 6px 0;
   font-size: 0.82rem;
+}
+
+.hand-review-logic {
+  margin-top: 8px;
+}
+
+.hand-review-logic-toggle {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.12);
+  color: #dbeafe;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.hand-review-logic-toggle:hover {
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.hand-review-logic-body {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.hand-review-logic-body p {
+  margin: 6px 0;
 }
 
 .hand-breakdown {
