@@ -41,6 +41,7 @@ dotenv.config();
 const BASE_PORT = process.env.PORT ? Number(process.env.PORT) : 4011;
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "")
   .split(",")
+  .map((value) => String(value || "").trim())
   .filter(Boolean);
 const allowedOrigins = FRONTEND_ORIGIN.length > 0 ? FRONTEND_ORIGIN : undefined;
 

@@ -308,6 +308,27 @@ body {
   color: var(--footer-link-hover);
 }
 
+.mobile-scroll-top {
+  position: fixed;
+  right: 14px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 1500;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--surface-elevated);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 7px 11px;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+[data-theme="light"] .mobile-scroll-top {
+  background: var(--review-surface-strong);
+}
+
 .feature-gate-card {
   margin-top: 0;
   display: grid;
@@ -1081,6 +1102,7 @@ button {
 [data-theme="light"] .hand-review-scores span,
 [data-theme="light"] .opponent-copy-button,
 [data-theme="light"] .opponent-ai-hint-button,
+[data-theme="light"] .hand-review-help-trigger,
 [data-theme="light"] .hand-review-selection-tools button,
 [data-theme="light"] .hand-review-actions button,
 [data-theme="light"] .hand-review-summary span,
@@ -1317,6 +1339,12 @@ button {
   color: #fde68a;
 }
 
+.hand-review-parser-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .hand-review-controls {
   display: grid;
   gap: 10px;
@@ -1356,6 +1384,34 @@ button {
   color: var(--muted);
   font-size: 0.84rem;
   overflow: hidden;
+}
+
+.hand-review-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hand-review-help-trigger {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hand-review-help-trigger:hover {
+  border-color: rgba(240, 162, 28, 0.55);
+  color: #fde68a;
 }
 
 .hand-review-file input[type="file"] {
@@ -1935,11 +1991,17 @@ button {
 
 .hand-review-selection-tools {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
 }
 
 .hand-review-selection-tools button {
+  min-width: 0;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  white-space: nowrap;
+  flex: 1 1 0;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.08);
@@ -3455,7 +3517,7 @@ button {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) {
   .hand-review-workspace {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
@@ -3467,8 +3529,18 @@ button {
     overflow: visible;
   }
 
+  .hand-review-pane-right {
+    order: -1;
+  }
+
   .hand-review-panel {
     max-height: none;
     overflow: visible;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-scroll-top {
+    display: none;
   }
 }

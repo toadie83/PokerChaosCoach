@@ -177,6 +177,43 @@ function AppFooter({ onOpenAbout }) {
   );
 }
 
+function MobileScrollTopWidget({ enabled }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) {
+      setVisible(false);
+      return;
+    }
+
+    const handleScroll = () => {
+      const threshold = window.innerHeight * 1.5;
+      setVisible(window.scrollY > threshold);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleScroll);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [enabled]);
+
+  if (!enabled || !visible) return null;
+
+  return (
+    <button
+      type="button"
+      className="mobile-scroll-top"
+      onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+      aria-label="Return to top"
+    >
+      Top
+    </button>
+  );
+}
+
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
@@ -465,6 +502,7 @@ function SignedInShell() {
       </ServerWakeGate>
       <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
       <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
+      <MobileScrollTopWidget enabled={routePath === "/review"} />
       <AppFooter onOpenAbout={handleOpenAbout} />
     </>
   );

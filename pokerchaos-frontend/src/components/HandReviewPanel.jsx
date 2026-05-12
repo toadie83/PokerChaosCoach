@@ -2544,6 +2544,7 @@ export default function HandReviewPanel() {
   const [opponentFilter, setOpponentFilter] = useState("current_table");
   const [copiedOpponentKey, setCopiedOpponentKey] = useState("");
   const [isParserCollapsed, setIsParserCollapsed] = useState(false);
+  const [uploadHelpModalOpen, setUploadHelpModalOpen] = useState(false);
   const copyTimeoutRef = useRef(null);
   const handRowRefs = useRef(new Map());
 
@@ -4176,10 +4177,6 @@ export default function HandReviewPanel() {
       <div className="hand-review-panel hand-review-pane hand-review-pane-left">
         <div className="hand-review-header">
           <h2>Hand Review</h2>
-          <p>
-            Upload or paste GG tournament history, then choose whether to
-            include all preflop outcomes or exclude preflop folds.
-          </p>
         </div>
 
         <div className="hand-review-parser-head">
@@ -4194,6 +4191,11 @@ export default function HandReviewPanel() {
 
         {!isParserCollapsed ? (
           <>
+            <p className="hand-review-parser-intro">
+              Upload or paste GG tournament history, then choose whether to
+              include all preflop outcomes or exclude preflop folds.
+            </p>
+
             <div className="hand-review-controls">
               <label>
                 Hero name
@@ -4240,7 +4242,18 @@ export default function HandReviewPanel() {
 
             <div className="hand-review-inputs">
               <label className="hand-review-file">
-                <span>{sourceFileName || "Import hand history text file"}</span>
+                <span className="hand-review-file-label">
+                  <span>{sourceFileName || "Import hand history text file"}</span>
+                  <button
+                    type="button"
+                    className="hand-review-help-trigger"
+                    onClick={() => setUploadHelpModalOpen(true)}
+                    aria-label="How to upload a hand history file"
+                    title="How to upload a hand history file"
+                  >
+                    ?
+                  </button>
+                </span>
                 <input
                   type="file"
                   accept=".txt,.log"
@@ -4434,7 +4447,7 @@ export default function HandReviewPanel() {
             >
               {loadingReview || quickReviewHandKey
                 ? "Reviewing..."
-                : `Analyze Selected (${selectedCount})`}
+                : "Analyze"}
             </button>
           </div>
         ) : null}
@@ -6323,6 +6336,47 @@ export default function HandReviewPanel() {
                 }
               >
                 {loadingSavedTournamentId ? "Loading..." : "Load"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {uploadHelpModalOpen ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal hand-review-modal">
+            <div className="modal-header">
+              <h3 className="modal-title">Upload Help</h3>
+              <button
+                type="button"
+                className="hand-review-modal-close"
+                onClick={() => setUploadHelpModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                If you play on GG Poker, download your tournament hand history
+                from PokerCraft in the GG Poker app.
+              </p>
+              <p>
+                Extract the hand-history text file to local storage, then upload
+                it here using <strong>Import hand history text file</strong>.
+              </p>
+              <p>
+                For detailed tournament analysis, click{" "}
+                <strong>Parse Hands</strong>. To keep a tournament for future
+                analysis, expand the parser and click{" "}
+                <strong>Save Tournament</strong>.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                onClick={() => setUploadHelpModalOpen(false)}
+              >
+                Close
               </button>
             </div>
           </div>
