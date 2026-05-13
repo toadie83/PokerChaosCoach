@@ -15,6 +15,24 @@ import {
   requestTournamentSummaryReview,
 } from "../api/aiService.js";
 
+const CASH_NOTICE_DISMISS_KEY = "pokerchaos_cash_notice_dismissed";
+
+function readCashNoticeDismissed() {
+  try {
+    return window.sessionStorage.getItem(CASH_NOTICE_DISMISS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeCashNoticeDismissed(value) {
+  try {
+    window.sessionStorage.setItem(CASH_NOTICE_DISMISS_KEY, value ? "1" : "0");
+  } catch {
+    // Ignore storage write errors; dismissal still works in component state.
+  }
+}
+
 function formatHeroCards(cards) {
   if (!Array.isArray(cards) || cards.length === 0) return "Unknown";
   return cards.join(" ");
@@ -2582,6 +2600,9 @@ export default function HandReviewPanel() {
   const [isParserCollapsed, setIsParserCollapsed] = useState(false);
   const [isParserConfigOpen, setIsParserConfigOpen] = useState(false);
   const [uploadHelpModalOpen, setUploadHelpModalOpen] = useState(false);
+  const [cashNoticeDismissed, setCashNoticeDismissed] = useState(() =>
+    readCashNoticeDismissed(),
+  );
   const copyTimeoutRef = useRef(null);
   const handRowRefs = useRef(new Map());
 
@@ -2668,6 +2689,32 @@ export default function HandReviewPanel() {
   const parsedHands = Array.isArray(parseResult?.hands)
     ? parseResult.hands
     : [];
+  const gameTypeCounts = useMemo(() => {
+    let cash = 0;
+    let tournament = 0;
+    let unknown = 0;
+    for (const hand of parsedHands) {
+      const type = String(hand?.gameType || "")
+        .trim()
+        .toLowerCase();
+      if (type === "cash") {
+        cash += 1;
+      } else if (type === "tournament") {
+        tournament += 1;
+      } else {
+        unknown += 1;
+      }
+    }
+    return { cash, tournament, unknown };
+  }, [parsedHands]);
+  const shouldShowCashFormatNotice =
+    parsedHands.length > 0 &&
+    gameTypeCounts.cash > 0 &&
+    !cashNoticeDismissed;
+  const cashFormatNoticeText =
+    gameTypeCounts.tournament > 0
+      ? `This parse includes cash hands (${gameTypeCounts.cash}/${parsedHands.length}). Tournament summary metrics may not fully apply. Cash-specific analysis is coming soon.`
+      : "This hand set is cash-game. Current summary metrics are tuned for tournament play and may not fully apply. Cash-specific analysis is coming soon.";
   const opponentSnapshot = parseResult?.opponents || null;
   const opponentPlayers = Array.isArray(opponentSnapshot?.players)
     ? opponentSnapshot.players
@@ -3779,6 +3826,9 @@ export default function HandReviewPanel() {
     try {
       const res = await requestHandHistoryParse(parsePayload);
       setParseResult(res);
+      if (!readCashNoticeDismissed()) {
+        setCashNoticeDismissed(false);
+      }
       if (Array.isArray(res?.hands) && res.hands.length > 0) {
         setIsParserCollapsed(true);
       }
@@ -4479,6 +4529,23 @@ export default function HandReviewPanel() {
             <span>Visible: {filteredParsedHands.length}</span>
             <span>Selected: {selectedCount}</span>
             <span>Reviewed: {reviewedCount}</span>
+          </div>
+        ) : null}
+        {shouldShowCashFormatNotice ? (
+          <div className="hand-review-cash-notice" role="status">
+            <p>{cashFormatNoticeText}</p>
+            <div className="hand-review-cash-notice-actions">
+              <button
+                type="button"
+                className="hand-review-cash-notice-dismiss"
+                onClick={() => {
+                  setCashNoticeDismissed(true);
+                  writeCashNoticeDismissed(true);
+                }}
+              >
+                DISMISS
+              </button>
+            </div>
           </div>
         ) : null}
 
