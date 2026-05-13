@@ -17,6 +17,9 @@ import {
   requestEntitlements,
 } from "./api/aiService.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
+import desktopNavWordmark from "./assets/brand/playback-nav-image-desktop.png";
+import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
+import navIconMark from "./assets/brand/playback-nav-image-icon.png";
 import "./styles.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -154,7 +157,7 @@ function TrialInfoModal({ open, onClose }) {
 function AppFooter({ onOpenAbout }) {
   return (
     <footer className="app-footer">
-      <div className="app-footer-inner">
+      <div className="app-shell-container app-footer-inner">
         <details className="app-footer-disclaimer">
           <summary>Disclaimer</summary>
           <p>
@@ -222,9 +225,9 @@ function SignedInShell() {
   const [theme, setTheme] = useState(() => {
     try {
       const saved = window.localStorage?.getItem("pcc_theme");
-      return saved === "dark" ? "dark" : "light";
+      return saved === "light" ? "light" : "dark";
     } catch {
-      return "light";
+      return "dark";
     }
   });
   const [entitlements, setEntitlements] = useState(null);
@@ -233,6 +236,7 @@ function SignedInShell() {
   const [billingActionStatus, setBillingActionStatus] = useState("");
   const [billingActionLoading, setBillingActionLoading] = useState("");
   const [trialInfoOpen, setTrialInfoOpen] = useState(false);
+  const [mobileUtilityOpen, setMobileUtilityOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -240,6 +244,19 @@ function SignedInShell() {
       window.localStorage?.setItem("pcc_theme", theme);
     } catch {}
   }, [theme]);
+
+  useEffect(() => {
+    setMobileUtilityOpen(false);
+  }, [routePath]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 641px)");
+    const handleMediaChange = (event) => {
+      if (event.matches) setMobileUtilityOpen(false);
+    };
+    mediaQuery.addEventListener("change", handleMediaChange);
+    return () => mediaQuery.removeEventListener("change", handleMediaChange);
+  }, []);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) {
@@ -388,81 +405,189 @@ function SignedInShell() {
 
   return (
     <>
-      <div className="auth-bar auth-bar-shell">
-        <div className="auth-bar-nav">
-          {SECTION_CONFIG.map((section) => {
-            const enabled = Boolean(entitlements?.features?.[section.feature]);
-            return (
+      <div className="app-shell-container app-shell-header">
+        <div className="auth-bar auth-bar-shell">
+          <div className="auth-bar-nav">
+            {SECTION_CONFIG.map((section) => {
+              const enabled = Boolean(entitlements?.features?.[section.feature]);
+              return (
+                <button
+                  key={section.path}
+                  type="button"
+                  className={`top-nav-link ${routePath === section.path ? "active" : ""}`}
+                  data-enabled={enabled}
+                  onClick={() => navigate(section.path)}
+                >
+                  {section.label}
+                  {!enabled ? " (Locked)" : ""}
+                </button>
+              );
+            })}
+          </div>
+          <div className="auth-bar-brand" aria-hidden="true">
+            <img
+              src={desktopNavWordmark}
+              alt=""
+              className="auth-bar-brand-wordmark auth-bar-brand-wordmark-desktop"
+            />
+          </div>
+          <div className="auth-bar-actions">
+            <div className="auth-bar-actions-desktop">
+              {entitlementsStatus === "ready" && !hasActiveSubscription ? (
+                <button
+                  type="button"
+                  className="top-nav-status"
+                  onClick={handleOpenTrialInfo}
+                  title="About trial AI credits"
+                >
+                  <span className="top-nav-status-label">Trial</span>
+                  <span className="top-nav-status-value">
+                    {Number.isFinite(trialRemainingTokens)
+                      ? trialRemainingTokens.toLocaleString()
+                      : "0"}
+                  </span>
+                </button>
+              ) : null}
               <button
-                key={section.path}
                 type="button"
-                className={`top-nav-link ${routePath === section.path ? "active" : ""}`}
-                data-enabled={enabled}
-                onClick={() => navigate(section.path)}
+                className="top-nav-link top-nav-link--cta"
+                onClick={
+                  hasActiveSubscription ? openBillingPortal : openBillingCheckout
+                }
+                disabled={Boolean(billingActionLoading)}
+                title={
+                  hasActiveSubscription
+                    ? "Manage your PlaybackPoker subscription"
+                    : "Upgrade to unlock ongoing AI reviews"
+                }
               >
-                {section.label}
-                {!enabled ? " (Locked)" : ""}
+                {billingActionLoading === "checkout"
+                  ? "Opening checkout..."
+                  : billingActionLoading === "portal"
+                    ? "Opening portal..."
+                    : hasActiveSubscription
+                      ? "Manage plan"
+                      : "Upgrade AI"}
+                {!hasActiveSubscription ? (
+                  <span className="top-nav-cta-crown" aria-hidden="true">
+                    {"\u265B"}
+                  </span>
+                ) : null}
               </button>
-            );
-          })}
-        </div>
-        <div className="auth-bar-actions">
-          {entitlementsStatus === "ready" && !hasActiveSubscription ? (
-            <button
-              type="button"
-              className="top-nav-link"
-              onClick={handleOpenTrialInfo}
-              title="About trial AI credits"
-            >
-              Trial:{" "}
-              {Number.isFinite(trialRemainingTokens)
-                ? trialRemainingTokens.toLocaleString()
-                : "0"}
-            </button>
+              <button
+                type="button"
+                className="top-nav-link top-nav-utility"
+                onClick={() =>
+                  setTheme((value) => (value === "dark" ? "light" : "dark"))
+                }
+                aria-label={
+                  theme === "dark"
+                    ? "Switch to light mode"
+                    : "Switch to dark high-contrast mode"
+                }
+              >
+                <span className="top-nav-utility-icon" aria-hidden="true">
+                  {theme === "dark" ? "\u2600" : "\u263E"}
+                </span>
+                <span className="top-nav-utility-label">
+                  {theme === "dark" ? "Light mode" : "Dark mode"}
+                </span>
+              </button>
+              <div className="top-nav-account">
+                <UserButton />
+              </div>
+            </div>
+
+            <div className="auth-bar-actions-mobile">
+              <img
+                src={mobileNavWordmark}
+                alt=""
+                className="auth-bar-brand-wordmark auth-bar-brand-wordmark-mobile"
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                className={`top-nav-link mobile-utility-toggle ${
+                  mobileUtilityOpen ? "active" : ""
+                }`}
+                aria-expanded={mobileUtilityOpen}
+                aria-label="Open utility menu"
+                onClick={() => setMobileUtilityOpen((value) => !value)}
+              >
+                <img
+                  src={navIconMark}
+                  alt=""
+                  className="mobile-utility-toggle-icon"
+                  aria-hidden="true"
+                />
+                <span className="mobile-utility-toggle-label">Menu</span>
+              </button>
+            </div>
+          </div>
+          {mobileUtilityOpen ? (
+            <div className="mobile-utility-menu">
+              {entitlementsStatus === "ready" && !hasActiveSubscription ? (
+                <button
+                  type="button"
+                  className="mobile-utility-item mobile-utility-item--status"
+                  onClick={() => {
+                    setMobileUtilityOpen(false);
+                    handleOpenTrialInfo();
+                  }}
+                >
+                  <span className="mobile-utility-label">Trial credits</span>
+                  <span className="mobile-utility-value">
+                    {Number.isFinite(trialRemainingTokens)
+                      ? trialRemainingTokens.toLocaleString()
+                      : "0"}
+                  </span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="mobile-utility-item mobile-utility-item--cta"
+                onClick={() => {
+                  setMobileUtilityOpen(false);
+                  if (hasActiveSubscription) openBillingPortal();
+                  else openBillingCheckout();
+                }}
+                disabled={Boolean(billingActionLoading)}
+              >
+                <span className="mobile-utility-label">
+                  {hasActiveSubscription ? "Manage plan" : "Upgrade AI"}
+                </span>
+                {!hasActiveSubscription ? (
+                  <span className="mobile-utility-value" aria-hidden="true">
+                    {"\u265B"}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className="mobile-utility-item"
+                onClick={() => {
+                  setMobileUtilityOpen(false);
+                  setTheme((value) => (value === "dark" ? "light" : "dark"));
+                }}
+              >
+                <span className="mobile-utility-label">Theme</span>
+                <span className="mobile-utility-value">
+                  {theme === "dark" ? "\u2600" : "\u263E"}
+                </span>
+              </button>
+              <div className="mobile-utility-account">
+                <span className="mobile-utility-label">Account</span>
+                <UserButton />
+              </div>
+            </div>
           ) : null}
-          <button
-            type="button"
-            className="top-nav-link"
-            onClick={
-              hasActiveSubscription ? openBillingPortal : openBillingCheckout
-            }
-            disabled={Boolean(billingActionLoading)}
-            title={
-              hasActiveSubscription
-                ? "Manage your PlaybackPoker subscription"
-                : "Upgrade to unlock ongoing AI reviews"
-            }
-          >
-            {billingActionLoading === "checkout"
-              ? "Opening checkout..."
-              : billingActionLoading === "portal"
-                ? "Opening portal..."
-                : hasActiveSubscription
-                  ? "Manage plan"
-                  : "Upgrade AI"}
-          </button>
-          <button
-            type="button"
-            className="top-nav-link"
-            onClick={() =>
-              setTheme((value) => (value === "dark" ? "light" : "dark"))
-            }
-            aria-label={
-              theme === "dark"
-                ? "Switch to light mode"
-                : "Switch to dark high-contrast mode"
-            }
-          >
-            {theme === "dark" ? "Light mode" : "Dark mode"}
-          </button>
-          <UserButton />
         </div>
+        {entitlementsStatus === "ready" && billingActionStatus ? (
+          <div className="auth-bar-meta">
+            <span>{billingActionStatus}</span>
+          </div>
+        ) : null}
       </div>
-      {entitlementsStatus === "ready" && billingActionStatus ? (
-        <div className="auth-bar-meta">
-          <span>{billingActionStatus}</span>
-        </div>
-      ) : null}
 
       <ServerWakeGate>
         {entitlementsStatus === "loading" ? (
@@ -566,7 +691,11 @@ function Shell() {
       </Show>
       <Show when="signed-out">
         <div className="auth-gate">
-          <h1>Playback Poker</h1>
+          <img
+            src={mobileNavWordmark}
+            alt="Playback Poker"
+            className="auth-gate-brand"
+          />
           <p>Sign in to access Hand Review and Coach.</p>
           <div className="auth-actions">
             <SignInButton mode="modal">

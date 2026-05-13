@@ -2544,6 +2544,7 @@ export default function HandReviewPanel() {
   const [opponentFilter, setOpponentFilter] = useState("current_table");
   const [copiedOpponentKey, setCopiedOpponentKey] = useState("");
   const [isParserCollapsed, setIsParserCollapsed] = useState(false);
+  const [isParserConfigOpen, setIsParserConfigOpen] = useState(false);
   const [uploadHelpModalOpen, setUploadHelpModalOpen] = useState(false);
   const copyTimeoutRef = useRef(null);
   const handRowRefs = useRef(new Map());
@@ -3294,6 +3295,26 @@ export default function HandReviewPanel() {
   const tournamentCoachSummary = useMemo(
     () => buildTournamentCoachSummary(tournamentSummary, postflopIpAuditDigest),
     [tournamentSummary, postflopIpAuditDigest],
+  );
+  const coachPrimaryAdjustment = useMemo(() => {
+    if (!Array.isArray(tournamentCoachSummary?.actions)) return "";
+    return tournamentCoachSummary.actions.find(Boolean) || "";
+  }, [tournamentCoachSummary]);
+  const coachSecondaryAdjustments = useMemo(() => {
+    if (!Array.isArray(tournamentCoachSummary?.actions)) return [];
+    return tournamentCoachSummary.actions.filter(Boolean).slice(1, 4);
+  }, [tournamentCoachSummary]);
+  const coachSupportingEvidence = useMemo(() => {
+    if (!Array.isArray(tournamentCoachSummary?.evidence)) return [];
+    return tournamentCoachSummary.evidence.filter(Boolean).slice(0, 5);
+  }, [tournamentCoachSummary]);
+  const aiPrimaryAction = useMemo(
+    () => aiSummaryActions.find(Boolean) || "",
+    [aiSummaryActions],
+  );
+  const aiSecondaryActions = useMemo(
+    () => aiSummaryActions.filter(Boolean).slice(1, 4),
+    [aiSummaryActions],
   );
   const tournamentSummaryPayload = useMemo(() => {
     if (!tournamentSummary) return null;
@@ -4174,9 +4195,9 @@ export default function HandReviewPanel() {
 
   return (
     <section className="hand-review-workspace">
-      <div className="hand-review-panel hand-review-pane hand-review-pane-left">
+      <div className="hand-review-panel hand-review-pane hand-review-pane-left hand-review-panel--utility">
         <div className="hand-review-header">
-          <h2>Hand Review</h2>
+          <h2>Import Tournament</h2>
         </div>
 
         <div className="hand-review-parser-head">
@@ -4192,52 +4213,66 @@ export default function HandReviewPanel() {
         {!isParserCollapsed ? (
           <>
             <p className="hand-review-parser-intro">
-              Upload or paste GG tournament history, then choose whether to
-              include all preflop outcomes or exclude preflop folds.
+              Upload or paste GG tournament history to generate tournament
+              review insights.
             </p>
 
-            <div className="hand-review-controls">
-              <label>
-                Hero name
-                <input
-                  type="text"
-                  value={heroName}
-                  onChange={(e) => setHeroName(e.target.value)}
-                  placeholder="Hero"
-                />
-              </label>
-              <label>
-                Sort
-                <select
-                  value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value)}
-                >
-                  <option value="newest">Newest first</option>
-                  <option value="oldest">Oldest first</option>
-                </select>
-              </label>
-              <label>
-                Parse limit
-                <input
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={handLimit}
-                  onChange={(e) => setHandLimit(e.target.value)}
-                />
-              </label>
-              <label>
-                Hand set
-                <select
-                  value={preflopHandSet}
-                  onChange={(e) => setPreflopHandSet(e.target.value)}
-                >
-                  <option value="all_hands">Include all hands</option>
-                  <option value="exclude_preflop_folds">
-                    Exclude hero preflop folds
-                  </option>
-                </select>
-              </label>
+            <div className="hand-review-advanced">
+              <button
+                type="button"
+                className="hand-review-advanced-toggle"
+                onClick={() => setIsParserConfigOpen((value) => !value)}
+                aria-expanded={isParserConfigOpen}
+              >
+                {isParserConfigOpen
+                  ? "Hide Import Settings"
+                  : "Import Settings"}
+              </button>
+              {isParserConfigOpen ? (
+                <div className="hand-review-controls hand-review-controls--config">
+                  <label>
+                    Hero name
+                    <input
+                      type="text"
+                      value={heroName}
+                      onChange={(e) => setHeroName(e.target.value)}
+                      placeholder="Hero"
+                    />
+                  </label>
+                  <label>
+                    Sort
+                    <select
+                      value={sortOrder}
+                      onChange={(e) => setSortOrder(e.target.value)}
+                    >
+                      <option value="newest">Newest first</option>
+                      <option value="oldest">Oldest first</option>
+                    </select>
+                  </label>
+                  <label>
+                    Parse limit
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={handLimit}
+                      onChange={(e) => setHandLimit(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Hand set
+                    <select
+                      value={preflopHandSet}
+                      onChange={(e) => setPreflopHandSet(e.target.value)}
+                    >
+                      <option value="all_hands">Include all hands</option>
+                      <option value="exclude_preflop_folds">
+                        Exclude hero preflop folds
+                      </option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
             </div>
 
             <div className="hand-review-inputs">
@@ -4302,6 +4337,7 @@ export default function HandReviewPanel() {
             <div className="hand-review-actions">
               <button
                 type="button"
+                className="hand-review-action-primary"
                 onClick={runParse}
                 disabled={!canSubmit || loadingParse}
               >
@@ -4310,6 +4346,7 @@ export default function HandReviewPanel() {
               {parsedHands.length > 0 ? (
                 <button
                   type="button"
+                  className="hand-review-action-secondary"
                   onClick={promptSaveTournament}
                   disabled={loadingTournamentSave || loadingParse || !canSubmit}
                 >
@@ -4391,7 +4428,7 @@ export default function HandReviewPanel() {
         ) : null}
 
         {parsedHands.length > 0 ? (
-          <div className="hand-review-controls">
+          <div className="hand-review-controls hand-review-controls--filters">
             <label>
               Outcome status
               <select
@@ -4430,14 +4467,15 @@ export default function HandReviewPanel() {
 
         {filteredParsedHands.length > 0 ? (
           <div className="hand-review-selection-tools">
-            <button type="button" onClick={selectAllHands}>
+            <button type="button" className="hand-review-action-quiet" onClick={selectAllHands}>
               Select all
             </button>
-            <button type="button" onClick={clearSelection}>
+            <button type="button" className="hand-review-action-quiet" onClick={clearSelection}>
               Clear selection
             </button>
             <button
               type="button"
+              className="hand-review-action-primary"
               onClick={runReview}
               disabled={
                 selectedCount === 0 ||
@@ -4462,6 +4500,17 @@ export default function HandReviewPanel() {
               const isQuickReviewLoading = quickReviewHandKey === rowKey;
               const attachedReview = reviewsByHandKey[rowKey];
               const isReviewLogicExpanded = expandedReviewLogicKeys.has(rowKey);
+              const handPosition = hand.heroPosition || "Unknown position";
+              const heroCardsLabel = formatHeroCards(hand.heroCards);
+              const preflopLine =
+                (hand.heroPreflop?.actions || [])
+                  .map((action) => formatAction(action))
+                  .join(", ") || "No decision";
+              const reviewState = isQuickReviewLoading
+                ? "loading"
+                : attachedReview
+                  ? "reviewed"
+                  : "pending";
               return (
                 <article
                   key={rowKey}
@@ -4470,19 +4519,62 @@ export default function HandReviewPanel() {
                     isAuditTarget ? "audit-target" : ""
                   }`}
                 >
-                  <div className="hand-row-head">
-                    <div className="hand-row-id">
-                      <label className="hand-row-select">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleHandSelection(hand)}
-                        />
-                        <strong>{hand.handId}</strong>
-                      </label>
+                  <div className="hand-row-main">
+                    <div className="hand-row-core">
+                      <div className="hand-row-primary">
+                        <label className="hand-row-select">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleHandSelection(hand)}
+                          />
+                          <strong className="hand-row-hand-id">
+                            {hand.handId}
+                          </strong>
+                        </label>
+                        <span className="hand-row-position-badge">
+                          {handPosition}
+                        </span>
+                      </div>
+                      <div className="hand-row-secondary">
+                        <span className="hand-row-cards">{heroCardsLabel}</span>
+                        <span
+                          className={`outcome-pill ${outcomeClass(outcome.code)}`}
+                          title={outcome.code || "unknown"}
+                        >
+                          {outcome.label || "Outcome unknown"}
+                          {Number(outcome.wonAmount) > 0
+                            ? ` (${outcome.wonAmount})`
+                            : ""}
+                        </span>
+                      </div>
+                      <div className="hand-row-tertiary">
+                        <div className="hand-row-metadata">
+                          <span
+                            className="hand-row-meta-item hand-row-meta-item--action"
+                            title={`Preflop: ${preflopLine}`}
+                          >
+                            <span className="hand-row-meta-label">Preflop</span>
+                            <span className="hand-row-meta-value">
+                              {preflopLine}
+                            </span>
+                          </span>
+                          <span className="hand-row-meta-divider" aria-hidden="true">
+                            •
+                          </span>
+                          <span className="hand-row-meta-item hand-row-meta-item--time">
+                            <span className="hand-row-meta-label">Played</span>
+                            <span className="hand-row-meta-value">
+                              {hand.playedAt}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="hand-row-side">
                       <button
                         type="button"
-                        className={`hand-row-quick-review ${
+                        className={`hand-row-quick-review hand-row-quick-review--${reviewState} ${
                           isQuickReviewLoading ? "loading" : ""
                         }`}
                         onClick={(event) => {
@@ -4494,29 +4586,13 @@ export default function HandReviewPanel() {
                         title="Quick AI review this hand"
                         aria-label={`Quick AI review ${hand.handId}`}
                       >
-                        {isQuickReviewLoading ? "..." : "⚡"}
+                        {isQuickReviewLoading
+                          ? "Analyzing..."
+                          : attachedReview
+                            ? "AI reviewed"
+                            : "AI review"}
                       </button>
                     </div>
-                    <span>{hand.playedAt}</span>
-                  </div>
-                  <div className="hand-row-meta">
-                    <span>{hand.heroPosition || "Unknown position"}</span>
-                    <span>Cards: {formatHeroCards(hand.heroCards)}</span>
-                    <span
-                      className={`outcome-pill ${outcomeClass(outcome.code)}`}
-                      title={outcome.code || "unknown"}
-                    >
-                      {outcome.label || "Outcome unknown"}
-                      {Number(outcome.wonAmount) > 0
-                        ? ` (${outcome.wonAmount})`
-                        : ""}
-                    </span>
-                    <span>
-                      Preflop:{" "}
-                      {(hand.heroPreflop?.actions || [])
-                        .map((action) => formatAction(action))
-                        .join(", ") || "No decision"}
-                    </span>
                   </div>
                   {attachedReview ? (
                     <div className="hand-row-review">
@@ -4690,7 +4766,7 @@ export default function HandReviewPanel() {
         ) : null}
       </div>
 
-      <div className="hand-review-pane hand-review-pane-right">
+      <div className="hand-review-pane hand-review-pane-right hand-review-pane-right--insights">
         {hasTournamentSummary || hasHandAudit || hasOpponentSnapshot ? (
           <div className="hand-insights">
             <div
@@ -4753,7 +4829,7 @@ export default function HandReviewPanel() {
             </div>
 
             {insightsTab === "tournament" && hasTournamentSummary ? (
-              <div className="tournament-summary">
+              <div className="tournament-summary tournament-summary--overview">
                 <div className="tournament-summary-head">
                   <h3>Tournament Summary</h3>
                   <span>
@@ -4761,20 +4837,22 @@ export default function HandReviewPanel() {
                   </span>
                 </div>
                 {tournamentCoachSummary ? (
-                  <div className="tournament-coach-summary">
-                    <h4>Coach Summary</h4>
+                  <div className="tournament-coach-summary tournament-coach-summary--hero">
+                    <h4>Coaching Narrative</h4>
                     {tournamentCoachSummary.rating ? (
-                      <>
-                        <p>
-                          <strong>Tournament rating:</strong>{" "}
-                          {tournamentCoachSummary.rating.score10Label} (
-                          {tournamentCoachSummary.rating.scorePctLabel})
-                        </p>
-                        {tournamentCoachSummary.rating.prelimNote ? (
-                          <p className="hand-review-empty">
-                            {tournamentCoachSummary.rating.prelimNote}
+                      <section className="coach-narrative-section coach-narrative-section--evaluation">
+                        <div className="coach-rating-hero">
+                          <p className="coach-rating-label">Overall performance</p>
+                          <p className="coach-rating-value">
+                            {tournamentCoachSummary.rating.score10Label} (
+                            {tournamentCoachSummary.rating.scorePctLabel})
                           </p>
-                        ) : null}
+                          {tournamentCoachSummary.rating.prelimNote ? (
+                            <p className="hand-review-empty coach-rating-note">
+                              {tournamentCoachSummary.rating.prelimNote}
+                            </p>
+                          ) : null}
+                        </div>
                         {tournamentCoachSummary.rating.topDrags.length > 0 ? (
                           <details className="coach-drags-pill">
                             <summary>
@@ -4796,59 +4874,74 @@ export default function HandReviewPanel() {
                             </div>
                           </details>
                         ) : null}
-                      </>
+                      </section>
                     ) : null}
-                    <p>
-                      <strong>Primary leak:</strong>{" "}
-                      {tournamentCoachSummary.primaryLeak}
-                    </p>
-                    {tournamentCoachSummary.secondaryLeak ? (
-                      <p>
-                        <strong>Secondary leak:</strong>{" "}
-                        {tournamentCoachSummary.secondaryLeak}
-                      </p>
+
+                    <section className="coach-narrative-section coach-narrative-section--priority">
+                      <div className="coach-leaks-grid">
+                        <div className="coach-leak-card coach-leak-card--primary">
+                          <span>Biggest leak</span>
+                          <strong>{tournamentCoachSummary.primaryLeak}</strong>
+                        </div>
+                        {coachPrimaryAdjustment ? (
+                          <div className="coach-leak-card coach-leak-card--adjustment">
+                            <span>Highest-priority adjustment</span>
+                            <strong>{coachPrimaryAdjustment}</strong>
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+
+                    {coachSupportingEvidence.length > 0 ? (
+                      <section className="coach-narrative-section coach-narrative-section--evidence">
+                        <p className="coach-summary-heading">
+                          <strong>Supporting evidence</strong>
+                        </p>
+                        <div className="tournament-summary-flags coach-summary-flags">
+                          {coachSupportingEvidence.map((line, idx) => (
+                            <p
+                              key={`coach-evidence-${idx}`}
+                              className="trend-flag watch"
+                            >
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                      </section>
                     ) : null}
-                    <p>
-                      <strong>Key stats:</strong>
-                    </p>
-                    <div className="tournament-summary-flags">
-                      {tournamentCoachSummary.evidence.map((line, idx) => (
-                        <p
-                          key={`coach-evidence-${idx}`}
-                          className="trend-flag watch"
-                        >
-                          {line}
+
+                    {(tournamentCoachSummary.secondaryLeak ||
+                      coachSecondaryAdjustments.length > 0 ||
+                      postflopIpHighlights.length > 0) ? (
+                      <section className="coach-narrative-section coach-narrative-section--secondary">
+                        <p className="coach-summary-heading">
+                          <strong>Secondary insights</strong>
                         </p>
-                      ))}
-                    </div>
-                    <p>
-                      <strong>Quick fixes:</strong>
-                    </p>
-                    <div className="tournament-summary-flags">
-                      {tournamentCoachSummary.actions.map((line, idx) => (
-                        <p
-                          key={`coach-action-${idx}`}
-                          className="trend-flag good"
-                        >
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {postflopIpHighlights.length > 0 ? (
-                  <div className="tournament-coach-summary">
-                    <h4>Postflop IP Highlights</h4>
-                    <div className="tournament-summary-flags">
-                      {postflopIpHighlights.map((line, idx) => (
-                        <p
-                          key={`postflop-ip-highlight-${idx}`}
-                          className="trend-flag watch"
-                        >
-                          {line}
-                        </p>
-                      ))}
-                    </div>
+                        <div className="tournament-summary-flags coach-summary-flags">
+                          {tournamentCoachSummary.secondaryLeak ? (
+                            <p className="trend-flag watch">
+                              Secondary leak: {tournamentCoachSummary.secondaryLeak}
+                            </p>
+                          ) : null}
+                          {coachSecondaryAdjustments.map((line, idx) => (
+                            <p
+                              key={`coach-secondary-action-${idx}`}
+                              className="trend-flag good"
+                            >
+                              {line}
+                            </p>
+                          ))}
+                          {postflopIpHighlights.map((line, idx) => (
+                            <p
+                              key={`postflop-ip-highlight-${idx}`}
+                              className="trend-flag watch"
+                            >
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -4866,17 +4959,28 @@ export default function HandReviewPanel() {
                     <p className="hand-review-error">{summaryReviewError}</p>
                   ) : null}
                   {summaryReview ? (
-                    <div className="tournament-ai-review-card">
+                    <div className="tournament-ai-review-card tournament-ai-review-card--authority">
+                      <h4>AI Coaching Briefing</h4>
                       <p className="tournament-ai-paragraph">
                         {buildAiSummaryParagraph(summaryReview)}
                       </p>
-                      {aiSummaryActions.length > 0 ? (
+                      {aiPrimaryAction ? (
+                        <div className="ai-briefing-priority">
+                          <p className="coach-summary-heading">
+                            <strong>Highest-priority adjustment</strong>
+                          </p>
+                          <p className="trend-flag good">
+                            {ensureSentenceEnding(aiPrimaryAction)}
+                          </p>
+                        </div>
+                      ) : null}
+                      {aiSecondaryActions.length > 0 ? (
                         <>
-                          <p>
-                            <strong>Priority fixes:</strong>
+                          <p className="coach-summary-heading">
+                            <strong>Supporting adjustments</strong>
                           </p>
                           <div className="tournament-summary-flags">
-                            {aiSummaryActions.slice(0, 4).map((line, idx) => (
+                            {aiSecondaryActions.map((line, idx) => (
                               <p
                                 key={`ai-summary-action-${idx}`}
                                 className="trend-flag good"
@@ -4889,8 +4993,8 @@ export default function HandReviewPanel() {
                       ) : null}
                       {aiSummaryWarnings.length > 0 ? (
                         <>
-                          <p>
-                            <strong>Watch-outs:</strong>
+                          <p className="coach-summary-heading">
+                            <strong>Secondary risks</strong>
                           </p>
                           <div className="tournament-summary-flags">
                             {aiSummaryWarnings.slice(0, 3).map((line, idx) => (
@@ -4911,7 +5015,7 @@ export default function HandReviewPanel() {
             ) : null}
 
             {insightsTab === "stats" && hasTournamentSummary ? (
-              <div className="tournament-summary">
+              <div className="tournament-summary tournament-summary--stats">
                 <div className="tournament-summary-head">
                   <h3>Tournament Stats</h3>
                   <span>
@@ -6385,3 +6489,4 @@ export default function HandReviewPanel() {
     </section>
   );
 }
+
