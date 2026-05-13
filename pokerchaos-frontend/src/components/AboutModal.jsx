@@ -5,16 +5,17 @@ const ABOUT_SLIDES = [
     id: "getting-started",
     title: "Getting Started",
     points: [
-      "Export your tournament hand history from PokerCraft.",
+      "Export your tournament hand history from your poker client.",
       "Upload the hand history file in Hand Review and let PlaybackPoker parse it.",
       "Once parsed, your hands are ready for filtering, tagging, and deeper review.",
+      "Parsing is currently supported for No Limit Hold'em tournaments on Pokerstars and GG Poker, and cash games on GG Poker and is free to use.",
     ],
   },
   {
     id: "reviewing",
     title: "Reviewing Hands",
     points: [
-      "Use tournament summary panels to spot key leaks and pressure points.",
+      "Use Session Summary panels to spot key leaks and pressure points.",
       "Filter by position, stack depth, stage, and action pattern to focus on specific spots.",
       "Core tournament review and filtering tools are local-first and free by default.",
     ],

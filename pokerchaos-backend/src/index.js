@@ -15,7 +15,7 @@ import {
   buildOpponentSnapshot,
   compactHandForApi,
   filterHandsForReview,
-  parseGgTournamentHistory,
+  parseHandHistory,
   sortHands,
 } from "./handHistoryService.js";
 import {
@@ -50,33 +50,41 @@ if (!process.env.OPENAI_API_KEY) {
 }
 if (!process.env.STRIPE_SECRET_KEY) {
   console.warn(
-    "[pokerchaos-backend] STRIPE_SECRET_KEY is not set. Billing routes will be disabled."
+    "[pokerchaos-backend] STRIPE_SECRET_KEY is not set. Billing routes will be disabled.",
   );
 }
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 const clerkIssuer = process.env.CLERK_ISSUER;
-const reviewAllowAll = String(process.env.REVIEW_ALLOW_ALL || "true")
-  .trim()
-  .toLowerCase() !== "false";
-const reviewAiAllowAll = String(process.env.REVIEW_AI_ALLOW_ALL || "false")
-  .trim()
-  .toLowerCase() === "true";
-const coachAllowAll = String(process.env.COACH_ALLOW_ALL || "false")
-  .trim()
-  .toLowerCase() === "true";
+const reviewAllowAll =
+  String(process.env.REVIEW_ALLOW_ALL || "true")
+    .trim()
+    .toLowerCase() !== "false";
+const reviewAiAllowAll =
+  String(process.env.REVIEW_AI_ALLOW_ALL || "false")
+    .trim()
+    .toLowerCase() === "true";
+const coachAllowAll =
+  String(process.env.COACH_ALLOW_ALL || "false")
+    .trim()
+    .toLowerCase() === "true";
 const reviewAiModel = String(process.env.REVIEW_AI_MODEL || "gpt-4.1-mini")
   .trim()
   .toLowerCase();
 const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+const stripeWebhookSecret = String(
+  process.env.STRIPE_WEBHOOK_SECRET || "",
+).trim();
 const stripePriceId = String(process.env.STRIPE_PRICE_ID || "").trim();
 const stripeSuccessUrl = String(process.env.STRIPE_SUCCESS_URL || "").trim();
 const stripeCancelUrl = String(process.env.STRIPE_CANCEL_URL || "").trim();
-const stripePortalReturnUrl = String(process.env.STRIPE_PORTAL_RETURN_URL || "").trim();
-const enableAiTrial = String(process.env.AI_ENABLE_TRIAL || "true")
-  .trim()
-  .toLowerCase() !== "false";
+const stripePortalReturnUrl = String(
+  process.env.STRIPE_PORTAL_RETURN_URL || "",
+).trim();
+const enableAiTrial =
+  String(process.env.AI_ENABLE_TRIAL || "true")
+    .trim()
+    .toLowerCase() !== "false";
 const aiTrialTokenGrantRaw = Number(process.env.AI_TRIAL_TOKEN_GRANT);
 const aiTrialTokenGrant =
   Number.isFinite(aiTrialTokenGrantRaw) && aiTrialTokenGrantRaw > 0
@@ -90,15 +98,17 @@ const aiMonthlyTokenCap =
 const GPT_41_MINI_INPUT_COST_PER_TOKEN = 0.4 / 1_000_000;
 const GPT_41_MINI_OUTPUT_COST_PER_TOKEN = 1.6 / 1_000_000;
 const aiEstimatedHandReviewTokensPerHandRaw = Number(
-  process.env.AI_ESTIMATED_HAND_REVIEW_TOKENS_PER_HAND
+  process.env.AI_ESTIMATED_HAND_REVIEW_TOKENS_PER_HAND,
 );
-const aiEstimatedSummaryTokensRaw = Number(process.env.AI_ESTIMATED_SUMMARY_TOKENS);
+const aiEstimatedSummaryTokensRaw = Number(
+  process.env.AI_ESTIMATED_SUMMARY_TOKENS,
+);
 const aiEstimatedIcmTokensRaw = Number(process.env.AI_ESTIMATED_ICM_TOKENS);
 const aiEstimatedBlindDefenseTokensRaw = Number(
-  process.env.AI_ESTIMATED_BLIND_DEFENSE_TOKENS
+  process.env.AI_ESTIMATED_BLIND_DEFENSE_TOKENS,
 );
 const aiEstimatedTableHintTokensRaw = Number(
-  process.env.AI_ESTIMATED_TABLE_HINT_TOKENS
+  process.env.AI_ESTIMATED_TABLE_HINT_TOKENS,
 );
 const aiEstimatedHandReviewTokensPerHand =
   Number.isFinite(aiEstimatedHandReviewTokensPerHandRaw) &&
@@ -106,7 +116,8 @@ const aiEstimatedHandReviewTokensPerHand =
     ? Math.floor(aiEstimatedHandReviewTokensPerHandRaw)
     : 5_000;
 const aiEstimatedSummaryTokens =
-  Number.isFinite(aiEstimatedSummaryTokensRaw) && aiEstimatedSummaryTokensRaw > 0
+  Number.isFinite(aiEstimatedSummaryTokensRaw) &&
+  aiEstimatedSummaryTokensRaw > 0
     ? Math.floor(aiEstimatedSummaryTokensRaw)
     : 2_500;
 const aiEstimatedIcmTokens =
@@ -153,7 +164,7 @@ app.use(
   cors({
     origin: allowedOrigins || true,
     credentials: false,
-  })
+  }),
 );
 
 app.post(
@@ -177,7 +188,7 @@ app.post(
         event = stripe.webhooks.constructEvent(
           req.body,
           signature,
-          stripeWebhookSecret
+          stripeWebhookSecret,
         );
       } else {
         const textBody = Buffer.isBuffer(req.body)
@@ -186,7 +197,10 @@ app.post(
         event = JSON.parse(textBody || "{}");
       }
     } catch (error) {
-      console.error("[pokerchaos-backend] Stripe webhook signature error", error);
+      console.error(
+        "[pokerchaos-backend] Stripe webhook signature error",
+        error,
+      );
       return res.status(400).json({ error: "Invalid webhook signature." });
     }
 
@@ -194,10 +208,13 @@ app.post(
       await handleStripeWebhookEvent(event, stripe);
       return res.json({ received: true });
     } catch (error) {
-      console.error("[pokerchaos-backend] Stripe webhook handling error", error);
+      console.error(
+        "[pokerchaos-backend] Stripe webhook handling error",
+        error,
+      );
       return res.status(500).json({ error: "Webhook handling failed." });
     }
-  }
+  },
 );
 
 app.use(express.json({ limit: "8mb" }));
@@ -212,7 +229,7 @@ function parseUserIdSet(raw) {
     raw
       .split(",")
       .map((value) => value.trim())
-      .filter(Boolean)
+      .filter(Boolean),
   );
 }
 
@@ -221,19 +238,27 @@ function parseEmailSet(raw) {
   return new Set(
     raw
       .split(",")
-      .map((value) => String(value || "").trim().toLowerCase())
-      .filter(Boolean)
+      .map((value) =>
+        String(value || "")
+          .trim()
+          .toLowerCase(),
+      )
+      .filter(Boolean),
   );
 }
 
-const reviewAllowedUserIds = parseUserIdSet(process.env.REVIEW_ALLOWED_USER_IDS);
+const reviewAllowedUserIds = parseUserIdSet(
+  process.env.REVIEW_ALLOWED_USER_IDS,
+);
 const reviewAiAllowedUserIds = parseUserIdSet(
-  process.env.REVIEW_AI_ALLOWED_USER_IDS
+  process.env.REVIEW_AI_ALLOWED_USER_IDS,
 );
 const coachAllowedUserIds = parseUserIdSet(process.env.COACH_ALLOWED_USER_IDS);
 const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
 const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
-const reviewAiAllowedEmails = parseEmailSet(process.env.REVIEW_AI_ALLOWED_EMAILS);
+const reviewAiAllowedEmails = parseEmailSet(
+  process.env.REVIEW_AI_ALLOWED_EMAILS,
+);
 const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
 const shouldLookupUserEmails =
@@ -267,7 +292,8 @@ function extractUserEmails(user) {
 }
 
 function hasAnyMatchingEmail(candidateEmails, allowedEmailSet) {
-  if (!(allowedEmailSet instanceof Set) || allowedEmailSet.size === 0) return false;
+  if (!(allowedEmailSet instanceof Set) || allowedEmailSet.size === 0)
+    return false;
   const emails = Array.isArray(candidateEmails) ? candidateEmails : [];
   return emails.some((email) => allowedEmailSet.has(normalizeEmail(email)));
 }
@@ -275,7 +301,8 @@ function hasAnyMatchingEmail(candidateEmails, allowedEmailSet) {
 function buildEntitlements(userId, userEmails = []) {
   const uid = String(userId || "").trim();
   const isAdmin =
-    adminUserIds.has(uid) || hasAnyMatchingEmail(userEmails, adminAllowedEmails);
+    adminUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, adminAllowedEmails);
   const review =
     isAdmin ||
     reviewAllowAll ||
@@ -323,7 +350,10 @@ async function resolveBillingAiAccessForUser(userId) {
     try {
       await ensureAiTrialCredits(uid, aiTrialTokenGrant);
     } catch (error) {
-      console.error("[pokerchaos-backend] Failed to ensure AI trial credits", error);
+      console.error(
+        "[pokerchaos-backend] Failed to ensure AI trial credits",
+        error,
+      );
     }
   }
 
@@ -347,15 +377,13 @@ function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
 
 function extractSubscriptionPriceId(subscription) {
   const priceId =
-    subscription?.items?.data?.[0]?.price?.id ||
-    subscription?.plan?.id ||
-    null;
+    subscription?.items?.data?.[0]?.price?.id || subscription?.plan?.id || null;
   return typeof priceId === "string" && priceId.trim() ? priceId.trim() : null;
 }
 
 async function syncSubscriptionFromStripeObject(
   stripeSubscription,
-  explicitUserId = null
+  explicitUserId = null,
 ) {
   const subscriptionId = String(stripeSubscription?.id || "").trim();
   const stripeCustomerId = String(stripeSubscription?.customer || "").trim();
@@ -369,14 +397,14 @@ async function syncSubscriptionFromStripeObject(
       explicitUserId ||
         stripeSubscription?.metadata?.userId ||
         stripeSubscription?.metadata?.user_id ||
-        ""
+        "",
     ).trim() || null;
   const mappedUserId = await getUserIdByStripeCustomerId(stripeCustomerId);
   const userId = candidateUserId || mappedUserId;
   if (!userId) {
     console.warn(
       "[pokerchaos-backend] Could not map Stripe subscription to user",
-      subscriptionId
+      subscriptionId,
     );
     return null;
   }
@@ -394,19 +422,20 @@ async function syncSubscriptionFromStripeObject(
     stripeCustomerId,
     status,
     priceId: extractSubscriptionPriceId(stripeSubscription),
-    currentPeriodStartEpoch:
-      Number.isFinite(Number(stripeSubscription?.current_period_start))
-        ? Number(stripeSubscription.current_period_start)
-        : null,
-    currentPeriodEndEpoch:
-      Number.isFinite(Number(stripeSubscription?.current_period_end))
-        ? Number(stripeSubscription.current_period_end)
-        : null,
+    currentPeriodStartEpoch: Number.isFinite(
+      Number(stripeSubscription?.current_period_start),
+    )
+      ? Number(stripeSubscription.current_period_start)
+      : null,
+    currentPeriodEndEpoch: Number.isFinite(
+      Number(stripeSubscription?.current_period_end),
+    )
+      ? Number(stripeSubscription.current_period_end)
+      : null,
     cancelAtPeriodEnd: Boolean(stripeSubscription?.cancel_at_period_end),
-    canceledAtEpoch:
-      Number.isFinite(Number(stripeSubscription?.canceled_at))
-        ? Number(stripeSubscription.canceled_at)
-        : null,
+    canceledAtEpoch: Number.isFinite(Number(stripeSubscription?.canceled_at))
+      ? Number(stripeSubscription.canceled_at)
+      : null,
     raw: stripeSubscription || {},
   });
   return userId;
@@ -423,7 +452,7 @@ async function handleStripeWebhookEvent(event, stripe) {
       object?.client_reference_id ||
         object?.metadata?.userId ||
         object?.metadata?.user_id ||
-        ""
+        "",
     ).trim();
     const email = String(object?.customer_details?.email || "").trim() || null;
     if (userId && customerId) {
@@ -444,7 +473,7 @@ async function handleStripeWebhookEvent(event, stripe) {
       } catch (error) {
         console.error(
           "[pokerchaos-backend] Failed to retrieve subscription after checkout completion",
-          error
+          error,
         );
       }
     }
@@ -488,7 +517,7 @@ async function requireAuth(req, res, next) {
       } catch (error) {
         console.warn(
           `[pokerchaos-backend] Failed to resolve Clerk user emails for ${userId}`,
-          error
+          error,
         );
       }
     }
@@ -497,7 +526,7 @@ async function requireAuth(req, res, next) {
     const billingAiAccess = await resolveBillingAiAccessForUser(userId);
     req.entitlements = mergeEntitlementsWithBilling(
       baseEntitlements,
-      billingAiAccess
+      billingAiAccess,
     );
     req.aiAccess = billingAiAccess;
     return next();
@@ -619,22 +648,24 @@ function sanitizeHandForStreetFairness(hand) {
   const foldAt = foldedActions.findIndex(
     (action) =>
       String(action?.player || "") === heroName &&
-      String(action?.type || "") === "fold"
+      String(action?.type || "") === "fold",
   );
   if (foldAt >= 0) {
     clone.actionsByStreet[foldedStreet] = foldedActions.slice(0, foldAt + 1);
   }
 
-  const heroFoldedActions = Array.isArray(clone?.heroActionsByStreet?.[foldedStreet])
+  const heroFoldedActions = Array.isArray(
+    clone?.heroActionsByStreet?.[foldedStreet],
+  )
     ? clone.heroActionsByStreet[foldedStreet]
     : [];
   const heroFoldAt = heroFoldedActions.findIndex(
-    (action) => String(action?.type || "") === "fold"
+    (action) => String(action?.type || "") === "fold",
   );
   if (heroFoldAt >= 0) {
     clone.heroActionsByStreet[foldedStreet] = heroFoldedActions.slice(
       0,
-      heroFoldAt + 1
+      heroFoldAt + 1,
     );
   }
 
@@ -689,36 +720,45 @@ function buildOpponentLookup(opponentSnapshot) {
       enteredPotPct: toFiniteNumberOrNull(item?.enteredPot?.pct),
       foldedPreflopPct: toFiniteNumberOrNull(item?.foldedPreflop?.pct),
       preflopRaisePct: toFiniteNumberOrNull(item?.preflopRaise?.pct),
-      foldToPreflopRaisePct: toFiniteNumberOrNull(item?.foldToPreflopRaise?.pct),
-      postflopAggressionFrequencyPct: toFiniteNumberOrNull(
-        item?.postflopAggression?.frequencyPct
+      foldToPreflopRaisePct: toFiniteNumberOrNull(
+        item?.foldToPreflopRaise?.pct,
       ),
-        postflopAggressionFactor: toFiniteNumberOrNull(
-          item?.postflopAggression?.factor
-        ),
-        tags: tagLabels,
-        playNote: {
-          text:
-            typeof item?.playNote?.text === "string" && item.playNote.text.trim()
-              ? item.playNote.text.trim()
-              : null,
-          confidence:
-            typeof item?.playNote?.confidence === "string" &&
-            item.playNote.confidence.trim()
-              ? item.playNote.confidence.trim()
-              : null,
-        },
-      });
+      postflopAggressionFrequencyPct: toFiniteNumberOrNull(
+        item?.postflopAggression?.frequencyPct,
+      ),
+      postflopAggressionFactor: toFiniteNumberOrNull(
+        item?.postflopAggression?.factor,
+      ),
+      tags: tagLabels,
+      playNote: {
+        text:
+          typeof item?.playNote?.text === "string" && item.playNote.text.trim()
+            ? item.playNote.text.trim()
+            : null,
+        confidence:
+          typeof item?.playNote?.confidence === "string" &&
+          item.playNote.confidence.trim()
+            ? item.playNote.confidence.trim()
+            : null,
+      },
+    });
   }
   return lookup;
 }
 
-function summarizeTournamentHands(allHands, filteredHands, heroName, sortDirection, limit) {
+function summarizeTournamentHands(
+  allHands,
+  filteredHands,
+  heroName,
+  sortDirection,
+  limit,
+) {
   const heroFoldedPreflopCount = allHands.filter((hand) =>
-    Boolean(hand?.heroPreflop?.didFold)
+    Boolean(hand?.heroPreflop?.didFold),
   ).length;
   const heroEnteredPreflopCount = allHands.filter(
-    (hand) => Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold)
+    (hand) =>
+      Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold),
   ).length;
 
   return {
@@ -741,15 +781,16 @@ function resolveTournamentPlayedAtEpoch(hands) {
 }
 
 function resolveTournamentIdFromHands(hands, requestedTournamentId) {
-  const requested = typeof requestedTournamentId === "string"
-    ? requestedTournamentId.trim()
-    : "";
+  const requested =
+    typeof requestedTournamentId === "string"
+      ? requestedTournamentId.trim()
+      : "";
   const ids = Array.from(
     new Set(
       hands
         .map((hand) => String(hand?.tournamentId || "").trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 
   if (requested) {
@@ -812,7 +853,9 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
   const trial = req.entitlements?.billing?.trial;
   return res.json({
     userId: req.auth?.userId || null,
-    emails: Array.isArray(req.entitlements?.emails) ? req.entitlements.emails : [],
+    emails: Array.isArray(req.entitlements?.emails)
+      ? req.entitlements.emails
+      : [],
     features: {
       review: Boolean(req.entitlements?.review),
       reviewAi: Boolean(req.entitlements?.reviewAi),
@@ -821,7 +864,7 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
     },
     billing: {
       hasActiveSubscription: Boolean(
-        req.entitlements?.billing?.hasActiveSubscription
+        req.entitlements?.billing?.hasActiveSubscription,
       ),
       subscriptionStatus: req.entitlements?.billing?.subscriptionStatus || null,
       trial: trial
@@ -863,7 +906,9 @@ app.get("/me/ai-usage", requireAuth, async (req, res) => {
       billing: {
         hasActiveSubscription: Boolean(aiAccess.hasActiveSubscription),
         subscriptionStatus: aiAccess.subscriptionStatus || null,
-        trialRemainingTokens: toNonNegativeInt(aiAccess?.trial?.remainingTokens),
+        trialRemainingTokens: toNonNegativeInt(
+          aiAccess?.trial?.remainingTokens,
+        ),
       },
       pricing: {
         inputPer1MUsd: 0.4,
@@ -1040,7 +1085,10 @@ app.post("/billing/portal-session", requireAuth, async (req, res) => {
   }
 
   const returnUrl =
-    parsed.data.returnUrl || stripePortalReturnUrl || stripeCancelUrl || stripeSuccessUrl;
+    parsed.data.returnUrl ||
+    stripePortalReturnUrl ||
+    stripeCancelUrl ||
+    stripeSuccessUrl;
   if (!returnUrl) {
     return res.status(500).json({
       error:
@@ -1146,10 +1194,11 @@ async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
   const userId = req.auth?.userId || "";
   const estimate = toNonNegativeInt(estimatedTokens);
   try {
-    const aiAccess = req.aiAccess || (await resolveBillingAiAccessForUser(userId));
+    const aiAccess =
+      req.aiAccess || (await resolveBillingAiAccessForUser(userId));
     const hasActiveSubscription = Boolean(aiAccess?.hasActiveSubscription);
     const trialRemainingTokens = toNonNegativeInt(
-      aiAccess?.trial?.remainingTokens
+      aiAccess?.trial?.remainingTokens,
     );
     const shouldEnforceTrial =
       !hasActiveSubscription &&
@@ -1181,7 +1230,10 @@ async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
     const usage = await getMonthlyAiUsage(userId, new Date());
     const usedTokens = toNonNegativeInt(usage.totalTokens);
     const projectedTokens = usedTokens + estimate;
-    if (usedTokens >= aiMonthlyTokenCap || projectedTokens > aiMonthlyTokenCap) {
+    if (
+      usedTokens >= aiMonthlyTokenCap ||
+      projectedTokens > aiMonthlyTokenCap
+    ) {
       const remainingTokens = Math.max(0, aiMonthlyTokenCap - usedTokens);
       return res.status(429).json({
         error: "Monthly AI token limit reached for this account.",
@@ -1246,7 +1298,7 @@ app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
   try {
     const result = await getAggressionPrompt(
       parsed.data.context,
-      parsed.data.instruction
+      parsed.data.instruction,
     );
     return res.json(result);
   } catch (error) {
@@ -1257,56 +1309,63 @@ app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
   }
 });
 
-app.post("/hand-history/parse", requireAuth, requireFeature("review"), async (req, res) => {
-  const parsed = handHistorySchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-  }
+app.post(
+  "/hand-history/parse",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    const parsed = handHistorySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
 
-  try {
-    const allHands = parseGgTournamentHistory(parsed.data.historyText, {
-      heroName: parsed.data.heroName,
-    });
-    const heroFoldedPreflopCount = allHands.filter((hand) =>
-      Boolean(hand?.heroPreflop?.didFold)
-    ).length;
-    const heroEnteredPreflopCount = allHands.filter(
-      (hand) => Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold)
-    ).length;
-    const filtered = filterHandsForReview(allHands, {
-      includeOnlyHeroDidNotFoldPreflop:
-        parsed.data.includeOnlyHeroDidNotFoldPreflop,
-    });
-    const sorted = sortHands(filtered, parsed.data.sort);
-    const limited = sorted.slice(0, parsed.data.limit);
-    const opponents = buildOpponentSnapshot(allHands, {
-      heroName: parsed.data.heroName,
-      minHands: 1,
-    });
-
-    return res.json({
-      summary: {
+    try {
+      const allHands = parseHandHistory(parsed.data.historyText, {
         heroName: parsed.data.heroName,
-        totalHands: allHands.length,
-        filteredHands: filtered.length,
-        returnedHands: limited.length,
-        heroFoldedPreflopCount,
-        heroEnteredPreflopCount,
-        sort: parsed.data.sort,
-      },
-      opponents,
-      hands: limited.map(compactHandForApi),
-    });
-  } catch (error) {
-    console.error("[pokerchaos-backend] Hand parse error", error);
-    return res.status(500).json({
-      error: "Failed to parse hand history. Check file format and try again.",
-    });
-  }
-});
+      });
+      const heroFoldedPreflopCount = allHands.filter((hand) =>
+        Boolean(hand?.heroPreflop?.didFold),
+      ).length;
+      const heroEnteredPreflopCount = allHands.filter(
+        (hand) =>
+          Boolean(hand?.heroPreflop?.acted) &&
+          !Boolean(hand?.heroPreflop?.didFold),
+      ).length;
+      const filtered = filterHandsForReview(allHands, {
+        includeOnlyHeroDidNotFoldPreflop:
+          parsed.data.includeOnlyHeroDidNotFoldPreflop,
+      });
+      const sorted = sortHands(filtered, parsed.data.sort);
+      const limited = sorted.slice(0, parsed.data.limit);
+      const opponents = buildOpponentSnapshot(allHands, {
+        heroName: parsed.data.heroName,
+        minHands: 1,
+      });
+
+      return res.json({
+        summary: {
+          heroName: parsed.data.heroName,
+          totalHands: allHands.length,
+          filteredHands: filtered.length,
+          returnedHands: limited.length,
+          heroFoldedPreflopCount,
+          heroEnteredPreflopCount,
+          sort: parsed.data.sort,
+        },
+        opponents,
+        hands: limited.map(compactHandForApi),
+      });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Hand parse error", error);
+      return res.status(500).json({
+        error: "Failed to parse hand history. Check file format and try again.",
+      });
+    }
+  },
+);
 
 app.post(
   "/tournaments/upload",
@@ -1329,19 +1388,22 @@ app.post(
     }
 
     try {
-      const allHands = parseGgTournamentHistory(parsed.data.historyText, {
+      const parsedHands = parseHandHistory(parsed.data.historyText, {
         heroName: parsed.data.heroName,
       });
+      const allHands = parsedHands.filter(
+        (hand) => String(hand?.gameType || "").toLowerCase() === "tournament",
+      );
       if (!allHands.length) {
         return res.status(400).json({
           error:
-            "No valid hands were found in the upload. Verify the hand history format.",
+            "No valid tournament hands were found in the upload. Verify the hand history format.",
         });
       }
 
       const { tournamentId, ids } = resolveTournamentIdFromHands(
         allHands,
-        parsed.data.tournamentId
+        parsed.data.tournamentId,
       );
       if (!tournamentId) {
         return res.status(400).json({
@@ -1353,18 +1415,18 @@ app.post(
 
       let resolvedTournamentId = tournamentId;
       let tournamentHands = allHands.filter(
-        (hand) => String(hand?.tournamentId || "").trim() === tournamentId
+        (hand) => String(hand?.tournamentId || "").trim() === tournamentId,
       );
       if (!tournamentHands.length && ids.length === 1) {
         resolvedTournamentId = ids[0];
         tournamentHands = allHands.filter(
-          (hand) => String(hand?.tournamentId || "").trim() === resolvedTournamentId
+          (hand) =>
+            String(hand?.tournamentId || "").trim() === resolvedTournamentId,
         );
       }
       if (!tournamentHands.length) {
         return res.status(400).json({
-          error:
-            "No hands matched the provided tournamentId in this upload.",
+          error: "No hands matched the provided tournamentId in this upload.",
           tournamentId: resolvedTournamentId,
           detectedTournamentIds: ids,
         });
@@ -1381,7 +1443,7 @@ app.post(
         filtered,
         parsed.data.heroName,
         "newest",
-        sorted.length
+        sorted.length,
       );
       const opponents = buildOpponentSnapshot(tournamentHands, {
         heroName: parsed.data.heroName,
@@ -1413,7 +1475,9 @@ app.post(
         },
         summary,
         resolvedTournamentId:
-          resolvedTournamentId !== tournamentId ? resolvedTournamentId : undefined,
+          resolvedTournamentId !== tournamentId
+            ? resolvedTournamentId
+            : undefined,
       });
     } catch (error) {
       console.error("[pokerchaos-backend] Tournament upload error", error);
@@ -1421,7 +1485,7 @@ app.post(
         error: "Failed to upload tournament history. Please try again.",
       });
     }
-  }
+  },
 );
 
 app.get(
@@ -1445,7 +1509,7 @@ app.get(
         error: "Failed to list tournaments.",
       });
     }
-  }
+  },
 );
 
 app.get(
@@ -1471,7 +1535,7 @@ app.get(
     try {
       const record = await getTournamentUpload(
         req.auth?.userId || "",
-        parsedParams.data.tournamentId
+        parsedParams.data.tournamentId,
       );
       if (!record) {
         return res.status(404).json({ error: "Tournament upload not found." });
@@ -1498,7 +1562,7 @@ app.get(
         error: "Failed to load tournament upload.",
       });
     }
-  }
+  },
 );
 
 app.delete(
@@ -1524,19 +1588,22 @@ app.delete(
     try {
       const deleted = await deleteTournamentUpload(
         req.auth?.userId || "",
-        parsedParams.data.tournamentId
+        parsedParams.data.tournamentId,
       );
       if (!deleted) {
         return res.status(404).json({ error: "Tournament upload not found." });
       }
-      return res.json({ ok: true, deletedTournamentId: parsedParams.data.tournamentId });
+      return res.json({
+        ok: true,
+        deletedTournamentId: parsedParams.data.tournamentId,
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] Tournament delete error", error);
       return res.status(500).json({
         error: "Failed to delete tournament upload.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1562,19 +1629,22 @@ app.post(
     try {
       const deleted = await deleteTournamentUpload(
         req.auth?.userId || "",
-        parsedParams.data.tournamentId
+        parsedParams.data.tournamentId,
       );
       if (!deleted) {
         return res.status(404).json({ error: "Tournament upload not found." });
       }
-      return res.json({ ok: true, deletedTournamentId: parsedParams.data.tournamentId });
+      return res.json({
+        ok: true,
+        deletedTournamentId: parsedParams.data.tournamentId,
+      });
     } catch (error) {
       console.error("[pokerchaos-backend] Tournament delete error", error);
       return res.status(500).json({
         error: "Failed to delete tournament upload.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1592,18 +1662,20 @@ app.post(
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+      return res
+        .status(500)
+        .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
     const estimatedTokens = Math.max(
       1,
-      parsed.data.selectedHands.length * aiEstimatedHandReviewTokensPerHand
+      parsed.data.selectedHands.length * aiEstimatedHandReviewTokensPerHand,
     );
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       estimatedTokens,
-      "/hand-history/review"
+      "/hand-history/review",
     );
     if (quotaResponse) return quotaResponse;
 
@@ -1613,11 +1685,14 @@ app.post(
       const usageEntries = [];
       for (const hand of parsed.data.selectedHands) {
         const compactHand = sanitizeHandForStreetFairness(hand);
-        const reviewHand = attachOpponentContextToHand(compactHand, opponentLookup);
+        const reviewHand = attachOpponentContextToHand(
+          compactHand,
+          opponentLookup,
+        );
         const review = await reviewTournamentHand(
           reviewHand,
           parsed.data.instruction,
-          reviewAiModel
+          reviewAiModel,
         );
         usageEntries.push(review?.usage || null);
         reviews.push({
@@ -1647,11 +1722,11 @@ app.post(
             remainingTokens: Math.max(
               0,
               aiMonthlyTokenCap -
-                toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+                toNonNegativeInt(usageState.monthlyUsage.totalTokens),
             ),
             usedCostUsd: usageState.monthlyUsage.totalCostUsd,
             trialRemainingTokens: toNonNegativeInt(
-              usageState.trial?.remainingTokens
+              usageState.trial?.remainingTokens,
             ),
           },
         },
@@ -1664,7 +1739,7 @@ app.post(
           "Failed to review hand history with AI. Please try again in a moment.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1682,14 +1757,16 @@ app.post(
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+      return res
+        .status(500)
+        .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedSummaryTokens,
-      "/hand-history/summary-review"
+      "/hand-history/summary-review",
     );
     if (quotaResponse) return quotaResponse;
 
@@ -1697,7 +1774,7 @@ app.post(
       const review = await reviewTournamentSummary(
         parsed.data.summary,
         parsed.data.instruction,
-        reviewAiModel
+        reviewAiModel,
       );
       const usageState = await trackAiUsage({
         userId: req.auth?.userId || "",
@@ -1716,22 +1793,22 @@ app.post(
           remainingTokens: Math.max(
             0,
             aiMonthlyTokenCap -
-              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
           trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens
+            usageState.trial?.remainingTokens,
           ),
         },
       });
     } catch (error) {
-      console.error("[pokerchaos-backend] Tournament summary review error", error);
+      console.error("[pokerchaos-backend] Session Summary review error", error);
       return res.status(502).json({
         error:
-          "Failed to review tournament summary with AI. Please try again in a moment.",
+          "Failed to review Session Summary with AI. Please try again in a moment.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1749,14 +1826,16 @@ app.post(
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+      return res
+        .status(500)
+        .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedIcmTokens,
-      "/hand-history/icm-review"
+      "/hand-history/icm-review",
     );
     if (quotaResponse) return quotaResponse;
 
@@ -1764,7 +1843,7 @@ app.post(
       const review = await reviewIcmSpotSummary(
         parsed.data.icmSummary,
         parsed.data.instruction,
-        reviewAiModel
+        reviewAiModel,
       );
       const usageState = await trackAiUsage({
         userId: req.auth?.userId || "",
@@ -1783,21 +1862,22 @@ app.post(
           remainingTokens: Math.max(
             0,
             aiMonthlyTokenCap -
-              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
           trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens
+            usageState.trial?.remainingTokens,
           ),
         },
       });
     } catch (error) {
       console.error("[pokerchaos-backend] ICM review error", error);
       return res.status(502).json({
-        error: "Failed to review ICM spots with AI. Please try again in a moment.",
+        error:
+          "Failed to review ICM spots with AI. Please try again in a moment.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1815,14 +1895,16 @@ app.post(
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+      return res
+        .status(500)
+        .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedBlindDefenseTokens,
-      "/hand-history/blind-defense-review"
+      "/hand-history/blind-defense-review",
     );
     if (quotaResponse) return quotaResponse;
 
@@ -1830,7 +1912,7 @@ app.post(
       const review = await reviewBlindDefenseSummary(
         parsed.data.blindDefenseSummary,
         parsed.data.instruction,
-        reviewAiModel
+        reviewAiModel,
       );
       const usageState = await trackAiUsage({
         userId: req.auth?.userId || "",
@@ -1849,11 +1931,11 @@ app.post(
           remainingTokens: Math.max(
             0,
             aiMonthlyTokenCap -
-              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
           trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens
+            usageState.trial?.remainingTokens,
           ),
         },
       });
@@ -1864,7 +1946,7 @@ app.post(
           "Failed to review blind defense spots with AI. Please try again in a moment.",
       });
     }
-  }
+  },
 );
 
 app.post(
@@ -1882,14 +1964,16 @@ app.post(
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+      return res
+        .status(500)
+        .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedTableHintTokens,
-      "/hand-history/table-hint"
+      "/hand-history/table-hint",
     );
     if (quotaResponse) return quotaResponse;
 
@@ -1908,7 +1992,7 @@ app.post(
       const review = await reviewCurrentTableHint(
         tableHintContext,
         parsed.data.instruction,
-        reviewAiModel
+        reviewAiModel,
       );
       const usageState = await trackAiUsage({
         userId: req.auth?.userId || "",
@@ -1927,11 +2011,11 @@ app.post(
           remainingTokens: Math.max(
             0,
             aiMonthlyTokenCap -
-              toNonNegativeInt(usageState.monthlyUsage.totalTokens)
+              toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
           trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens
+            usageState.trial?.remainingTokens,
           ),
         },
       });
@@ -1942,7 +2026,7 @@ app.post(
           "Failed to generate current table hint with AI. Please try again in a moment.",
       });
     }
-  }
+  },
 );
 
 function startServer(port, attempts = 0) {
@@ -1954,7 +2038,7 @@ function startServer(port, attempts = 0) {
       if (err && err.code === "EADDRINUSE" && attempts < 5) {
         const next = port + 1;
         console.warn(
-          `[pokerchaos-backend] Port ${port} in use. Retrying on ${next}...`
+          `[pokerchaos-backend] Port ${port} in use. Retrying on ${next}...`,
         );
         startServer(next, attempts + 1);
       } else {
@@ -1971,12 +2055,15 @@ async function boot() {
       await initDatabase();
       console.log("[pokerchaos-backend] Postgres initialized.");
     } catch (error) {
-      console.error("[pokerchaos-backend] Failed to initialize Postgres", error);
+      console.error(
+        "[pokerchaos-backend] Failed to initialize Postgres",
+        error,
+      );
       process.exit(1);
     }
   } else {
     console.warn(
-      "[pokerchaos-backend] Postgres not configured. Tournament uploads and AI usage tracking are disabled."
+      "[pokerchaos-backend] Postgres not configured. Tournament uploads and AI usage tracking are disabled.",
     );
   }
 

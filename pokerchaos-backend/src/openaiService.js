@@ -100,10 +100,13 @@ const SUIT_NAMES = {
   s: "spades",
 };
 
-const VALUE_TO_RANK = Object.entries(RANK_VALUES).reduce((acc, [rank, value]) => {
-  acc[value] = rank;
-  return acc;
-}, {});
+const VALUE_TO_RANK = Object.entries(RANK_VALUES).reduce(
+  (acc, [rank, value]) => {
+    acc[value] = rank;
+    return acc;
+  },
+  {},
+);
 
 function rankValueToName(value, plural = false) {
   const rank = VALUE_TO_RANK[value];
@@ -251,9 +254,7 @@ function computeStraightDetails(heroCards = [], boardCards = []) {
     if (
       !heroStraight ||
       highValue > heroStraight.high ||
-      (highValue === heroStraight.high &&
-        heroStraight.boardOnly &&
-        !boardOnly)
+      (highValue === heroStraight.high && heroStraight.boardOnly && !boardOnly)
     ) {
       heroStraight = {
         high: highValue,
@@ -272,9 +273,7 @@ function computeStraightDetails(heroCards = [], boardCards = []) {
   }
 
   const isNut =
-    !boardNutHigh || heroStraight.high >= boardNutHigh
-      ? true
-      : false;
+    !boardNutHigh || heroStraight.high >= boardNutHigh ? true : false;
 
   return {
     hero: {
@@ -316,7 +315,7 @@ function describeHandFeatures(heroCards = {}, board = {}) {
   const allValues = cards.map((c) => c.value);
   const boardValues = boardCards.map((c) => c.value);
   const sortedBoardValues = Array.from(new Set(boardValues)).sort(
-    (a, b) => b - a
+    (a, b) => b - a,
   );
   const boardHigh = sortedBoardValues[0] ?? null;
   const boardSecond = sortedBoardValues[1] ?? null;
@@ -326,7 +325,7 @@ function describeHandFeatures(heroCards = {}, board = {}) {
   const flushSuitEntry = suitEntries.find(([, count]) => count >= 5);
   const hasFlush = Boolean(flushSuitEntry);
   const boardSuitEntries = Array.from(boardSuitCounts.entries()).sort(
-    (a, b) => b[1] - a[1]
+    (a, b) => b[1] - a[1],
   );
   const boardFlushSuitEntry =
     boardSuitEntries.length && boardSuitEntries[0][1] >= 3
@@ -426,10 +425,10 @@ function describeHandFeatures(heroCards = {}, board = {}) {
       break;
     case "full_house":
       summary = `Full house, ${describePlural(topRank)} over ${describePlural(
-        secondRank
+        secondRank,
       )}.`;
       detail = `Full house (${describePlural(topRank)} full of ${describePlural(
-        secondRank
+        secondRank,
       )})`;
       break;
     case "flush": {
@@ -444,25 +443,26 @@ function describeHandFeatures(heroCards = {}, board = {}) {
         const heroLabel =
           heroLabelRaw.charAt(0).toUpperCase() + heroLabelRaw.slice(1);
         const boardNutLabel = straightDetails.boardNutLabel
-          ? straightDetails.boardNutLabel.replace(
-              /^([a-z])/,
-              (letter) => letter.toUpperCase()
+          ? straightDetails.boardNutLabel.replace(/^([a-z])/, (letter) =>
+              letter.toUpperCase(),
             )
           : null;
         detail = `${heroLabel} straight`;
         if (straightDetails.hero.boardOnly) {
           summary = `${heroLabel} straight on board.`;
-          notes.push("Straight relies entirely on board cards; no kicker edge.");
+          notes.push(
+            "Straight relies entirely on board cards; no kicker edge.",
+          );
         } else {
           summary = `${heroLabel} straight.`;
         }
         if (!straightDetails.isNut && boardNutLabel) {
           notes.push(
-            `${boardNutLabel} straights remain; avoid treating the hand as the nuts.`
+            `${boardNutLabel} straights remain; avoid treating the hand as the nuts.`,
           );
           summary = `${summary.replace(
             /\.$/,
-            ""
+            "",
           )}; higher ${boardNutLabel.toLowerCase()} straights are possible.`;
         } else {
           summary = `${summary.replace(/\.$/, "")} (nut straight).`;
@@ -490,13 +490,13 @@ function describeHandFeatures(heroCards = {}, board = {}) {
         heroPairs.length === 2
           ? "both_pairs"
           : heroPairs.length === 1
-          ? "one_pair_hero"
-          : "board_two_pair";
+            ? "one_pair_hero"
+            : "board_two_pair";
       break;
     }
     case "pair": {
       const pairEntry = rankEntries.find(
-        ([rank, count]) => count >= 2 && heroRanks.has(rank)
+        ([rank, count]) => count >= 2 && heroRanks.has(rank),
       );
       const pairRank = pairEntry?.[0];
       if (pairRank) {
@@ -508,7 +508,7 @@ function describeHandFeatures(heroCards = {}, board = {}) {
         else strength = "under_pair";
         summary = `Pair of ${describePlural(pairRank)} (${strength.replace(
           "_",
-          " "
+          " ",
         )}).`;
         detail = `Pair of ${describePlural(pairRank)}`;
       } else if (topRank) {
@@ -529,7 +529,7 @@ function describeHandFeatures(heroCards = {}, board = {}) {
 
   if (drawPhrases.length > 0) {
     summary = `${summary.replace(/\.$/, "")} with ${drawPhrases.join(
-      " and "
+      " and ",
     )}.`;
   }
 
@@ -570,11 +570,11 @@ function summarizeHistory(history) {
         (aggrWords.some((w) =>
           String(h?.action || "")
             .toLowerCase()
-            .includes(w)
+            .includes(w),
         )
           ? 1
           : 0),
-      0
+      0,
     );
     const oddSize = history.some((h) => {
       const s = h?.sizing;
@@ -593,7 +593,7 @@ function summarizeHistory(history) {
           lastHero.sizing
             ? `(${lastHero.sizing.kind}:${lastHero.sizing.value})`
             : ""
-        }`
+        }`,
       );
     if (lastOpp) parts.push(`last_opp=${lastOpp.action}`);
     parts.push(`agg=${aggr}`);
@@ -675,13 +675,13 @@ function sizingCue(ctx) {
       const pool = inPos.has(seat)
         ? poolIP
         : outPos.has(seat)
-        ? poolOOP
-        : ["3.5x", "3.8x", "4x"];
+          ? poolOOP
+          : ["3.5x", "3.8x", "4x"];
       const idx =
         ((ctx?.previousActions?.length ?? 0) + branch.length) % pool.length;
       const preferred = pool[idx];
       return `3-bet size preferences: ${pool.join(
-        ", "
+        ", ",
       )}. Prefer: ${preferred}.`;
     }
   } catch {}
@@ -824,8 +824,8 @@ function stackSnapshot(context = {}) {
       ? Math.min(hero, villain)
       : hero
     : villainValid
-    ? villain
-    : null;
+      ? villain
+      : null;
   return {
     hero: heroValid ? hero : null,
     villain: villainValid ? villain : null,
@@ -872,7 +872,7 @@ function buildResponse(
   parsed,
   completion,
   fallbackFlavor,
-  fallbackAction = "aggress"
+  fallbackAction = "aggress",
 ) {
   let hero_action = String(parsed?.hero_action || fallbackAction).trim();
   const normalized = hero_action.toLowerCase();
@@ -922,16 +922,23 @@ function normalizeReviewResponse(parsed, completion, handContext = {}) {
     turn_score: clampStreetScore(parsed?.turn_score),
     river_score: clampStreetScore(parsed?.river_score),
     confidence,
-    what_was_good: String(parsed?.what_was_good || "").trim() || "No clear strengths identified.",
-    primary_leak: String(parsed?.primary_leak || "").trim() || "No major leak flagged.",
-    better_line: String(parsed?.better_line || "").trim() || "No alternative line suggested.",
+    what_was_good:
+      String(parsed?.what_was_good || "").trim() ||
+      "No clear strengths identified.",
+    primary_leak:
+      String(parsed?.primary_leak || "").trim() || "No major leak flagged.",
+    better_line:
+      String(parsed?.better_line || "").trim() ||
+      "No alternative line suggested.",
     reasoning:
       String(parsed?.reasoning || "").trim() ||
       "Review was inconclusive with the available hand details.",
     usage,
   };
 
-  const foldedStreet = String(handContext?.reviewContext?.heroFoldedStreet || "")
+  const foldedStreet = String(
+    handContext?.reviewContext?.heroFoldedStreet || "",
+  )
     .trim()
     .toLowerCase();
   if (foldedStreet === "preflop") {
@@ -1075,7 +1082,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Likely overfolding after facing reraises",
       evidence: `Fold after facing reraises is ${rateLabel(
         reraiseFolds,
-        reraiseSpots
+        reraiseSpots,
       )}.`,
       action:
         "Tighten your aggressive range construction so opens/3-bets do not become automatic folds to reraises.",
@@ -1085,10 +1092,14 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   const preflopFoldPct = toFinite(summaryContext?.preflopFoldPct, 0);
   const preflopFoldThreshold = toFinite(
     summaryContext?.preflopFoldWarnThreshold,
-    999
+    999,
   );
   const totalHands = toFinite(summaryContext?.totalHands, 0);
-  if (candidates.length === 0 && totalHands >= 40 && preflopFoldPct > preflopFoldThreshold) {
+  if (
+    candidates.length === 0 &&
+    totalHands >= 40 &&
+    preflopFoldPct > preflopFoldThreshold
+  ) {
     addCandidate({
       key: "preflop_fold_high",
       area: "preflop",
@@ -1096,7 +1107,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       sample: totalHands,
       label: "Overall preflop fold rate is high",
       evidence: `Preflop fold rate is ${preflopFoldPct.toFixed(
-        1
+        1,
       )}% versus ~${preflopFoldThreshold.toFixed(1)}% threshold.`,
       action:
         "Split focus between first-in opens and blind defenses to bring overall preflop fold rate down.",
@@ -1121,7 +1132,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Missing profitable in-position flop c-bets",
       evidence: `Missed IP c-bets on favorable flops: ${rateLabel(
         missedIpCbet.count,
-        missedIpCbet.opportunities
+        missedIpCbet.opportunities,
       )}.`,
       action:
         "C-bet favorable flop textures more often in position when preflop aggressor.",
@@ -1138,7 +1149,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Under-stabbing in position after checks",
       evidence: `Missed IP stabs on favorable flops: ${rateLabel(
         missedIpStab.count,
-        missedIpStab.opportunities
+        missedIpStab.opportunities,
       )}.`,
       action:
         "Attack capped check lines more frequently in position on favorable boards.",
@@ -1155,7 +1166,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Likely overfolding turn bets in position",
       evidence: `Likely light IP turn folds: ${rateLabel(
         lightIpTurnFold.count,
-        lightIpTurnFold.opportunities
+        lightIpTurnFold.opportunities,
       )}.`,
       action:
         "Continue more turn bets in position with pair-plus and draw-heavy holdings.",
@@ -1172,7 +1183,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Likely overfolding rivers in position",
       evidence: `Likely light IP river folds: ${rateLabel(
         lightIpRiverFold.count,
-        lightIpRiverFold.opportunities
+        lightIpRiverFold.opportunities,
       )}.`,
       action:
         "Review river bluff-catch thresholds in position before defaulting to folds.",
@@ -1192,7 +1203,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
       label: "Missing turn/river value-raise opportunities in position",
       evidence: `Missed IP value-raises (turn/river): ${rateLabel(
         missedIpValueRaise.count,
-        missedIpValueRaise.opportunities
+        missedIpValueRaise.opportunities,
       )}.`,
       action:
         "Add selective turn/river value-raises in position when strong made hands face capped bet ranges.",
@@ -1200,7 +1211,8 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   }
 
   const hasStrongPreflopSignal = candidates.some(
-    (item) => item.area === "preflop" && item.sample >= 12 && item.severity >= 3
+    (item) =>
+      item.area === "preflop" && item.sample >= 12 && item.severity >= 3,
   );
 
   candidates.sort((a, b) => {
@@ -1221,36 +1233,42 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (primary?.evidence) evidence.push(primary.evidence);
   if (secondary?.evidence) evidence.push(secondary.evidence);
   if (openSpots > 0) {
-    evidence.push(`Open first-in baseline: ${rateLabel(openCount, openSpots)}.`);
+    evidence.push(
+      `Open first-in baseline: ${rateLabel(openCount, openSpots)}.`,
+    );
   }
   if (defendSpots > 0) {
-    evidence.push(`Defend vs open baseline: ${rateLabel(defendCount, defendSpots)}.`);
+    evidence.push(
+      `Defend vs open baseline: ${rateLabel(defendCount, defendSpots)}.`,
+    );
   }
   if (blindSpots > 0) {
-    evidence.push(`Blind fold vs open baseline: ${rateLabel(blindFolds, blindSpots)}.`);
+    evidence.push(
+      `Blind fold vs open baseline: ${rateLabel(blindFolds, blindSpots)}.`,
+    );
   }
   if (missedIpCbet.opportunities > 0) {
     evidence.push(
       `Missed IP c-bets (favorable flop): ${rateLabel(
         missedIpCbet.count,
-        missedIpCbet.opportunities
-      )}.`
+        missedIpCbet.opportunities,
+      )}.`,
     );
   }
   if (lightIpTurnFold.opportunities > 0) {
     evidence.push(
       `Likely light IP turn folds: ${rateLabel(
         lightIpTurnFold.count,
-        lightIpTurnFold.opportunities
-      )}.`
+        lightIpTurnFold.opportunities,
+      )}.`,
     );
   }
   if (missedIpValueRaise.opportunities > 0) {
     evidence.push(
       `Missed IP value-raises (turn/river): ${rateLabel(
         missedIpValueRaise.count,
-        missedIpValueRaise.opportunities
-      )}.`
+        missedIpValueRaise.opportunities,
+      )}.`,
     );
   }
 
@@ -1259,14 +1277,16 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   if (secondary?.action) actions.push(secondary.action);
   if (actions.length === 0) {
     actions.push(
-      "No dominant leak crossed confidence thresholds. Keep collecting sample and prioritize metrics with 12+ opportunities."
+      "No dominant leak crossed confidence thresholds. Keep collecting sample and prioritize metrics with 12+ opportunities.",
     );
   }
 
   const warnings = [];
   const warnIfSmall = (label, sample) => {
     if (toFinite(sample, 0) > 0 && toFinite(sample, 0) < 8) {
-      warnings.push(`${label} sample is small (${toFinite(sample, 0)}); treat as low confidence.`);
+      warnings.push(
+        `${label} sample is small (${toFinite(sample, 0)}); treat as low confidence.`,
+      );
     }
   };
   warnIfSmall("Open first-in", openSpots);
@@ -1275,7 +1295,7 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   warnIfSmall("Fold after reraises", reraiseSpots);
   warnIfSmall(
     "Call then faced raise",
-    toFinite(pre.callThenFacedRaiseSpots, 0)
+    toFinite(pre.callThenFacedRaiseSpots, 0),
   );
   warnIfSmall("Missed IP c-bets", missedIpCbet.opportunities);
   warnIfSmall("Missed IP stabs", missedIpStab.opportunities);
@@ -1288,10 +1308,8 @@ function deriveSummaryHeuristic(summaryContext = {}) {
     : sampleConfidence(totalHands);
 
   return {
-    primaryLeak:
-      primary?.label || "No major leak flagged.",
-    secondaryLeak:
-      secondary?.label || "No secondary leak flagged.",
+    primaryLeak: primary?.label || "No major leak flagged.",
+    secondaryLeak: secondary?.label || "No secondary leak flagged.",
     evidence: dedupeList(evidence, 6),
     actions: dedupeList(actions, 6),
     warnings: dedupeList(warnings, 6),
@@ -1299,7 +1317,11 @@ function deriveSummaryHeuristic(summaryContext = {}) {
   };
 }
 
-function normalizeSummaryReviewResponse(parsed, completion, summaryContext = {}) {
+function normalizeSummaryReviewResponse(
+  parsed,
+  completion,
+  summaryContext = {},
+) {
   const heuristic = deriveSummaryHeuristic(summaryContext);
   const confidenceRaw = String(parsed?.confidence || "medium")
     .trim()
@@ -1331,16 +1353,18 @@ function normalizeSummaryReviewResponse(parsed, completion, summaryContext = {})
     !modelPrimary ||
     /no major leak flagged|insufficient|no clear leak/i.test(modelPrimary);
   const secondaryLooksGeneric =
-    !modelSecondary ||
-    /no secondary leak flagged|none/i.test(modelSecondary);
+    !modelSecondary || /no secondary leak flagged|none/i.test(modelSecondary);
   const evidenceLooksWeak =
     modelEvidence.length === 0 ||
-    modelEvidence.every((line) => /insufficient structured evidence/i.test(line));
+    modelEvidence.every((line) =>
+      /insufficient structured evidence/i.test(line),
+    );
   const actionsLookWeak =
     modelActions.length === 0 ||
     modelActions.every((line) => /collect a larger sample/i.test(line));
   const shouldUseHeuristicPrimary =
-    primaryLooksGeneric && !/No major leak flagged\./i.test(heuristic.primaryLeak);
+    primaryLooksGeneric &&
+    !/No major leak flagged\./i.test(heuristic.primaryLeak);
   const shouldUseHeuristicSecondary =
     secondaryLooksGeneric && heuristic.secondaryLeak;
   const shouldUseHeuristicLists = evidenceLooksWeak || actionsLookWeak;
@@ -1393,7 +1417,11 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
   for (const opponent of opponents) {
     const playerId = asString(opponent?.player);
     const seatLabel = toSeatLabel(opponent);
-    if (playerId && seatLabel && playerId.toLowerCase() !== seatLabel.toLowerCase()) {
+    if (
+      playerId &&
+      seatLabel &&
+      playerId.toLowerCase() !== seatLabel.toLowerCase()
+    ) {
       aliasPairs.push({ playerId, seatLabel });
     }
   }
@@ -1410,7 +1438,7 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
   };
 
   const strongSampleOpponents = opponents.filter(
-    (item) => Number(item?.handsSeen) >= 12
+    (item) => Number(item?.handsSeen) >= 12,
   );
   const maxHandsSeen = opponents.reduce((best, item) => {
     const hands = Number(item?.handsSeen);
@@ -1432,7 +1460,7 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
       foldToRaisePct >= 68
     ) {
       heuristicExploits.push(
-        `${name} overfolds after facing raises (${foldToRaisePct.toFixed(1)}% over ${foldToRaiseSample} spots); pressure opens and 3-bets more.`
+        `${name} overfolds after facing raises (${foldToRaisePct.toFixed(1)}% over ${foldToRaiseSample} spots); pressure opens and 3-bets more.`,
       );
     }
 
@@ -1445,7 +1473,7 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
       pfr <= 16
     ) {
       heuristicExploits.push(
-        `${name} looks loose-passive (VPIP ${vpip.toFixed(1)} / PFR ${pfr.toFixed(1)}); isolate wider and value-bet bigger postflop.`
+        `${name} looks loose-passive (VPIP ${vpip.toFixed(1)} / PFR ${pfr.toFixed(1)}); isolate wider and value-bet bigger postflop.`,
       );
     }
 
@@ -1458,7 +1486,7 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
       postFreq <= 22
     ) {
       heuristicExploits.push(
-        `${name} is passive postflop (${postFreq.toFixed(1)}% aggression frequency); add delayed stabs after checks.`
+        `${name} is passive postflop (${postFreq.toFixed(1)}% aggression frequency); add delayed stabs after checks.`,
       );
     }
     if (
@@ -1468,23 +1496,23 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
       postFreq >= 45
     ) {
       heuristicExploits.push(
-        `${name} is high-aggression postflop (${postFreq.toFixed(1)}% aggression frequency); tighten thin bluffs and bluff-catch selectively.`
+        `${name} is high-aggression postflop (${postFreq.toFixed(1)}% aggression frequency); tighten thin bluffs and bluff-catch selectively.`,
       );
     }
   }
 
   const modelPlan = rewritePlayerIdsToSeats(parsed?.table_plan);
   const modelExploits = asStringList(parsed?.priority_exploits, 6).map(
-    rewritePlayerIdsToSeats
+    rewritePlayerIdsToSeats,
   );
   const modelAvoid = asStringList(parsed?.avoid_traps, 6).map(
-    rewritePlayerIdsToSeats
+    rewritePlayerIdsToSeats,
   );
   const modelAdjustments = asStringList(parsed?.next_hour_adjustments, 8).map(
-    rewritePlayerIdsToSeats
+    rewritePlayerIdsToSeats,
   );
   const modelWarnings = asStringList(parsed?.sample_warnings, 8).map(
-    rewritePlayerIdsToSeats
+    rewritePlayerIdsToSeats,
   );
   const confidenceRaw = asString(parsed?.confidence).toLowerCase();
   const confidenceFromSample =
@@ -1497,7 +1525,8 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
     ? confidenceRaw
     : confidenceFromSample;
 
-  const tableLabel = asString(tableContext?.tableContext?.tableId) || "current table";
+  const tableLabel =
+    asString(tableContext?.tableContext?.tableId) || "current table";
   const heuristicPlan = `Play a disciplined exploit strategy at ${tableLabel}: attack clear preflop leaks, avoid marginal high-variance spots versus unknowns, and keep adjustments tied to sampled tendencies.`;
   const fallbackAdjustments = [
     "Open wider from late position when blinds overfold to pressure.",
@@ -1512,11 +1541,13 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
   ];
   const sampleWarnings = [];
   if (opponents.length < 3) {
-    sampleWarnings.push("Current table read is based on a small opponent pool.");
+    sampleWarnings.push(
+      "Current table read is based on a small opponent pool.",
+    );
   }
   if (maxHandsSeen > 0 && maxHandsSeen < 8) {
     sampleWarnings.push(
-      `Largest opponent sample is only ${maxHandsSeen} hands; confidence should stay low.`
+      `Largest opponent sample is only ${maxHandsSeen} hands; confidence should stay low.`,
     );
   }
 
@@ -1530,21 +1561,20 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
 
   const priorityExploits = dedupeList(
     [...modelExploits, ...heuristicExploits].map(rewritePlayerIdsToSeats),
-    6
+    6,
   );
   const nextHourAdjustmentsRaw = dedupeList(
-    (
-      modelAdjustments.length > 0
-        ? modelAdjustments
-        : [...heuristicExploits.slice(0, 3), ...fallbackAdjustments]
+    (modelAdjustments.length > 0
+      ? modelAdjustments
+      : [...heuristicExploits.slice(0, 3), ...fallbackAdjustments]
     ).map(rewritePlayerIdsToSeats),
-    9
+    9,
   );
   const nextHourAdjustments = nextHourAdjustmentsRaw.filter(
     (line) =>
       !priorityExploits.some(
-        (exploit) => exploit.toLowerCase() === String(line).toLowerCase()
-      )
+        (exploit) => exploit.toLowerCase() === String(line).toLowerCase(),
+      ),
   );
   const safeAdjustments =
     nextHourAdjustments.length > 0
@@ -1556,7 +1586,7 @@ function normalizeTableHintResponse(parsed, completion, tableContext = {}) {
     priority_exploits: priorityExploits,
     avoid_traps: dedupeList(
       modelAvoid.length > 0 ? modelAvoid : fallbackAvoid,
-      5
+      5,
     ),
     next_hour_adjustments: safeAdjustments,
     sample_warnings: dedupeList([...modelWarnings, ...sampleWarnings], 6),
@@ -1589,13 +1619,17 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
   const avgStackBb = Number(icmContext?.avgHeroStackBb);
 
   const primaryHeuristicByIssue = {
-    missed_icm_pressure: "Missing late-stage pressure opportunities in position",
-    missed_stack_pressure: "Not applying enough stack pressure on shorter blinds",
+    missed_icm_pressure:
+      "Missing late-stage pressure opportunities in position",
+    missed_stack_pressure:
+      "Not applying enough stack pressure on shorter blinds",
     too_loose_icm_open: "Opening/jamming too loose at late-stage stack depths",
     loose_jam_call_icm: "Calling all-ins too loose in ICM-heavy spots",
-    too_tight_icm_defend: "Overfolding defend spots when stack depth allows continues",
+    too_tight_icm_defend:
+      "Overfolding defend spots when stack depth allows continues",
     too_tight_jam_fold_icm: "Overfolding versus jams in likely continue spots",
-    passive_short_stack_line: "Using passive short-stack lines instead of jam/fold",
+    passive_short_stack_line:
+      "Using passive short-stack lines instead of jam/fold",
   };
 
   const primaryLeakHeuristic =
@@ -1611,21 +1645,23 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
 
   const evidenceHeuristic = [];
   evidenceHeuristic.push(
-    `Flagged ICM spots: ${flaggedCount}/${Number(icmContext?.lateLevelHands) || 0}.`
+    `Flagged ICM spots: ${flaggedCount}/${Number(icmContext?.lateLevelHands) || 0}.`,
   );
   if (openSpots > 0) {
     evidenceHeuristic.push(`Open spots reviewed: ${openSpots}.`);
   }
   if (pressureEligibleSpots > 0) {
     evidenceHeuristic.push(
-      `Pressure-eligible spots: ${missedPressureSpots}/${pressureEligibleSpots} missed.`
+      `Pressure-eligible spots: ${missedPressureSpots}/${pressureEligibleSpots} missed.`,
     );
   }
   if (facingJamSpots > 0) {
     evidenceHeuristic.push(`Facing-jam spots reviewed: ${facingJamSpots}.`);
   }
   if (Number.isFinite(avgStackBb)) {
-    evidenceHeuristic.push(`Average stack depth in sample: ${avgStackBb.toFixed(1)} BB.`);
+    evidenceHeuristic.push(
+      `Average stack depth in sample: ${avgStackBb.toFixed(1)} BB.`,
+    );
   }
 
   const actionsHeuristic = Array.isArray(icmContext?.quickFixes)
@@ -1633,7 +1669,7 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
     : [];
   if (actionsHeuristic.length === 0) {
     actionsHeuristic.push(
-      "No dominant ICM leak from this sample. Keep collecting late-stage hands and review pressure spots."
+      "No dominant ICM leak from this sample. Keep collecting late-stage hands and review pressure spots.",
     );
   }
 
@@ -1647,16 +1683,15 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
   const modelActions = asStringList(parsed?.actions, 8);
   const modelWarnings = asStringList(parsed?.warnings, 8);
   const modelConfidence = asString(parsed?.confidence).toLowerCase();
-  const confidence =
-    ["low", "medium", "high"].includes(modelConfidence)
-      ? modelConfidence
-      : ["low", "medium", "high"].includes(asString(icmContext?.confidence))
-        ? asString(icmContext?.confidence)
-        : flaggedCount >= 6
-          ? "high"
-          : flaggedCount >= 3
-            ? "medium"
-            : "low";
+  const confidence = ["low", "medium", "high"].includes(modelConfidence)
+    ? modelConfidence
+    : ["low", "medium", "high"].includes(asString(icmContext?.confidence))
+      ? asString(icmContext?.confidence)
+      : flaggedCount >= 6
+        ? "high"
+        : flaggedCount >= 3
+          ? "medium"
+          : "low";
 
   const usage = completion?.usage
     ? {
@@ -1670,12 +1705,16 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
     primary_leak: modelPrimary || primaryLeakHeuristic,
     secondary_leak: modelSecondary || secondaryLeakHeuristic,
     evidence: dedupeList(
-      modelEvidence.length > 0 ? [...modelEvidence, ...evidenceHeuristic] : evidenceHeuristic,
-      8
+      modelEvidence.length > 0
+        ? [...modelEvidence, ...evidenceHeuristic]
+        : evidenceHeuristic,
+      8,
     ),
     actions: dedupeList(
-      modelActions.length > 0 ? [...modelActions, ...actionsHeuristic] : actionsHeuristic,
-      8
+      modelActions.length > 0
+        ? [...modelActions, ...actionsHeuristic]
+        : actionsHeuristic,
+      8,
     ),
     warnings: dedupeList([...modelWarnings, ...warningsHeuristic], 8),
     confidence,
@@ -1686,7 +1725,7 @@ function normalizeIcmReviewResponse(parsed, completion, icmContext = {}) {
 function normalizeBlindDefenseReviewResponse(
   parsed,
   completion,
-  blindContext = {}
+  blindContext = {},
 ) {
   const asString = (value) => String(value || "").trim();
   const asStringList = (value, max = 8) =>
@@ -1699,7 +1738,8 @@ function normalizeBlindDefenseReviewResponse(
   const totalSpots = Number(blindContext?.totalBlindDefenseSpots) || 0;
   const likelyContinueSpots = Number(blindContext?.likelyContinueSpots) || 0;
   const missedContinues = Number(blindContext?.missedContinues?.count) || 0;
-  const missedSb3BetPressure = Number(blindContext?.missedSb3BetPressure?.count) || 0;
+  const missedSb3BetPressure =
+    Number(blindContext?.missedSb3BetPressure?.count) || 0;
   const classRows = Array.isArray(blindContext?.handClassRows)
     ? blindContext.handClassRows
     : [];
@@ -1708,11 +1748,13 @@ function normalizeBlindDefenseReviewResponse(
     blindContext?.issueCounts && typeof blindContext.issueCounts === "object"
       ? blindContext.issueCounts
       : {};
-  const topIssue = Object.entries(issueCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+  const topIssue =
+    Object.entries(issueCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
 
   const primaryByIssue = {
     missed_sb_3bet_pressure: "Underusing SB 3-bet pressure against late opens",
-    missed_blind_continue: "Overfolding likely blind continue spots versus opens",
+    missed_blind_continue:
+      "Overfolding likely blind continue spots versus opens",
   };
   const primaryLeakHeuristic =
     primaryByIssue[topIssue] ||
@@ -1729,16 +1771,16 @@ function normalizeBlindDefenseReviewResponse(
   const evidenceHeuristic = [];
   evidenceHeuristic.push(`Blind defense spots reviewed: ${totalSpots}.`);
   evidenceHeuristic.push(
-    `Likely continue spots: ${missedContinues}/${likelyContinueSpots}.`
+    `Likely continue spots: ${missedContinues}/${likelyContinueSpots}.`,
   );
   if (missedSb3BetPressure > 0) {
     evidenceHeuristic.push(
-      `Likely SB 3-bet pressure spots folded: ${missedSb3BetPressure}.`
+      `Likely SB 3-bet pressure spots folded: ${missedSb3BetPressure}.`,
     );
   }
   if (topClass?.label) {
     evidenceHeuristic.push(
-      `Most frequent missed class: ${topClass.label} (${Number(topClass.count) || 0}).`
+      `Most frequent missed class: ${topClass.label} (${Number(topClass.count) || 0}).`,
     );
   }
 
@@ -1747,7 +1789,7 @@ function normalizeBlindDefenseReviewResponse(
     : [];
   if (actionsHeuristic.length === 0) {
     actionsHeuristic.push(
-      "No dominant blind-defense issue detected; keep collecting sample and re-check missed continue classes."
+      "No dominant blind-defense issue detected; keep collecting sample and re-check missed continue classes.",
     );
   }
   const warningsHeuristic = Array.isArray(blindContext?.warnings)
@@ -1760,16 +1802,15 @@ function normalizeBlindDefenseReviewResponse(
   const modelActions = asStringList(parsed?.actions, 8);
   const modelWarnings = asStringList(parsed?.warnings, 8);
   const modelConfidence = asString(parsed?.confidence).toLowerCase();
-  const confidence =
-    ["low", "medium", "high"].includes(modelConfidence)
-      ? modelConfidence
-      : ["low", "medium", "high"].includes(asString(blindContext?.confidence))
-        ? asString(blindContext?.confidence)
-        : totalSpots >= 30
-          ? "high"
-          : totalSpots >= 12
-            ? "medium"
-            : "low";
+  const confidence = ["low", "medium", "high"].includes(modelConfidence)
+    ? modelConfidence
+    : ["low", "medium", "high"].includes(asString(blindContext?.confidence))
+      ? asString(blindContext?.confidence)
+      : totalSpots >= 30
+        ? "high"
+        : totalSpots >= 12
+          ? "medium"
+          : "low";
 
   const usage = completion?.usage
     ? {
@@ -1783,12 +1824,16 @@ function normalizeBlindDefenseReviewResponse(
     primary_leak: modelPrimary || primaryLeakHeuristic,
     secondary_leak: modelSecondary || secondaryLeakHeuristic,
     evidence: dedupeList(
-      modelEvidence.length > 0 ? [...modelEvidence, ...evidenceHeuristic] : evidenceHeuristic,
-      8
+      modelEvidence.length > 0
+        ? [...modelEvidence, ...evidenceHeuristic]
+        : evidenceHeuristic,
+      8,
     ),
     actions: dedupeList(
-      modelActions.length > 0 ? [...modelActions, ...actionsHeuristic] : actionsHeuristic,
-      8
+      modelActions.length > 0
+        ? [...modelActions, ...actionsHeuristic]
+        : actionsHeuristic,
+      8,
     ),
     warnings: dedupeList([...modelWarnings, ...warningsHeuristic], 8),
     confidence,
@@ -1802,9 +1847,10 @@ export async function getAggressionPrompt(context = {}, instruction) {
     typeof context?.model === "string" && context.model.trim()
       ? context.model.trim()
       : null;
-  const model = requestedModel && ALLOWED_MODELS.has(requestedModel)
-    ? requestedModel
-    : DEFAULT_MODEL;
+  const model =
+    requestedModel && ALLOWED_MODELS.has(requestedModel)
+      ? requestedModel
+      : DEFAULT_MODEL;
 
   if (persona === "cash_game_crusher") {
     return runCashGameCrusher(context, instruction, model);
@@ -1824,7 +1870,7 @@ export async function getAggressionPrompt(context = {}, instruction) {
 export async function reviewTournamentHand(
   handContext = {},
   instruction,
-  requestedModel
+  requestedModel,
 ) {
   const model =
     typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
@@ -1832,7 +1878,7 @@ export async function reviewTournamentHand(
       : DEFAULT_MODEL;
 
   const opponentsInHand = Array.isArray(
-    handContext?.opponentContext?.opponentsInHand
+    handContext?.opponentContext?.opponentsInHand,
   )
     ? handContext.opponentContext.opponentsInHand
     : [];
@@ -1922,7 +1968,7 @@ Instruction: ${
 export async function reviewTournamentSummary(
   summaryContext = {},
   instruction,
-  requestedModel
+  requestedModel,
 ) {
   const model =
     typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
@@ -1953,12 +1999,12 @@ Rules:
 - Keep evidence and actions concise (max 5 each).
 - Do not return generic placeholders like "No major leak flagged" when open/defend/blind metrics show clear deviations with 12+ samples.`;
 
-  const user = `Tournament summary context:
+  const user = `Session Summary context:
 ${JSON.stringify(summaryContext, null, 2)}
 
 Instruction: ${
     instruction ||
-    "Review this tournament summary and return the most likely leaks with concise, prioritized fixes."
+    "Review this Session Summary and return the most likely leaks with concise, prioritized fixes."
   }`;
 
   const { parsed, completion } = await completePrompt({
@@ -1976,7 +2022,7 @@ Instruction: ${
 export async function reviewCurrentTableHint(
   tableContext = {},
   instruction,
-  requestedModel
+  requestedModel,
 ) {
   const model =
     typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
@@ -2029,7 +2075,7 @@ Instruction: ${
 export async function reviewIcmSpotSummary(
   icmContext = {},
   instruction,
-  requestedModel
+  requestedModel,
 ) {
   const model =
     typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
@@ -2080,7 +2126,7 @@ Instruction: ${
 export async function reviewBlindDefenseSummary(
   blindContext = {},
   instruction,
-  requestedModel
+  requestedModel,
 ) {
   const model =
     typeof requestedModel === "string" && ALLOWED_MODELS.has(requestedModel)
@@ -2182,23 +2228,19 @@ Rules:
   const stakeGuidanceMap = {
     micro: {
       label: "Micro stakes",
-      note:
-        "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
+      note: "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
     },
     low: {
       label: "Low stakes",
-      note:
-        "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
+      note: "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
     },
     mid: {
       label: "Mid stakes",
-      note:
-        "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
+      note: "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
     },
     high: {
       label: "High stakes",
-      note:
-        "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
+      note: "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
     },
   };
   const stakeGuide =
@@ -2254,18 +2296,18 @@ async function runCashGameCrusher(context = {}, instruction, model) {
     effective >= 140
       ? `Deep stack ${effective} BB - room for triple-barrels and check-raise traps.`
       : effective <= 60
-      ? `Effective stack ${effective} BB - trim bluff frequency, prioritize value.`
-      : `Effective stack ${effective} BB - standard 100 BB cash depth.`;
+        ? `Effective stack ${effective} BB - trim bluff frequency, prioritize value.`
+        : `Effective stack ${effective} BB - standard 100 BB cash depth.`;
   const multiOpened = previous.some((code) =>
-    /preflop_multiple_villains_opened/.test(String(code))
+    /preflop_multiple_villains_opened/.test(String(code)),
   );
   const multiwayNote = multiOpened
     ? "Preflop: multiple villains entered before hero - expect multiway pots."
     : null;
   const facingOpen = previous.some((code) =>
     /preflop_opened_to_me|preflop_multiple_villains_opened|preflop_faced_3bet/.test(
-      String(code)
-    )
+      String(code),
+    ),
   );
   const fallbackAction = isWeakHand && facingOpen ? "fold" : "bet";
   const weakHandNote =
@@ -2347,7 +2389,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     parsed,
     completion,
     "Extract max value from the cash table.",
-    fallbackAction
+    fallbackAction,
   );
 }
 
@@ -2371,7 +2413,7 @@ async function runExploitDetective(context = {}, instruction, model) {
   const historyHint = summarizeHistory(context?.history);
   const stacks = stackSnapshot(context);
   const multiOpened = previous.some((code) =>
-    /preflop_multiple_villains_opened/.test(String(code))
+    /preflop_multiple_villains_opened/.test(String(code)),
   );
 
   const focusLines = [
@@ -2440,7 +2482,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     parsed,
     completion,
     "Exploit their leak with precision.",
-    "aggress"
+    "aggress",
   );
 }
 
@@ -2544,7 +2586,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     parsed,
     completion,
     "Stay sharp with shove-or-fold discipline.",
-    "jam"
+    "jam",
   );
 }
 
@@ -2564,7 +2606,7 @@ async function runRangeProfessor(context = {}, instruction, model) {
   const posCategory = positionCategory(context?.heroSeat);
   const actionInfo = actionContext(
     context?.previousActions || [],
-    context?.branch
+    context?.branch,
   );
   const previous = Array.isArray(context?.previousActions)
     ? context.previousActions
@@ -2580,10 +2622,10 @@ async function runRangeProfessor(context = {}, instruction, model) {
       ? effectiveStack >= 60
         ? "deep"
         : effectiveStack >= 30
-        ? "medium"
-        : effectiveStack > 0
-        ? "short"
-        : "unknown"
+          ? "medium"
+          : effectiveStack > 0
+            ? "short"
+            : "unknown"
       : "unknown");
   const relativePosition =
     context?.relativePosition ||
@@ -2608,23 +2650,19 @@ async function runRangeProfessor(context = {}, instruction, model) {
   const stakeGuidanceMap = {
     micro: {
       label: "Micro stakes",
-      note:
-        "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
+      note: "Population over-calls and under-bluffs; widen thin value bets, trim pure bluffs, punish passive lines.",
     },
     low: {
       label: "Low stakes",
-      note:
-        "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
+      note: "Expect loose preflop calls and passive postflop play; value bet hard, probe capped ranges, distrust big river bluffs.",
     },
     mid: {
       label: "Mid stakes",
-      note:
-        "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
+      note: "Regulars mix balanced aggression; defend enough vs steals, mix blocker-driven bluffs, respect credible multi-barrels.",
     },
     high: {
       label: "High stakes",
-      note:
-        "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
+      note: "Population balances ranges well; default to solver baselines, seize polarized spots, and anticipate double/triple barrels.",
     },
   };
   const stakeGuide =
@@ -2676,21 +2714,21 @@ async function runRangeProfessor(context = {}, instruction, model) {
     stakeGuide
       ? `Stakes: ${stakeGuide.label}. Guidance: ${stakeGuide.note}`
       : stakeTier === "unknown"
-      ? "Stakes: Unknown - use baseline solver frequencies."
-      : "",
+        ? "Stakes: Unknown - use baseline solver frequencies."
+        : "",
     relativePosition === "ip"
       ? "In position: leverage informational advantage to mix flats and controlled aggression."
       : relativePosition === "oop"
-      ? "Out of position: temper barreling frequency, protect checking ranges, lean on bluff-catchers judiciously."
-      : "",
+        ? "Out of position: temper barreling frequency, protect checking ranges, lean on bluff-catchers judiciously."
+        : "",
     format === "tournament"
       ? stackBucket === "deep"
         ? "Tournament context, deep stack (60bb+): widen open-raising ranges from mid/late seats, apply pressure to accumulate chips early."
         : stackBucket === "medium"
-        ? "Tournament context, medium stack (30-60bb): balance chip preservation with selective steals; avoid bloating marginal spots OOP."
-        : stackBucket === "short"
-        ? "Tournament context, short stack (<30bb): tighten opens, preserve fold equity for jam-or-fold decisions."
-        : "Tournament context: adjust ranges based on stack depth."
+          ? "Tournament context, medium stack (30-60bb): balance chip preservation with selective steals; avoid bloating marginal spots OOP."
+          : stackBucket === "short"
+            ? "Tournament context, short stack (<30bb): tighten opens, preserve fold equity for jam-or-fold decisions."
+            : "Tournament context: adjust ranges based on stack depth."
       : "",
   ].filter(Boolean);
 

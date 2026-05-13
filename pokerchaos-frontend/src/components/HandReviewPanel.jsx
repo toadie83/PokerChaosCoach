@@ -619,7 +619,9 @@ function buildTableHintParagraph(review) {
     .slice(0, 2)
     .map(ensureSentenceEnding)
     .join(" ");
-  const confidence = String(review.confidence || "").trim().toLowerCase();
+  const confidence = String(review.confidence || "")
+    .trim()
+    .toLowerCase();
 
   const parts = [];
   if (plan) parts.push(ensureSentenceEnding(plan));
@@ -1082,7 +1084,9 @@ function parseLevelNumber(rawLevel) {
 
 function getSeatStackByPosition(hand, position) {
   const seats = Array.isArray(hand?.seats) ? hand.seats : [];
-  const target = String(position || "").trim().toUpperCase();
+  const target = String(position || "")
+    .trim()
+    .toUpperCase();
   if (!target) return null;
   for (const seat of seats) {
     const seatPos = normalizePositionForRanges(seat?.position);
@@ -1351,7 +1355,9 @@ function rankValueFromCode(rank) {
 }
 
 function classifyBlindDefenseHand(handCode) {
-  const code = String(handCode || "").trim().toUpperCase();
+  const code = String(handCode || "")
+    .trim()
+    .toUpperCase();
   if (!code) return "Unknown";
   if (/^([2-9TJQKA])\1$/.test(code)) return "Pocket pairs";
 
@@ -1364,7 +1370,8 @@ function classifyBlindDefenseHand(handCode) {
   const v2 = rankValueFromCode(r2);
   const highCards = new Set(["T", "J", "Q", "K", "A"]);
   const bothBroadway = highCards.has(r1) && highCards.has(r2);
-  const gap = Number.isFinite(v1) && Number.isFinite(v2) ? Math.abs(v1 - v2) : null;
+  const gap =
+    Number.isFinite(v1) && Number.isFinite(v2) ? Math.abs(v1 - v2) : null;
   const hasAce = r1 === "A" || r2 === "A";
 
   if (suitFlag === "S" && gap === 1) return "Suited connectors";
@@ -1391,7 +1398,9 @@ function resolvePreflopAggressorBeforeHero(hand, heroDecisionIndex) {
   }
   if (!aggressor) return null;
   const seats = Array.isArray(hand?.seats) ? hand.seats : [];
-  const seat = seats.find((row) => String(row?.player || "").trim() === aggressor);
+  const seat = seats.find(
+    (row) => String(row?.player || "").trim() === aggressor,
+  );
   return {
     player: aggressor,
     position: normalizePositionForRanges(seat?.position) || "Unknown",
@@ -1506,7 +1515,10 @@ function buildBlindDefenseAudit(hands) {
       recommendation: "Likely defend candidate was folded.",
     });
 
-    const aggressor = resolvePreflopAggressorBeforeHero(hand, firstHeroDecisionIndex);
+    const aggressor = resolvePreflopAggressorBeforeHero(
+      hand,
+      firstHeroDecisionIndex,
+    );
     const openerPos = String(aggressor?.position || "").trim();
     const lateOpen = openerPos === "CO" || openerPos === "BTN";
     const sb3BetCandidate =
@@ -1557,17 +1569,19 @@ function buildBlindDefenseAudit(hands) {
     );
   }
   if (quickFixes.length === 0) {
-    quickFixes.push(
-      "No dominant blind-defense leak in current sample.",
-    );
+    quickFixes.push("No dominant blind-defense leak in current sample.");
   }
 
   const confidence = confidenceFromSample(totalBlindDefenseSpots);
   const warnings = [];
   if (totalBlindDefenseSpots < 12) {
-    warnings.push("Blind-defense sample is small; treat findings as low confidence.");
+    warnings.push(
+      "Blind-defense sample is small; treat findings as low confidence.",
+    );
   }
-  warnings.push("Baseline uses chart heuristics; exploit adjustments can override specific spots.");
+  warnings.push(
+    "Baseline uses chart heuristics; exploit adjustments can override specific spots.",
+  );
 
   return {
     totalBlindDefenseSpots,
@@ -1584,7 +1598,9 @@ function buildBlindDefenseAudit(hands) {
     },
     blindFolds: {
       count: blindFoldEvents.length,
-      shouldDefendCount: blindFoldEvents.filter((event) => event.chartShouldDefend).length,
+      shouldDefendCount: blindFoldEvents.filter(
+        (event) => event.chartShouldDefend,
+      ).length,
       ...blindFoldSummary,
     },
     missedSb3BetPressure: {
@@ -1599,7 +1615,8 @@ function buildBlindDefenseAudit(hands) {
 function buildIcmSpotAudit(hands, options = {}) {
   const list = Array.isArray(hands) ? [...hands] : [];
   const recentLimit =
-    Number.isFinite(Number(options?.recentLimit)) && Number(options.recentLimit) > 0
+    Number.isFinite(Number(options?.recentLimit)) &&
+    Number(options.recentLimit) > 0
       ? Math.floor(Number(options.recentLimit))
       : 40;
   const levelThreshold =
@@ -1609,7 +1626,9 @@ function buildIcmSpotAudit(hands, options = {}) {
       : 25;
   const sortedRecentHands = list
     .sort(
-      (a, b) => (Number(getHandPlayedAtEpoch(b)) || 0) - (Number(getHandPlayedAtEpoch(a)) || 0),
+      (a, b) =>
+        (Number(getHandPlayedAtEpoch(b)) || 0) -
+        (Number(getHandPlayedAtEpoch(a)) || 0),
     )
     .slice(0, recentLimit);
   const levelFilteredHands = sortedRecentHands.filter((hand) => {
@@ -1641,7 +1660,8 @@ function buildIcmSpotAudit(hands, options = {}) {
       : [];
     if (!heroName || preflopActions.length === 0) continue;
 
-    const position = normalizePositionForRanges(hand?.heroPosition) || "Unknown";
+    const position =
+      normalizePositionForRanges(hand?.heroPosition) || "Unknown";
     const handCode = normalizeHeroHandCode(hand?.heroCards);
     if (!handCode) {
       unknownCardsSpots += 1;
@@ -1715,11 +1735,15 @@ function buildIcmSpotAudit(hands, options = {}) {
       const sbStack = getSeatStackByPosition(hand, "SB");
       const bbStack = getSeatStackByPosition(hand, "BB");
       const sbStackBb =
-        Number.isFinite(Number(sbStack)) && Number.isFinite(bigBlind) && bigBlind > 0
+        Number.isFinite(Number(sbStack)) &&
+        Number.isFinite(bigBlind) &&
+        bigBlind > 0
           ? Number(sbStack) / bigBlind
           : null;
       const bbStackBb =
-        Number.isFinite(Number(bbStack)) && Number.isFinite(bigBlind) && bigBlind > 0
+        Number.isFinite(Number(bbStack)) &&
+        Number.isFinite(bigBlind) &&
+        bigBlind > 0
           ? Number(bbStack) / bigBlind
           : null;
       const coversSb =
@@ -1756,7 +1780,8 @@ function buildIcmSpotAudit(hands, options = {}) {
         pushFlag({
           ...baseEvent,
           type: "missed_icm_pressure",
-          recommendation: "Open or jam more often in this late-position ICM pressure spot.",
+          recommendation:
+            "Open or jam more often in this late-position ICM pressure spot.",
           reason:
             "Late-position pressure spot was passed despite a chart-qualified open hand.",
         });
@@ -1782,7 +1807,8 @@ function buildIcmSpotAudit(hands, options = {}) {
         pushFlag({
           ...baseEvent,
           type: "too_loose_icm_open",
-          recommendation: "Tighten opens/jams with short stacks at high levels.",
+          recommendation:
+            "Tighten opens/jams with short stacks at high levels.",
           reason:
             "Short-stack ICM proxy suggests this open/jam is too loose for late-stage pressure dynamics.",
         });
@@ -1797,7 +1823,8 @@ function buildIcmSpotAudit(hands, options = {}) {
         pushFlag({
           ...baseEvent,
           type: "passive_short_stack_line",
-          recommendation: "Prefer jam-or-fold decisions over passive calls with short stacks.",
+          recommendation:
+            "Prefer jam-or-fold decisions over passive calls with short stacks.",
           reason:
             "Short-stack preflop line was passive in a spot that is usually jam/fold under ICM pressure.",
         });
@@ -1856,7 +1883,8 @@ function buildIcmSpotAudit(hands, options = {}) {
         pushFlag({
           ...baseEvent,
           type: "loose_jam_call_icm",
-          recommendation: "Tighten call-offs versus all-ins in high-level ICM spots.",
+          recommendation:
+            "Tighten call-offs versus all-ins in high-level ICM spots.",
           reason:
             "All-in continue appears too loose for this late-stage stack depth.",
         });
@@ -1869,7 +1897,8 @@ function buildIcmSpotAudit(hands, options = {}) {
         pushFlag({
           ...baseEvent,
           type: "too_tight_jam_fold_icm",
-          recommendation: "Continue more often versus jams with this hand class.",
+          recommendation:
+            "Continue more often versus jams with this hand class.",
           reason:
             "Folded a likely continue hand in a late-stage all-in confrontation.",
         });
@@ -1895,7 +1924,10 @@ function buildIcmSpotAudit(hands, options = {}) {
       "Tighten high-variance opens and call-offs at short to medium stacks in late levels.",
     );
   }
-  if (topIssue === "too_tight_icm_defend" || topIssue === "too_tight_jam_fold_icm") {
+  if (
+    topIssue === "too_tight_icm_defend" ||
+    topIssue === "too_tight_jam_fold_icm"
+  ) {
     quickFixes.push(
       "Avoid overfolding defend/call spots that remain profitable at current stack depths.",
     );
@@ -1907,11 +1939,13 @@ function buildIcmSpotAudit(hands, options = {}) {
   }
 
   const avgStackBb =
-    stackBbSamples > 0 ? Number((stackBbTotal / stackBbSamples).toFixed(1)) : null;
+    stackBbSamples > 0
+      ? Number((stackBbTotal / stackBbSamples).toFixed(1))
+      : null;
   const summary = summarizeAuditEvents(flaggedEvents);
   const blindFoldSummary = summarizeAuditEvents(blindFoldEvents);
-  const blindFoldShouldDefendCount = blindFoldEvents.filter(
-    (row) => Boolean(row?.chartShouldDefend),
+  const blindFoldShouldDefendCount = blindFoldEvents.filter((row) =>
+    Boolean(row?.chartShouldDefend),
   ).length;
   const confidence = confidenceFromSample(levelFilteredHands.length);
   const warnings = [
@@ -2500,7 +2534,8 @@ export default function HandReviewPanel() {
   const [loadingReview, setLoadingReview] = useState(false);
   const [quickReviewHandKey, setQuickReviewHandKey] = useState("");
   const [loadingSummaryReview, setLoadingSummaryReview] = useState(false);
-  const [loadingBlindDefenseReview, setLoadingBlindDefenseReview] = useState(false);
+  const [loadingBlindDefenseReview, setLoadingBlindDefenseReview] =
+    useState(false);
   const [loadingIcmReview, setLoadingIcmReview] = useState(false);
   const [loadingTableHintReview, setLoadingTableHintReview] = useState(false);
   const [loadingTournamentSave, setLoadingTournamentSave] = useState(false);
@@ -2527,7 +2562,8 @@ export default function HandReviewPanel() {
   const [selectedSavedTournamentId, setSelectedSavedTournamentId] =
     useState("");
   const [loadingSavedTournamentId, setLoadingSavedTournamentId] = useState("");
-  const [deletingSavedTournamentId, setDeletingSavedTournamentId] = useState("");
+  const [deletingSavedTournamentId, setDeletingSavedTournamentId] =
+    useState("");
   const [parseResult, setParseResult] = useState(null);
   const [reviewsByHandKey, setReviewsByHandKey] = useState({});
   const [expandedReviewLogicKeys, setExpandedReviewLogicKeys] = useState(
@@ -2552,7 +2588,7 @@ export default function HandReviewPanel() {
   const canSubmit = historyText.trim().length > 0;
   const hasActiveSubscription = Boolean(
     billingStatus?.subscription?.status &&
-      String(billingStatus.subscription.status).toLowerCase() === "active",
+    String(billingStatus.subscription.status).toLowerCase() === "active",
   );
   const trialRemainingTokens = Number(
     billingStatus?.trial?.remainingTokens || 0,
@@ -3287,7 +3323,10 @@ export default function HandReviewPanel() {
   const aiTableHintWarnings = useMemo(
     () =>
       normalizeInsightLines(
-        [...(tableHintReview?.avoid_traps || []), ...(tableHintReview?.sample_warnings || [])],
+        [
+          ...(tableHintReview?.avoid_traps || []),
+          ...(tableHintReview?.sample_warnings || []),
+        ],
         7,
       ),
     [tableHintReview],
@@ -3358,7 +3397,10 @@ export default function HandReviewPanel() {
     };
   }, [icmSpotAudit]);
   const blindDefenseReviewPayload = useMemo(() => {
-    if (!blindDefenseAudit || Number(blindDefenseAudit.totalBlindDefenseSpots) <= 0) {
+    if (
+      !blindDefenseAudit ||
+      Number(blindDefenseAudit.totalBlindDefenseSpots) <= 0
+    ) {
       return null;
     }
     return {
@@ -3368,7 +3410,9 @@ export default function HandReviewPanel() {
         : [],
       missedContinues: {
         count: Number(blindDefenseAudit?.missedContinues?.count) || 0,
-        byPosition: Array.isArray(blindDefenseAudit?.missedContinues?.byPosition)
+        byPosition: Array.isArray(
+          blindDefenseAudit?.missedContinues?.byPosition,
+        )
           ? blindDefenseAudit.missedContinues.byPosition
           : [],
         topCombos: Array.isArray(blindDefenseAudit?.missedContinues?.topCombos)
@@ -3380,23 +3424,29 @@ export default function HandReviewPanel() {
       },
       missedSb3BetPressure: {
         count: Number(blindDefenseAudit?.missedSb3BetPressure?.count) || 0,
-        topCombos: Array.isArray(blindDefenseAudit?.missedSb3BetPressure?.topCombos)
+        topCombos: Array.isArray(
+          blindDefenseAudit?.missedSb3BetPressure?.topCombos,
+        )
           ? blindDefenseAudit.missedSb3BetPressure.topCombos
           : [],
-        examples: Array.isArray(blindDefenseAudit?.missedSb3BetPressure?.examples)
+        examples: Array.isArray(
+          blindDefenseAudit?.missedSb3BetPressure?.examples,
+        )
           ? blindDefenseAudit.missedSb3BetPressure.examples
           : [],
       },
       blindFolds: {
         count: Number(blindDefenseAudit?.blindFolds?.count) || 0,
-        shouldDefendCount: Number(blindDefenseAudit?.blindFolds?.shouldDefendCount) || 0,
+        shouldDefendCount:
+          Number(blindDefenseAudit?.blindFolds?.shouldDefendCount) || 0,
       },
     };
   }, [blindDefenseAudit]);
   const hasCurrentTableSelection =
     opponentFilter === "current_table" && visibleOpponentPlayers.length > 0;
   const recentCurrentTableHands = useMemo(() => {
-    if (!hasCurrentTableSelection || currentTablePlayerSet.size === 0) return [];
+    if (!hasCurrentTableSelection || currentTablePlayerSet.size === 0)
+      return [];
     return [...parsedHands]
       .filter((hand) => {
         const seats = Array.isArray(hand?.seats) ? hand.seats : [];
@@ -3406,7 +3456,9 @@ export default function HandReviewPanel() {
         });
       })
       .sort(
-        (a, b) => (Number(getHandPlayedAtEpoch(b)) || 0) - (Number(getHandPlayedAtEpoch(a)) || 0),
+        (a, b) =>
+          (Number(getHandPlayedAtEpoch(b)) || 0) -
+          (Number(getHandPlayedAtEpoch(a)) || 0),
       )
       .slice(0, 40)
       .map((hand) => {
@@ -3433,11 +3485,7 @@ export default function HandReviewPanel() {
           opponentsInHand,
         };
       });
-  }, [
-    hasCurrentTableSelection,
-    currentTablePlayerSet,
-    parsedHands,
-  ]);
+  }, [hasCurrentTableSelection, currentTablePlayerSet, parsedHands]);
   const tableHintPayload = useMemo(() => {
     if (!hasCurrentTableSelection) return null;
     const tablePlayers = visibleOpponentPlayers.map((player) => {
@@ -3534,7 +3582,10 @@ export default function HandReviewPanel() {
   }, [insightsTab, hasTournamentSummary, hasHandAudit, hasOpponentSnapshot]);
 
   useEffect(() => {
-    if (opponentFilter === "current_table" && visibleOpponentPlayers.length > 0) {
+    if (
+      opponentFilter === "current_table" &&
+      visibleOpponentPlayers.length > 0
+    ) {
       return;
     }
     if (tableHintReview || tableHintReviewError) {
@@ -4059,7 +4110,7 @@ export default function HandReviewPanel() {
         loadBillingStatus();
       }
       setSummaryReviewError(
-        err?.message || "Failed to review tournament summary with AI.",
+        err?.message || "Failed to review Session Summary with AI.",
       );
     } finally {
       setLoadingSummaryReview(false);
@@ -4124,9 +4175,7 @@ export default function HandReviewPanel() {
         setAiAccessErrorCode(getErrorCode(err));
         loadBillingStatus();
       }
-      setIcmReviewError(
-        err?.message || "Failed to review ICM spots with AI.",
-      );
+      setIcmReviewError(err?.message || "Failed to review ICM spots with AI.");
     } finally {
       setLoadingIcmReview(false);
     }
@@ -4197,7 +4246,7 @@ export default function HandReviewPanel() {
     <section className="hand-review-workspace">
       <div className="hand-review-panel hand-review-pane hand-review-pane-left hand-review-panel--utility">
         <div className="hand-review-header">
-          <h2>Import Tournament</h2>
+          <h2>Import Hand History</h2>
         </div>
 
         <div className="hand-review-parser-head">
@@ -4213,8 +4262,8 @@ export default function HandReviewPanel() {
         {!isParserCollapsed ? (
           <>
             <p className="hand-review-parser-intro">
-              Upload or paste GG tournament history to generate tournament
-              review insights.
+              Upload or paste No limit hold'em hand history to generate session
+              and opponent insights.
             </p>
 
             <div className="hand-review-advanced">
@@ -4278,7 +4327,9 @@ export default function HandReviewPanel() {
             <div className="hand-review-inputs">
               <label className="hand-review-file">
                 <span className="hand-review-file-label">
-                  <span>{sourceFileName || "Import hand history text file"}</span>
+                  <span>
+                    {sourceFileName || "Import hand history text file"}
+                  </span>
                   <button
                     type="button"
                     className="hand-review-help-trigger"
@@ -4330,7 +4381,7 @@ export default function HandReviewPanel() {
                   setQuickReviewHandKey("");
                 }}
                 rows={10}
-                placeholder="Paste GG hand history text here"
+                placeholder="or paste hand history text here"
               />
             </div>
 
@@ -4383,7 +4434,9 @@ export default function HandReviewPanel() {
               <button
                 type="button"
                 onClick={
-                  hasActiveSubscription ? openBillingPortal : openUpgradeCheckout
+                  hasActiveSubscription
+                    ? openBillingPortal
+                    : openUpgradeCheckout
                 }
                 disabled={Boolean(billingActionLoading)}
               >
@@ -4396,7 +4449,9 @@ export default function HandReviewPanel() {
                       : "Upgrade AI"}
               </button>
               {loadingBillingStatus ? (
-                <span className="ai-upgrade-prompt-meta">Checking billing…</span>
+                <span className="ai-upgrade-prompt-meta">
+                  Checking billing…
+                </span>
               ) : null}
               {!hasActiveSubscription ? (
                 <span className="ai-upgrade-prompt-meta">
@@ -4467,10 +4522,18 @@ export default function HandReviewPanel() {
 
         {filteredParsedHands.length > 0 ? (
           <div className="hand-review-selection-tools">
-            <button type="button" className="hand-review-action-quiet" onClick={selectAllHands}>
+            <button
+              type="button"
+              className="hand-review-action-quiet"
+              onClick={selectAllHands}
+            >
               Select all
             </button>
-            <button type="button" className="hand-review-action-quiet" onClick={clearSelection}>
+            <button
+              type="button"
+              className="hand-review-action-quiet"
+              onClick={clearSelection}
+            >
               Clear selection
             </button>
             <button
@@ -4483,9 +4546,7 @@ export default function HandReviewPanel() {
                 Boolean(quickReviewHandKey)
               }
             >
-              {loadingReview || quickReviewHandKey
-                ? "Reviewing..."
-                : "Analyze"}
+              {loadingReview || quickReviewHandKey ? "Reviewing..." : "Analyze"}
             </button>
           </div>
         ) : null}
@@ -4559,7 +4620,10 @@ export default function HandReviewPanel() {
                               {preflopLine}
                             </span>
                           </span>
-                          <span className="hand-row-meta-divider" aria-hidden="true">
+                          <span
+                            className="hand-row-meta-divider"
+                            aria-hidden="true"
+                          >
                             •
                           </span>
                           <span className="hand-row-meta-item hand-row-meta-item--time">
@@ -4627,7 +4691,8 @@ export default function HandReviewPanel() {
                         <strong>Better line:</strong>{" "}
                         {attachedReview.better_line}
                       </p>
-                      {(attachedReview.what_was_good || attachedReview.reasoning) && (
+                      {(attachedReview.what_was_good ||
+                        attachedReview.reasoning) && (
                         <div className="hand-review-logic">
                           <button
                             type="button"
@@ -4784,7 +4849,7 @@ export default function HandReviewPanel() {
                   }`}
                   onClick={() => setInsightsTab("tournament")}
                 >
-                  Tournament Summary
+                  Session Summary
                 </button>
               ) : null}
               {hasTournamentSummary ? (
@@ -4797,7 +4862,7 @@ export default function HandReviewPanel() {
                   }`}
                   onClick={() => setInsightsTab("stats")}
                 >
-                  Tournament Stats
+                  Session Stats
                 </button>
               ) : null}
               {hasHandAudit ? (
@@ -4831,7 +4896,7 @@ export default function HandReviewPanel() {
             {insightsTab === "tournament" && hasTournamentSummary ? (
               <div className="tournament-summary tournament-summary--overview">
                 <div className="tournament-summary-head">
-                  <h3>Tournament Summary</h3>
+                  <h3>Session Summary</h3>
                   <span>
                     Sample: {tournamentSummary.sampleHands} returned hands
                   </span>
@@ -4842,7 +4907,9 @@ export default function HandReviewPanel() {
                     {tournamentCoachSummary.rating ? (
                       <section className="coach-narrative-section coach-narrative-section--evaluation">
                         <div className="coach-rating-hero">
-                          <p className="coach-rating-label">Overall performance</p>
+                          <p className="coach-rating-label">
+                            Overall performance
+                          </p>
                           <p className="coach-rating-value">
                             {tournamentCoachSummary.rating.score10Label} (
                             {tournamentCoachSummary.rating.scorePctLabel})
@@ -4910,9 +4977,9 @@ export default function HandReviewPanel() {
                       </section>
                     ) : null}
 
-                    {(tournamentCoachSummary.secondaryLeak ||
-                      coachSecondaryAdjustments.length > 0 ||
-                      postflopIpHighlights.length > 0) ? (
+                    {tournamentCoachSummary.secondaryLeak ||
+                    coachSecondaryAdjustments.length > 0 ||
+                    postflopIpHighlights.length > 0 ? (
                       <section className="coach-narrative-section coach-narrative-section--secondary">
                         <p className="coach-summary-heading">
                           <strong>Secondary insights</strong>
@@ -4920,7 +4987,8 @@ export default function HandReviewPanel() {
                         <div className="tournament-summary-flags coach-summary-flags">
                           {tournamentCoachSummary.secondaryLeak ? (
                             <p className="trend-flag watch">
-                              Secondary leak: {tournamentCoachSummary.secondaryLeak}
+                              Secondary leak:{" "}
+                              {tournamentCoachSummary.secondaryLeak}
                             </p>
                           ) : null}
                           {coachSecondaryAdjustments.map((line, idx) => (
@@ -5017,7 +5085,7 @@ export default function HandReviewPanel() {
             {insightsTab === "stats" && hasTournamentSummary ? (
               <div className="tournament-summary tournament-summary--stats">
                 <div className="tournament-summary-head">
-                  <h3>Tournament Stats</h3>
+                  <h3>Session Stats</h3>
                   <span>
                     Sample: {tournamentSummary.sampleHands} returned hands
                   </span>
@@ -5417,22 +5485,26 @@ export default function HandReviewPanel() {
                   </p>
                   <div className="tournament-summary-metrics">
                     <span>
-                      Blind defense spots: {blindDefenseAudit.totalBlindDefenseSpots}
+                      Blind defense spots:{" "}
+                      {blindDefenseAudit.totalBlindDefenseSpots}
                     </span>
                     <span>SB spots: {blindDefenseAudit.sbDefenseSpots}</span>
                     <span>BB spots: {blindDefenseAudit.bbDefenseSpots}</span>
                     <span>
-                      Likely continue spots: {blindDefenseAudit.likelyContinueSpots}
+                      Likely continue spots:{" "}
+                      {blindDefenseAudit.likelyContinueSpots}
                     </span>
                     <span>
-                      Missed likely continues: {blindDefenseAudit.missedContinues.count}
+                      Missed likely continues:{" "}
+                      {blindDefenseAudit.missedContinues.count}
                     </span>
                     <span>
                       Missed SB 3-bet pressure:{" "}
                       {blindDefenseAudit.missedSb3BetPressure.count}
                     </span>
                     <span>
-                      Confidence: {confidenceLabel(blindDefenseAudit.confidence)}
+                      Confidence:{" "}
+                      {confidenceLabel(blindDefenseAudit.confidence)}
                     </span>
                   </div>
                   {blindDefenseAudit.handClassRows.length > 0 ? (
@@ -5495,7 +5567,10 @@ export default function HandReviewPanel() {
                   </div>
                   <div className="tournament-summary-flags">
                     {blindDefenseAudit.warnings.map((line, idx) => (
-                      <p key={`blind-warning-${idx}`} className="trend-flag watch">
+                      <p
+                        key={`blind-warning-${idx}`}
+                        className="trend-flag watch"
+                      >
                         {line}
                       </p>
                     ))}
@@ -5504,14 +5579,18 @@ export default function HandReviewPanel() {
                     <button
                       type="button"
                       onClick={runBlindDefenseReview}
-                      disabled={loadingBlindDefenseReview || !blindDefenseReviewPayload}
+                      disabled={
+                        loadingBlindDefenseReview || !blindDefenseReviewPayload
+                      }
                     >
                       {loadingBlindDefenseReview
                         ? "Reviewing blind defense..."
                         : "AI Review Blind Defence"}
                     </button>
                     {blindDefenseReviewError ? (
-                      <p className="hand-review-error">{blindDefenseReviewError}</p>
+                      <p className="hand-review-error">
+                        {blindDefenseReviewError}
+                      </p>
                     ) : null}
                     {blindDefenseReview ? (
                       <div className="tournament-ai-review-card">
@@ -5524,11 +5603,16 @@ export default function HandReviewPanel() {
                               <strong>Priority fixes:</strong>
                             </p>
                             <div className="tournament-summary-flags">
-                              {aiBlindDefenseActions.slice(0, 4).map((line, idx) => (
-                                <p key={`ai-blind-action-${idx}`} className="trend-flag good">
-                                  {ensureSentenceEnding(line)}
-                                </p>
-                              ))}
+                              {aiBlindDefenseActions
+                                .slice(0, 4)
+                                .map((line, idx) => (
+                                  <p
+                                    key={`ai-blind-action-${idx}`}
+                                    className="trend-flag good"
+                                  >
+                                    {ensureSentenceEnding(line)}
+                                  </p>
+                                ))}
                             </div>
                           </>
                         ) : null}
@@ -5538,11 +5622,16 @@ export default function HandReviewPanel() {
                               <strong>Watch-outs:</strong>
                             </p>
                             <div className="tournament-summary-flags">
-                              {aiBlindDefenseWarnings.slice(0, 4).map((line, idx) => (
-                                <p key={`ai-blind-warning-${idx}`} className="trend-flag watch">
-                                  {ensureSentenceEnding(line)}
-                                </p>
-                              ))}
+                              {aiBlindDefenseWarnings
+                                .slice(0, 4)
+                                .map((line, idx) => (
+                                  <p
+                                    key={`ai-blind-warning-${idx}`}
+                                    className="trend-flag watch"
+                                  >
+                                    {ensureSentenceEnding(line)}
+                                  </p>
+                                ))}
                             </div>
                           </>
                         ) : null}
@@ -5577,25 +5666,28 @@ export default function HandReviewPanel() {
                         : "n/a"}
                     </span>
                     <span>
-                      Unknown hole cards skipped: {icmSpotAudit.unknownCardsSpots}
+                      Unknown hole cards skipped:{" "}
+                      {icmSpotAudit.unknownCardsSpots}
                     </span>
                   </div>
                   <div className="tournament-summary-metrics">
                     <span>Open spots: {icmSpotAudit.openSpots}</span>
                     <span>
-                      Facing aggression spots: {icmSpotAudit.facingAggressionSpots}
+                      Facing aggression spots:{" "}
+                      {icmSpotAudit.facingAggressionSpots}
+                    </span>
+                    <span>Facing jam spots: {icmSpotAudit.facingJamSpots}</span>
+                    <span>
+                      Pressure-eligible spots:{" "}
+                      {icmSpotAudit.pressureEligibleSpots}
                     </span>
                     <span>
-                      Facing jam spots: {icmSpotAudit.facingJamSpots}
+                      Missed stack-pressure spots:{" "}
+                      {icmSpotAudit.missedPressureSpots}
                     </span>
                     <span>
-                      Pressure-eligible spots: {icmSpotAudit.pressureEligibleSpots}
-                    </span>
-                    <span>
-                      Missed stack-pressure spots: {icmSpotAudit.missedPressureSpots}
-                    </span>
-                    <span>
-                      SB/BB fold spots captured: {icmSpotAudit.blindFoldSpots.count}
+                      SB/BB fold spots captured:{" "}
+                      {icmSpotAudit.blindFoldSpots.count}
                     </span>
                     <span>
                       SB/BB folds that were likely continues:{" "}
@@ -5632,7 +5724,10 @@ export default function HandReviewPanel() {
                   </div>
                   <div className="tournament-summary-flags">
                     {icmSpotAudit.warnings.map((line, idx) => (
-                      <p key={`icm-warning-${idx}`} className="trend-flag watch">
+                      <p
+                        key={`icm-warning-${idx}`}
+                        className="trend-flag watch"
+                      >
                         {line}
                       </p>
                     ))}
@@ -5662,7 +5757,10 @@ export default function HandReviewPanel() {
                             </p>
                             <div className="tournament-summary-flags">
                               {aiIcmActions.slice(0, 4).map((line, idx) => (
-                                <p key={`ai-icm-action-${idx}`} className="trend-flag good">
+                                <p
+                                  key={`ai-icm-action-${idx}`}
+                                  className="trend-flag good"
+                                >
                                   {ensureSentenceEnding(line)}
                                 </p>
                               ))}
@@ -5676,7 +5774,10 @@ export default function HandReviewPanel() {
                             </p>
                             <div className="tournament-summary-flags">
                               {aiIcmWarnings.slice(0, 4).map((line, idx) => (
-                                <p key={`ai-icm-warning-${idx}`} className="trend-flag watch">
+                                <p
+                                  key={`ai-icm-warning-${idx}`}
+                                  className="trend-flag watch"
+                                >
                                   {ensureSentenceEnding(line)}
                                 </p>
                               ))}
@@ -5706,9 +5807,11 @@ export default function HandReviewPanel() {
                             onClick={() => openAuditHand(event)}
                             disabled={!hasAuditReference(event)}
                           >
-                            {event.handId}: L{event.level || "?"} {event.position}{" "}
-                            {event.handCode}{" "}
-                            {event.stackBb !== null ? `(${event.stackBb}bb)` : ""}{" "}
+                            {event.handId}: L{event.level || "?"}{" "}
+                            {event.position} {event.handCode}{" "}
+                            {event.stackBb !== null
+                              ? `(${event.stackBb}bb)`
+                              : ""}{" "}
                             fold -{" "}
                             {event.chartShouldDefend
                               ? "likely continue"
@@ -5738,9 +5841,11 @@ export default function HandReviewPanel() {
                             onClick={() => openAuditHand(event)}
                             disabled={!hasAuditReference(event)}
                           >
-                            {event.handId}: L{event.level || "?"} {event.position}{" "}
-                            {event.handCode}{" "}
-                            {event.stackBb !== null ? `(${event.stackBb}bb)` : ""}{" "}
+                            {event.handId}: L{event.level || "?"}{" "}
+                            {event.position} {event.handCode}{" "}
+                            {event.stackBb !== null
+                              ? `(${event.stackBb}bb)`
+                              : ""}{" "}
                             {event.actualAction} - {event.recommendation}
                           </button>
                         ))}
@@ -6140,7 +6245,9 @@ export default function HandReviewPanel() {
                       </span>
                     </button>
                     {tableHintReviewError ? (
-                      <p className="hand-review-error">{tableHintReviewError}</p>
+                      <p className="hand-review-error">
+                        {tableHintReviewError}
+                      </p>
                     ) : null}
                     {tableHintReview ? (
                       <div className="tournament-ai-review-card">
@@ -6153,14 +6260,16 @@ export default function HandReviewPanel() {
                               <strong>Priority exploits:</strong>
                             </p>
                             <div className="tournament-summary-flags">
-                              {aiTableHintExploits.slice(0, 4).map((line, idx) => (
-                                <p
-                                  key={`ai-table-exploit-${idx}`}
-                                  className="trend-flag good"
-                                >
-                                  {ensureSentenceEnding(line)}
-                                </p>
-                              ))}
+                              {aiTableHintExploits
+                                .slice(0, 4)
+                                .map((line, idx) => (
+                                  <p
+                                    key={`ai-table-exploit-${idx}`}
+                                    className="trend-flag good"
+                                  >
+                                    {ensureSentenceEnding(line)}
+                                  </p>
+                                ))}
                             </div>
                           </>
                         ) : null}
@@ -6170,14 +6279,16 @@ export default function HandReviewPanel() {
                               <strong>Next hour adjustments:</strong>
                             </p>
                             <div className="tournament-summary-flags">
-                              {aiTableHintAdjustments.slice(0, 5).map((line, idx) => (
-                                <p
-                                  key={`ai-table-adjustment-${idx}`}
-                                  className="trend-flag good"
-                                >
-                                  {ensureSentenceEnding(line)}
-                                </p>
-                              ))}
+                              {aiTableHintAdjustments
+                                .slice(0, 5)
+                                .map((line, idx) => (
+                                  <p
+                                    key={`ai-table-adjustment-${idx}`}
+                                    className="trend-flag good"
+                                  >
+                                    {ensureSentenceEnding(line)}
+                                  </p>
+                                ))}
                             </div>
                           </>
                         ) : null}
@@ -6187,14 +6298,16 @@ export default function HandReviewPanel() {
                               <strong>Watch-outs:</strong>
                             </p>
                             <div className="tournament-summary-flags">
-                              {aiTableHintWarnings.slice(0, 4).map((line, idx) => (
-                                <p
-                                  key={`ai-table-warning-${idx}`}
-                                  className="trend-flag watch"
-                                >
-                                  {ensureSentenceEnding(line)}
-                                </p>
-                              ))}
+                              {aiTableHintWarnings
+                                .slice(0, 4)
+                                .map((line, idx) => (
+                                  <p
+                                    key={`ai-table-warning-${idx}`}
+                                    className="trend-flag watch"
+                                  >
+                                    {ensureSentenceEnding(line)}
+                                  </p>
+                                ))}
                             </div>
                           </>
                         ) : null}
@@ -6290,8 +6403,8 @@ export default function HandReviewPanel() {
           </div>
         ) : (
           <p className="hand-review-empty">
-            Parse hands to unlock Tournament Summary, Stats, Audit, and Opponent
-            Snapshot.
+            Parse hands to unlock Session Summary, Stats, Hand Audit, and
+            Opponent Snapshot.
           </p>
         )}
       </div>
@@ -6465,8 +6578,13 @@ export default function HandReviewPanel() {
                 from PokerCraft in the GG Poker app.
               </p>
               <p>
-                Extract the hand-history text file to local storage, then upload
-                it here using <strong>Import hand history text file</strong>.
+                If you play Pokerstars, request your tournament hand history in
+                the Poker app to have it emailed to you.
+              </p>
+              <p>
+                Extract the hand-history text file to local storage (or copy
+                paste the text), then upload it here using{" "}
+                <strong>Import hand history text file</strong>.
               </p>
               <p>
                 For detailed tournament analysis, click{" "}
@@ -6489,4 +6607,3 @@ export default function HandReviewPanel() {
     </section>
   );
 }
-
