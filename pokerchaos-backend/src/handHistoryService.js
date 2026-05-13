@@ -1,4 +1,5 @@
-const HAND_SPLIT_REGEX = /(?=^Poker Hand #)/m;
+const HAND_SPLIT_REGEX =
+  /(?=^(?:\*{5,}\s*#\s*\d+\s*\*{5,}|Poker Hand #|PokerStars Hand #))/m;
 
 const POSITION_TEMPLATE = {
   2: ["SB", "BB"],
@@ -12,8 +13,14 @@ const POSITION_TEMPLATE = {
 };
 
 function toNumber(raw) {
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? raw : null;
+  }
   if (typeof raw !== "string") return null;
-  const normalized = raw.replace(/,/g, "").trim();
+  const normalized = raw
+    .replace(/\(([^)]+)\)/g, "$1")
+    .replace(/[,$£€\s]/g, "")
+    .trim();
   if (!normalized) return null;
   const value = Number(normalized);
   return Number.isFinite(value) ? value : null;
@@ -62,7 +69,7 @@ function parseActionLine(line) {
     return { player, type: "check", raw: line, allIn };
   }
 
-  const callMatch = /^calls\s+([\d,]+)/i.exec(details);
+  const callMatch = /^calls\s+\$?([\d,.]+)/i.exec(details);
   if (callMatch) {
     return {
       player,
@@ -73,7 +80,7 @@ function parseActionLine(line) {
     };
   }
 
-  const betMatch = /^bets\s+([\d,]+)/i.exec(details);
+  const betMatch = /^bets\s+\$?([\d,.]+)/i.exec(details);
   if (betMatch) {
     return {
       player,
@@ -84,7 +91,7 @@ function parseActionLine(line) {
     };
   }
 
-  const raiseMatch = /^raises\s+([\d,]+)\s+to\s+([\d,]+)/i.exec(details);
+  const raiseMatch = /^raises\s+\$?([\d,.]+)\s+to\s+\$?([\d,.]+)/i.exec(details);
   if (raiseMatch) {
     return {
       player,
@@ -96,7 +103,7 @@ function parseActionLine(line) {
     };
   }
 
-  const anteMatch = /^posts the ante\s+([\d,]+)/i.exec(details);
+  const anteMatch = /^posts the ante\s+\$?([\d,.]+)/i.exec(details);
   if (anteMatch) {
     return {
       player,
@@ -107,7 +114,7 @@ function parseActionLine(line) {
     };
   }
 
-  const sbMatch = /^posts small blind\s+([\d,]+)/i.exec(details);
+  const sbMatch = /^posts small blind\s+\$?([\d,.]+)/i.exec(details);
   if (sbMatch) {
     return {
       player,
@@ -118,7 +125,7 @@ function parseActionLine(line) {
     };
   }
 
-  const bbMatch = /^posts big blind\s+([\d,]+)/i.exec(details);
+  const bbMatch = /^posts big blind\s+\$?([\d,.]+)/i.exec(details);
   if (bbMatch) {
     return {
       player,
@@ -129,7 +136,7 @@ function parseActionLine(line) {
     };
   }
 
-  const collectMatch = /^collected\s+([\d,]+)\s+from pot/i.exec(details);
+  const collectMatch = /^collected\s+\$?([\d,.]+)\s+from pot/i.exec(details);
   if (collectMatch) {
     return {
       player,
@@ -145,8 +152,9 @@ function parseActionLine(line) {
 
 function parsePlayedAtEpoch(raw) {
   if (typeof raw !== "string") return null;
-  const match =
-    /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(raw.trim());
+  const match = /(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/.exec(
+    raw.trim()
+  );
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -155,6 +163,64 @@ function parsePlayedAtEpoch(raw) {
   const minute = Number(match[5]);
   const second = Number(match[6]);
   return Date.UTC(year, month - 1, day, hour, minute, second);
+}
+
+function detectHistoryFormat(headerLine) {
+  const header = String(headerLine || "").trim();
+  if (!header) return null;
+  if (/^Poker Hand #TM/i.test(header)) return "gg_tournament";
+  if (/^Poker Hand #RC/i.test(header)) return "gg_cash";
+  if (/^PokerStars Hand #/i.test(header) && /Tournament #/i.test(header)) {
+    return "pokerstars_tournament";
+  }
+  return null;
+}
+
+function parseCurrencyFromText(raw, fallback = null) {
+  const text = String(raw || "");
+  if (/\bUSD\b/i.test(text) || /\$/.test(text)) return "USD";
+  if (/\bGBP\b/i.test(text) || /£/.test(text)) return "GBP";
+  if (/\bEUR\b/i.test(text) || /€/.test(text)) return "EUR";
+  return fallback;
+}
+
+function isHandNumberSeparatorLine(line) {
+  return /^\*{5,}\s*#\s*\d+\s*\*{5,}$/.test(String(line || "").trim());
+}
+
+function resolveHeaderLine(lines) {
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (/^(Poker Hand #|PokerStars Hand #)/.test(line)) {
+      return line;
+    }
+  }
+  return null;
+}
+
+function resolveHeroSummaryFromSummaryLines(summaryLines, heroName) {
+  if (!Array.isArray(summaryLines) || !summaryLines.length) {
+    return { line: null, wonAmount: null };
+  }
+  const pattern = new RegExp(
+    `^Seat \\d+:\\s+${escapeRegExp(heroName)}(?:\\s+\\([^)]*\\))?\\s*(.*)$`,
+    "i"
+  );
+  for (const line of summaryLines) {
+    const match = pattern.exec(String(line || ""));
+    if (!match) continue;
+    const detailText = String(match[1] || "");
+    const wonMatch = /\bwon\s+\(\$?([\d,.]+)\)/i.exec(detailText);
+    const collectedMatch = /\bcollected\s+\(\$?([\d,.]+)\)/i.exec(detailText);
+    return {
+      line,
+      wonAmount: wonMatch
+        ? toNumber(wonMatch[1])
+        : collectedMatch
+        ? toNumber(collectedMatch[1])
+        : null,
+    };
+  }
+  return { line: null, wonAmount: null };
 }
 
 const VPIP_ACTION_TYPES = new Set(["call", "raise", "bet", "jam"]);
@@ -516,17 +582,9 @@ function deriveHeroOutcome({
   };
 }
 
-function parseSingleHand(rawChunk, heroName) {
-  const lines = rawChunk
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) return null;
-
-  const headerLine = lines[0];
+function parseGgTournamentHeader(headerLine) {
   const dateSplitAt = headerLine.lastIndexOf(" - ");
   if (dateSplitAt === -1) return null;
-
   const playedAtRaw = headerLine.slice(dateSplitAt + 3).trim();
   const prefix = headerLine.slice(0, dateSplitAt).trim();
   const prefixMatch =
@@ -546,6 +604,80 @@ function parseSingleHand(rawChunk, heroName) {
     levelOpen === -1 || levelClose <= levelOpen
       ? null
       : levelBlock.slice(levelOpen + 1, levelClose).trim();
+
+  return {
+    site: "ggpoker",
+    gameType: "tournament",
+    handId: prefixMatch[1].trim(),
+    tournamentId: prefixMatch[2].trim(),
+    game: prefixMatch[3].trim(),
+    level,
+    blindLabel,
+    playedAtRaw,
+    currency: parseCurrencyFromText(prefix),
+  };
+}
+
+function parseGgCashHeader(headerLine) {
+  const match =
+    /^Poker Hand #([^:]+):\s+(.+?)\s+\(([^)]+)\)\s+-\s+(.+)$/.exec(headerLine);
+  if (!match) return null;
+  const blindLabel = String(match[3] || "").trim() || null;
+  return {
+    site: "ggpoker",
+    gameType: "cash",
+    handId: String(match[1] || "").trim(),
+    tournamentId: "",
+    game: String(match[2] || "").trim(),
+    level: null,
+    blindLabel,
+    playedAtRaw: String(match[4] || "").trim(),
+    currency: parseCurrencyFromText(blindLabel || match[0]),
+  };
+}
+
+function parsePokerStarsTournamentHeader(headerLine) {
+  const match =
+    /^PokerStars Hand #([^:]+):\s+Tournament #([^,]+),\s+(.+?)\s+-\s+Level\s+(.+?)\s+\(([^)]+)\)\s+-\s+(.+)$/.exec(
+      headerLine
+    );
+  if (!match) return null;
+  return {
+    site: "pokerstars",
+    gameType: "tournament",
+    handId: String(match[1] || "").trim(),
+    tournamentId: String(match[2] || "").trim(),
+    game: String(match[3] || "").trim(),
+    level: String(match[4] || "").trim() || null,
+    blindLabel: String(match[5] || "").trim() || null,
+    playedAtRaw: String(match[6] || "").trim(),
+    currency: parseCurrencyFromText(`${match[3]} ${match[5]} ${match[6]}`),
+  };
+}
+
+function parseHeaderForFormat(headerLine, format) {
+  if (format === "gg_tournament") return parseGgTournamentHeader(headerLine);
+  if (format === "gg_cash") return parseGgCashHeader(headerLine);
+  if (format === "pokerstars_tournament") {
+    return parsePokerStarsTournamentHeader(headerLine);
+  }
+  return null;
+}
+
+function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
+  const lines = rawChunk
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => Boolean(line) && !isHandNumberSeparatorLine(line));
+  if (!lines.length) return null;
+
+  const headerLine = resolveHeaderLine(lines);
+  if (!headerLine) return null;
+  const format = forcedFormat || detectHistoryFormat(headerLine);
+  if (!format) return null;
+  const header = parseHeaderForFormat(headerLine, format);
+  if (!header) return null;
+  const playedAtRaw = header.playedAtRaw;
 
   const table = {
     id: null,
@@ -573,7 +705,8 @@ function parseSingleHand(rawChunk, heroName) {
   let hadShowdown = false;
   let heroSummaryLine = null;
   let heroWonAmount = null;
-  let heroCollectedAmount = 0;
+  const summaryLines = [];
+  const collectedEvents = [];
 
   for (const line of lines.slice(1)) {
     if (/^\*\*\* HOLE CARDS \*\*\*/.test(line)) {
@@ -613,7 +746,7 @@ function parseSingleHand(rawChunk, heroName) {
       inSummary = true;
       continue;
     }
-    if (/^\*\*\* SHOWDOWN \*\*\*/.test(line)) {
+    if (/^\*\*\* SHOW\s*DOWN \*\*\*/i.test(line) || /^\*\*\* SHOWDOWN \*\*\*/i.test(line)) {
       currentStreet = null;
       inSummary = false;
       hadShowdown = true;
@@ -630,7 +763,9 @@ function parseSingleHand(rawChunk, heroName) {
       continue;
     }
 
-    const seatMatch = /^Seat (\d+):\s+(.+?)\s+\(([\d,]+) in chips\)$/.exec(line);
+    const seatMatch = /^Seat (\d+):\s+(.+?)\s+\(\$?([\d,.]+) in chips\)$/i.exec(
+      line
+    );
     if (seatMatch) {
       seats.push({
         seat: Number(seatMatch[1]),
@@ -652,13 +787,14 @@ function parseSingleHand(rawChunk, heroName) {
       continue;
     }
 
-    const totalPotMatch = /^Total pot ([\d,]+)\s+\|/.exec(line);
+    const totalPotMatch = /^Total pot\s+\$?([\d,.]+)\s+\|/i.exec(line);
     if (totalPotMatch) {
       totalPot = toNumber(totalPotMatch[1]);
       continue;
     }
 
     if (inSummary) {
+      summaryLines.push(line);
       const heroSummaryPattern = new RegExp(
         `^Seat \\d+:\\s+${escapeRegExp(heroName)}(?:\\s+\\([^)]*\\))?\\s*(.*)$`,
         "i"
@@ -667,11 +803,11 @@ function parseSingleHand(rawChunk, heroName) {
       if (heroSummaryMatch) {
         heroSummaryLine = line;
         const detailText = String(heroSummaryMatch[1] || "");
-        const wonMatch = /\bwon\s+\(([\d,]+)\)/i.exec(detailText);
+        const wonMatch = /\bwon\s+\(\$?([\d,.]+)\)/i.exec(detailText);
         if (wonMatch) {
           heroWonAmount = toNumber(wonMatch[1]);
         }
-        const collectedMatch = /\bcollected\s+\(([\d,]+)\)/i.exec(detailText);
+        const collectedMatch = /\bcollected\s+\(\$?([\d,.]+)\)/i.exec(detailText);
         if (collectedMatch) {
           heroWonAmount = toNumber(collectedMatch[1]);
         }
@@ -679,22 +815,19 @@ function parseSingleHand(rawChunk, heroName) {
       continue;
     }
 
-    const collectNoColonMatch = /^(.+?)\s+collected\s+([\d,]+)\s+from pot$/i.exec(
-      line
-    );
+    const collectNoColonMatch =
+      /^(.+?)\s+collected\s+\$?([\d,.]+)\s+from pot$/i.exec(line);
     if (collectNoColonMatch) {
       const player = collectNoColonMatch[1].trim();
       const amount = toNumber(collectNoColonMatch[2]);
-      if (player === heroName && amount) {
-        heroCollectedAmount += amount;
-      }
+      collectedEvents.push({ player, amount });
       continue;
     }
 
     const action = parseActionLine(line);
     if (!action) continue;
-    if (action.type === "collect" && action.player === heroName) {
-      heroCollectedAmount += action.amount ?? 0;
+    if (action.type === "collect") {
+      collectedEvents.push({ player: action.player, amount: action.amount ?? 0 });
     }
     const streetKey =
       !currentStreet && action.type.startsWith("post_")
@@ -706,9 +839,18 @@ function parseSingleHand(rawChunk, heroName) {
 
   assignPositions(seats, table.buttonSeat);
 
-  const heroSeat = seats.find((seat) => seat.player === heroName) || null;
-  const heroCards = dealtCards.get(heroName) || null;
-  const heroPreflop = buildHeroPreflopSummary(actionsByStreet.preflop, heroName);
+  let resolvedHeroName = heroName;
+  let heroSeat = seats.find((seat) => seat.player === resolvedHeroName) || null;
+  let heroCards = dealtCards.get(resolvedHeroName) || null;
+  if ((!heroSeat || !heroCards) && dealtCards.size === 1) {
+    resolvedHeroName = Array.from(dealtCards.keys())[0];
+    heroSeat = seats.find((seat) => seat.player === resolvedHeroName) || null;
+    heroCards = dealtCards.get(resolvedHeroName) || null;
+  }
+  const heroPreflop = buildHeroPreflopSummary(
+    actionsByStreet.preflop,
+    resolvedHeroName
+  );
 
   const smallBlindPost = actionsByStreet.preflop.find(
     (item) => item.type === "post_small_blind"
@@ -721,6 +863,20 @@ function parseSingleHand(rawChunk, heroName) {
   );
 
   const playedAtEpoch = parsePlayedAtEpoch(playedAtRaw);
+  const summaryResolution = resolveHeroSummaryFromSummaryLines(
+    summaryLines,
+    resolvedHeroName
+  );
+  heroSummaryLine = summaryResolution.line;
+  if (summaryResolution.wonAmount !== null) {
+    heroWonAmount = summaryResolution.wonAmount;
+  }
+  const heroCollectedAmount = collectedEvents.reduce((sum, event) => {
+    if (String(event?.player || "").trim() !== resolvedHeroName) return sum;
+    const amount = Number(event?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return sum;
+    return sum + amount;
+  }, 0);
   if (!heroWonAmount && heroCollectedAmount > 0) {
     heroWonAmount = heroCollectedAmount;
   }
@@ -737,20 +893,23 @@ function parseSingleHand(rawChunk, heroName) {
     hadRevealedShowdownCards,
     board,
     actionsByStreet,
-    heroName,
+    heroName: resolvedHeroName,
   });
 
   return {
-    handId: prefixMatch[1].trim(),
-    tournamentId: prefixMatch[2].trim(),
-    game: prefixMatch[3].trim(),
-    level,
-    blindLabel,
+    site: header.site,
+    gameType: header.gameType,
+    currency: header.currency ?? null,
+    handId: header.handId,
+    tournamentId: header.tournamentId,
+    game: header.game,
+    level: header.level,
+    blindLabel: header.blindLabel,
     playedAt: playedAtRaw,
     playedAtEpoch,
     table,
     seats,
-    heroName,
+    heroName: resolvedHeroName,
     heroSeat: heroSeat?.seat ?? null,
     heroPosition: heroSeat?.position ?? null,
     heroStack: heroSeat?.chips ?? null,
@@ -789,10 +948,50 @@ export function parseGgTournamentHistory(historyText, options = {}) {
   const chunks = normalized
     .split(HAND_SPLIT_REGEX)
     .map((chunk) => chunk.trim())
-    .filter((chunk) => /^Poker Hand #/.test(chunk));
+    .filter((chunk) => /^(Poker Hand #|\*{5,}\s*#\s*\d+\s*\*{5,})/.test(chunk));
 
   return chunks
-    .map((chunk) => parseSingleHand(chunk, heroName))
+    .filter((chunk) => {
+      const firstLine = resolveHeaderLine(
+        String(chunk || "")
+          .split("\n")
+          .map((line) => line.trim())
+      );
+      return detectHistoryFormat(firstLine) === "gg_tournament";
+    })
+    .map((chunk) => parseSingleHand(chunk, heroName, "gg_tournament"))
+    .filter(Boolean);
+}
+
+export function parseHandHistory(historyText, options = {}) {
+  const heroName =
+    typeof options.heroName === "string" && options.heroName.trim()
+      ? options.heroName.trim()
+      : "Hero";
+  const normalized = String(historyText || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!normalized) return [];
+
+  const chunks = normalized
+    .split(HAND_SPLIT_REGEX)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) =>
+      /^(Poker Hand #|PokerStars Hand #|\*{5,}\s*#\s*\d+\s*\*{5,})/.test(chunk)
+    );
+
+  return chunks
+    .map((chunk) => {
+      const firstLine = resolveHeaderLine(
+        String(chunk || "")
+          .split("\n")
+          .map((line) => line.trim())
+      );
+      const format = detectHistoryFormat(firstLine);
+      if (!format) return null;
+      return parseSingleHand(chunk, heroName, format);
+    })
     .filter(Boolean);
 }
 
@@ -1136,6 +1335,9 @@ export function compactHandForApi(hand) {
   }
 
   return {
+    site: hand.site ?? null,
+    gameType: hand.gameType ?? null,
+    currency: hand.currency ?? null,
     handId: hand.handId,
     tournamentId: hand.tournamentId,
     level: hand.level ?? null,
