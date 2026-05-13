@@ -2522,6 +2522,52 @@ button:disabled {
   line-height: 1.3;
 }
 
+.hand-review-cash-notice {
+  border: 1px solid rgb(var(--danger-rgb) / 0.55);
+  background: rgb(var(--danger-rgb) / 0.12);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-3);
+  display: grid;
+  gap: var(--spacing-3);
+}
+
+.hand-review-cash-notice p {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-body-size);
+  line-height: 1.5;
+}
+
+.hand-review-cash-notice-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.hand-review-cash-notice-dismiss {
+  min-height: 40px;
+  border: 1px solid rgb(var(--danger-rgb) / 0.72);
+  background: rgb(var(--danger-rgb) / 0.2);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-2) var(--spacing-4);
+  font-size: var(--font-small-size);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
+}
+
+.hand-review-cash-notice-dismiss:hover {
+  border-color: rgb(var(--danger-rgb) / 0.88);
+  background: rgb(var(--danger-rgb) / 0.3);
+}
+
+.hand-review-cash-notice-dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
 .hand-insights {
   border: 1px solid rgb(var(--border-primary-rgb) / 0.72);
   border-radius: var(--radius-lg);
