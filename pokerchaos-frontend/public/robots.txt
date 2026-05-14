@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# SEO phase 1: index marketing entry points first.
+Sitemap: https://www.playbackpoker.com/sitemap.xml

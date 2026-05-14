@@ -11,6 +11,20 @@ import {
 import App from "./App.jsx";
 import ReviewApp from "./ReviewApp.jsx";
 import AboutModal from "./components/AboutModal.jsx";
+import AiPokerHandAnalyzerPage from "./components/marketing/AiPokerHandAnalyzerPage.jsx";
+import GgPokerHandReviewToolPage from "./components/marketing/GgPokerHandReviewToolPage.jsx";
+import PokerLeakFinderPage from "./components/marketing/PokerLeakFinderPage.jsx";
+import MttHandReviewSoftwarePage from "./components/marketing/MttHandReviewSoftwarePage.jsx";
+import TournamentHandAnalysisPage from "./components/marketing/TournamentHandAnalysisPage.jsx";
+import PokerSessionReviewPage from "./components/marketing/PokerSessionReviewPage.jsx";
+import ArticleHubPage from "./components/marketing/ArticleHubPage.jsx";
+import ArticleDraftPage from "./components/marketing/ArticleDraftPage.jsx";
+import {
+  ARTICLE_CATALOG,
+  buildArticlePath,
+} from "./components/marketing/articleCatalog.js";
+import TrustPageDraft from "./components/marketing/TrustPageDraft.jsx";
+import { TRUST_PAGE_CATALOG } from "./components/marketing/trustCatalog.js";
 import {
   requestBillingCheckoutSession,
   requestBillingPortalSession,
@@ -24,8 +38,47 @@ import "./styles.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = "/review";
+const SHOW_AUTH_ARTICLES_LINK = false;
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
+const MARKETING_PAGE_CONFIG = [
+  {
+    path: "/ai-poker-hand-analyzer",
+    component: AiPokerHandAnalyzerPage,
+  },
+  {
+    path: "/ggpoker-hand-review-tool",
+    component: GgPokerHandReviewToolPage,
+  },
+  {
+    path: "/poker-leak-finder",
+    component: PokerLeakFinderPage,
+  },
+  {
+    path: "/mtt-hand-review-software",
+    component: MttHandReviewSoftwarePage,
+  },
+  {
+    path: "/tournament-hand-analysis",
+    component: TournamentHandAnalysisPage,
+  },
+  {
+    path: "/poker-session-review",
+    component: PokerSessionReviewPage,
+  },
+  {
+    path: "/articles",
+    component: ArticleHubPage,
+  },
+  ...TRUST_PAGE_CATALOG.map((page) => ({
+    path: page.path,
+    component: () => <TrustPageDraft path={page.path} />,
+  })),
+  ...ARTICLE_CATALOG.map((article) => ({
+    path: buildArticlePath(article.slug),
+    component: () => <ArticleDraftPage slug={article.slug} />,
+  })),
+];
 const SECTION_CONFIG = [
   {
     path: "/review",
@@ -45,6 +98,53 @@ const SECTION_CONFIG = [
   },
 ];
 const ROUTE_LOOKUP = new Map(SECTION_CONFIG.map((item) => [item.path, item]));
+const MARKETING_ROUTE_LOOKUP = new Map(
+  MARKETING_PAGE_CONFIG.map((item) => [item.path, item]),
+);
+
+function upsertMetaTag({ name, property, content }) {
+  const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
+  let metaTag = document.head.querySelector(selector);
+  if (!metaTag) {
+    metaTag = document.createElement("meta");
+    if (name) metaTag.setAttribute("name", name);
+    if (property) metaTag.setAttribute("property", property);
+    document.head.appendChild(metaTag);
+  }
+  metaTag.setAttribute("content", content);
+}
+
+function upsertCanonicalTag(href) {
+  let canonicalTag = document.head.querySelector('link[rel="canonical"]');
+  if (!canonicalTag) {
+    canonicalTag = document.createElement("link");
+    canonicalTag.setAttribute("rel", "canonical");
+    document.head.appendChild(canonicalTag);
+  }
+  canonicalTag.setAttribute("href", href);
+}
+
+function setPageMeta({ title, description, path }) {
+  const normalizedPath = path?.startsWith("/") ? path : "/";
+  const pageUrl = `${window.location.origin}${normalizedPath}`;
+
+  document.title = title;
+  upsertMetaTag({ name: "description", content: description });
+  upsertMetaTag({ name: "robots", content: "index,follow" });
+  upsertMetaTag({ property: "og:title", content: title });
+  upsertMetaTag({ property: "og:description", content: description });
+  upsertMetaTag({ property: "og:type", content: "website" });
+  upsertMetaTag({ property: "og:url", content: pageUrl });
+  upsertMetaTag({ property: "og:site_name", content: "Playback Poker" });
+  upsertCanonicalTag(pageUrl);
+}
+
+function normalizeMarketingPath(pathname) {
+  const raw = typeof pathname === "string" ? pathname.trim() : "";
+  if (!raw) return "/";
+  const normalized = raw.replace(/\/+$/, "") || "/";
+  return MARKETING_ROUTE_LOOKUP.has(normalized) ? normalized : "/";
+}
 
 function normalizeRoutePath(pathname) {
   const raw = typeof pathname === "string" ? pathname.trim() : "";
@@ -401,6 +501,25 @@ function SignedInShell() {
   );
   const SectionComponent = currentSection.component;
 
+  useEffect(() => {
+    if (routePath === "/coach") {
+      setPageMeta({
+        title: "Playback Poker Coach | AI Strategy Guidance",
+        description:
+          "Run AI-powered poker strategy guidance and decision support inside Playback Poker Coach.",
+        path: "/coach",
+      });
+      return;
+    }
+
+    setPageMeta({
+      title: "Playback Poker Hand Review | Tournament Analysis",
+      description:
+        "Review tournament hands with AI-powered analysis to find leaks and improve MTT decisions.",
+      path: "/review",
+    });
+  }, [routePath]);
+
   if (!isLoaded) return null;
 
   return (
@@ -674,6 +793,52 @@ function ServerWakeGate({ children }) {
   );
 }
 
+function SignedOutShell() {
+  const marketingPath = normalizeMarketingPath(window.location.pathname);
+  const marketingPage = MARKETING_ROUTE_LOOKUP.get(marketingPath);
+
+  useEffect(() => {
+    if (marketingPage) return;
+    setPageMeta({
+      title: "Playback Poker | AI Poker Hand Review",
+      description:
+        "Playback Poker is professional poker intelligence software for AI-assisted hand review and strategic analysis.",
+      path: "/",
+    });
+  }, [marketingPage]);
+
+  if (marketingPage) {
+    const MarketingComponent = marketingPage.component;
+    return <MarketingComponent />;
+  }
+
+  return (
+    <div className="auth-gate">
+      <img
+        src={mobileNavWordmark}
+        alt="Playback Poker"
+        className="auth-gate-brand"
+      />
+      <p>Sign in to access Hand Review and Coach.</p>
+      <div className="auth-actions">
+        <SignInButton mode="modal">
+          <button className="auth-button">Sign In</button>
+        </SignInButton>
+        <SignUpButton mode="modal">
+          <button className="auth-button secondary">Create Account</button>
+        </SignUpButton>
+      </div>
+      {SHOW_AUTH_ARTICLES_LINK ? (
+        <div className="auth-gate-secondary-links" aria-label="Learn more">
+          <a className="auth-gate-secondary-link" href="/articles">
+            Read Strategy Articles
+          </a>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Shell() {
   if (!clerkPublishableKey) {
     return (
@@ -690,22 +855,7 @@ function Shell() {
         <SignedInShell />
       </Show>
       <Show when="signed-out">
-        <div className="auth-gate">
-          <img
-            src={mobileNavWordmark}
-            alt="Playback Poker"
-            className="auth-gate-brand"
-          />
-          <p>Sign in to access Hand Review and Coach.</p>
-          <div className="auth-actions">
-            <SignInButton mode="modal">
-              <button className="auth-button">Sign In</button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button className="auth-button secondary">Create Account</button>
-            </SignUpButton>
-          </div>
-        </div>
+        <SignedOutShell />
       </Show>
     </ClerkProvider>
   );
