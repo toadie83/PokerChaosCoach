@@ -14,11 +14,11 @@ export const TRUST_PAGE_CATALOG = [
         "Trevor. Builder of Playback Poker. Long-time tournament player, QA engineer and toolmaker.",
       sources: [
         {
-          srcSet: "/images/about/13242.png",
-          type: "image/png",
+          srcSet: "/images/about/13242.webp",
+          type: "image/webp",
         },
       ],
-      src: "/images/about/13242.png",
+      src: "/images/about/13242.webp",
       sizes: "(max-width: 640px) 72vw, (max-width: 900px) 220px, 220px",
       loading: "eager",
       decoding: "async",
