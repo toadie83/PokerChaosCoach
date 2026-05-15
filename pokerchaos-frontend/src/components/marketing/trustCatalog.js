@@ -6,6 +6,12 @@ const SUPPORTED_SITES_STEP_2_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/supported-sites-
 const SUPPORTED_SITES_STEP_3_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/supported-sites-formats-parse-upload-overview.webp`;
 const SUPPORTED_SITES_STEP_4_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/supported-sites-formats-parse-success-full.webp`;
 const AI_LIMITATIONS_HERO_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/best-mtt-study-workflow-step-5-hand-audit-jto-co-missed-open.webp`;
+const HOW_IT_WORKS_STEP_1_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-1-upload-source-file.webp.webp`;
+const HOW_IT_WORKS_STEP_2_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-2-parse-overview.webp.webp`;
+const HOW_IT_WORKS_STEP_3_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-3-audit-missed-opportunities.webp.webp`;
+const HOW_IT_WORKS_STEP_4_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-4-drags-and-priority-queue.webp.webp`;
+const HOW_IT_WORKS_STEP_5_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-5-summary-and-kpis.webp.webp`;
+const HOW_IT_WORKS_STEP_6_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/how-playback-poker-works-step-6-ai-hand-and-opponent-context.webp.webp`;
 
 export const TRUST_PAGE_CATALOG = [
   {
@@ -102,6 +108,95 @@ export const TRUST_PAGE_CATALOG = [
     publishReady: true,
     updatedAt: "2026-05-15",
     primaryLandingPath: "/mtt-hand-review-software",
+    walkthroughTitle: "Workflow Walkthrough",
+    walkthroughIntro:
+      "This step-by-step flow shows what happens from upload through parsing, audit, prioritisation, and AI-assisted context.",
+    walkthroughSteps: [
+      {
+        title: "Step 1: Upload Source Hand History",
+        description:
+          "Start by selecting and uploading a supported hand history source file from a completed tournament or session.",
+        alt: "Playback Poker upload screen with source hand history file selected before parsing",
+        caption: "Upload entry point with source file selected.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_1_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_1_URL,
+      },
+      {
+        title: "Step 2: Parse Overview",
+        description:
+          "The parser structures raw data into a usable overview with optional AI interpretations available.",
+        alt: "Playback Poker parsed overview screen showing structured tournament and session extraction",
+        caption: "Parser-first workflow: structure before interpretation.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_2_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_2_URL,
+      },
+      {
+        title: "Step 3: Audit Missed Opportunities",
+        description:
+          "Audit workflows surface repeated missed opportunities such as opens, blind defends, and pressure spots.",
+        alt: "Playback Poker audit panel highlighting missed opportunities and recurring decision issues",
+        caption: "Audit layer surfaces repeated missed opportunities.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_3_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_3_URL,
+      },
+      {
+        title: "Step 4: Drags And Priority Queue",
+        description:
+          "Biggest drags are identified and ranked into a practical priority queue so high-impact review happens first.",
+        alt: "Playback Poker drags and review priority queue showing highest-impact leak themes first",
+        caption: "Prioritised queue driven by repeated drags and impact.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_4_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_4_URL,
+      },
+      {
+        title: "Step 5: Summary And KPI Tracking",
+        description:
+          "Session and tournament summaries plus KPI tracking provide trend visibility across repeated play blocks.",
+        alt: "Playback Poker summary dashboard showing tournament metrics and core KPI trend tracking",
+        caption: "Summaries and KPI trends support progression tracking.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_5_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_5_URL,
+      },
+      {
+        title: "Step 6: AI Hand And Opponent Context",
+        description:
+          "AI adds optional contextual explanations for hands and opponent patterns after structured analysis is complete.",
+        alt: "Playback Poker AI hand review panel with opponent context and practical explanation",
+        caption: "AI layer adds context; parser and audit remain foundational.",
+        sources: [
+          {
+            srcSet: HOW_IT_WORKS_STEP_6_URL,
+            type: "image/webp",
+          },
+        ],
+        src: HOW_IT_WORKS_STEP_6_URL,
+      },
+    ],
     bodySections: [
       {
         heading: "Intro",

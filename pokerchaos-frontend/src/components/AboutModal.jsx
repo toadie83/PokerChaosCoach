@@ -24,7 +24,7 @@ const ABOUT_SLIDES = [
     id: "ai-features",
     title: "AI Features",
     points: [
-      "Look for the AI symbol ⚡ or AI Review button on supported views.",
+      "Look for the AI marker or AI Review button on supported views.",
       "Our poker-tuned AI can analyze your decisions and suggest improvements.",
       "AI analysis is available with a low-cost subscription to cover model usage.",
     ],
@@ -78,7 +78,7 @@ export default function AboutModal({ open, onClose }) {
       >
         <div className="modal-header">
           <div>
-            <h2 className="modal-title">About PlaybackPoker</h2>
+            <h2 className="modal-title">Quick Tips</h2>
             <p className="about-modal-step">
               {activeIndex + 1} of {totalSlides}
             </p>
@@ -88,12 +88,33 @@ export default function AboutModal({ open, onClose }) {
           </button>
         </div>
         <div className="modal-body about-modal-body">
-          <h3 className="about-slide-title">{slide.title}</h3>
-          <ul className="about-slide-points">
-            {slide.points.map((point) => (
-              <li key={point}>{point}</li>
+          <div
+            className="about-step-rail"
+            role="tablist"
+            aria-label="Quick tips steps"
+          >
+            {ABOUT_SLIDES.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`about-step-pill ${index === activeIndex ? "active" : ""}`}
+                onClick={() => setActiveIndex(index)}
+                aria-label={`Go to step ${index + 1}: ${item.title}`}
+                aria-current={index === activeIndex}
+              >
+                <span className="about-step-pill-index">{index + 1}</span>
+                <span className="about-step-pill-label">{item.title}</span>
+              </button>
             ))}
-          </ul>
+          </div>
+          <section className="about-slide-card">
+            <h3 className="about-slide-title">{slide.title}</h3>
+            <ul className="about-slide-points">
+              {slide.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </section>
         </div>
         <div className="modal-footer about-modal-footer">
           <button
@@ -104,25 +125,10 @@ export default function AboutModal({ open, onClose }) {
           >
             Back
           </button>
-          <div
-            className="about-slide-dots"
-            role="tablist"
-            aria-label="About slide navigation"
-          >
-            {ABOUT_SLIDES.map((item, index) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`about-slide-dot ${index === activeIndex ? "active" : ""}`}
-                onClick={() => setActiveIndex(index)}
-                aria-label={`Go to slide ${index + 1}`}
-                aria-current={index === activeIndex}
-              />
-            ))}
-          </div>
           {activeIndex < totalSlides - 1 ? (
             <button
               type="button"
+              className="btn-primary"
               onClick={() =>
                 setActiveIndex((index) => Math.min(index + 1, totalSlides - 1))
               }
@@ -130,7 +136,7 @@ export default function AboutModal({ open, onClose }) {
               Next
             </button>
           ) : (
-            <button type="button" onClick={onClose}>
+            <button type="button" className="btn-primary" onClick={onClose}>
               Done
             </button>
           )}

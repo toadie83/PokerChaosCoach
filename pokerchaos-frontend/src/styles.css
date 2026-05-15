@@ -1937,11 +1937,48 @@ button:disabled {
   font-weight: 600;
   color: var(--text-primary);
   cursor: pointer;
+  min-height: 40px;
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-standard, ease),
+    border-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+    color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+
+.btn-secondary:focus-visible,
+.btn-primary:focus-visible {
+  outline: 2px solid rgb(var(--accent-primary-rgb) / 0.5);
+  outline-offset: 2px;
 }
 .btn-secondary.active {
   border-color: var(--accent);
   background: rgb(var(--accent-primary-rgb) / 0.14);
   color: var(--accent);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-2) var(--spacing-4);
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  min-height: 40px;
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-standard, ease),
+    border-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+    box-shadow var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .rank-grid {
   display: grid;
@@ -1976,55 +2013,108 @@ button:disabled {
 }
 
 .about-modal-step {
-  margin: 4px 0 0;
-  font-size: 0.82rem;
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-small-size);
   color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .about-modal-body {
   display: grid;
-  gap: 12px;
+  gap: var(--spacing-3);
+}
+
+.about-step-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.about-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-height: 40px;
+  padding: 0 var(--spacing-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--font-small-size);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-standard, ease),
+    border-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+    color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+
+.about-step-pill:hover {
+  background: rgb(var(--accent-primary-rgb) / 0.08);
+  color: var(--text-primary);
+}
+
+.about-step-pill.active {
+  border-color: var(--accent);
+  background: rgb(var(--accent-primary-rgb) / 0.16);
+  color: var(--text-primary);
+}
+
+.about-step-pill-index {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--chip-border);
+  background: var(--surface-chip);
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.about-step-pill.active .about-step-pill-index {
+  border-color: var(--accent);
+  background: rgb(var(--accent-primary-rgb) / 0.22);
+  color: var(--accent);
+}
+
+.about-step-pill-label {
+  line-height: 1.2;
+}
+
+.about-slide-card {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: var(--spacing-4);
 }
 
 .about-slide-title {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: var(--font-h3-size);
+  color: var(--text-primary);
 }
 
 .about-slide-points {
-  margin: 0;
+  margin: var(--spacing-3) 0 0;
   padding-left: 20px;
   display: grid;
-  gap: 10px;
+  gap: var(--spacing-2);
   color: var(--text);
+  line-height: var(--font-body-line);
 }
 
 .about-modal-footer {
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-}
-
-.about-slide-dots {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: center;
-}
-
-.about-slide-dot {
-  width: 10px;
-  height: 10px;
-  min-width: 10px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--chip-border);
-  background: var(--chip-bg);
-  padding: 0;
-  cursor: pointer;
-}
-
-.about-slide-dot.active {
-  border-color: var(--accent);
-  background: var(--accent);
+  gap: var(--spacing-2);
 }
 
 @media (max-width: 640px) {
@@ -2287,6 +2377,16 @@ button:disabled {
 
   .about-modal-footer {
     gap: 8px;
+  }
+  .about-step-rail {
+    padding: var(--spacing-2);
+  }
+  .about-step-pill {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .about-slide-card {
+    padding: var(--spacing-3);
   }
 }
 
