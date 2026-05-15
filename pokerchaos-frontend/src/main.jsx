@@ -96,7 +96,7 @@ const SECTION_CONFIG = [
     feature: "coach",
     component: App,
     lockedText:
-      "Coach allows users to run hand simulations and receive AI powered strategic insights. Coach access is currently disabled for all accounts as we are finalizing the feature. Please stay tuned for updates and release announcements.",
+      "Coach allows users to run hand simulations and receive AI powered strategic insights. Coach access is currently disabled for all accounts as we are finalizing the feature. Subscribers with active plans can access Coach first. Please stay tuned for updates and release announcements.",
   },
 ];
 const ROUTE_LOOKUP = new Map(SECTION_CONFIG.map((item) => [item.path, item]));
@@ -263,7 +263,10 @@ function DisclaimerModal({ open, onClose }) {
   if (!open) return null;
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal trial-info-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal trial-info-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <h2 className="modal-title">Disclaimer</h2>
           <button type="button" className="link-btn" onClick={onClose}>
