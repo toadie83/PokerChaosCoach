@@ -19,6 +19,7 @@ import TournamentHandAnalysisPage from "./components/marketing/TournamentHandAna
 import PokerSessionReviewPage from "./components/marketing/PokerSessionReviewPage.jsx";
 import ArticleHubPage from "./components/marketing/ArticleHubPage.jsx";
 import ArticleDraftPage from "./components/marketing/ArticleDraftPage.jsx";
+import TrustMethodologyBanner from "./components/marketing/TrustMethodologyBanner.jsx";
 import {
   ARTICLE_CATALOG,
   buildArticlePath,
@@ -39,7 +40,6 @@ import "./styles.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = "/review";
-const SHOW_AUTH_ARTICLES_LINK = false;
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
@@ -105,7 +105,9 @@ const MARKETING_ROUTE_LOOKUP = new Map(
 );
 
 function upsertMetaTag({ name, property, content }) {
-  const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
+  const selector = name
+    ? `meta[name="${name}"]`
+    : `meta[property="${property}"]`;
   let metaTag = document.head.querySelector(selector);
   if (!metaTag) {
     metaTag = document.createElement("meta");
@@ -152,6 +154,7 @@ function normalizeRoutePath(pathname) {
   const raw = typeof pathname === "string" ? pathname.trim() : "";
   if (!raw || raw === "/") return DEFAULT_ROUTE;
   const normalized = raw.replace(/\/+$/, "") || "/";
+  if (MARKETING_ROUTE_LOOKUP.has(normalized)) return normalized;
   return ROUTE_LOOKUP.has(normalized) ? normalized : DEFAULT_ROUTE;
 }
 
@@ -256,24 +259,55 @@ function TrialInfoModal({ open, onClose }) {
   );
 }
 
-function AppFooter({ onOpenAbout }) {
+function DisclaimerModal({ open, onClose }) {
+  if (!open) return null;
   return (
-    <footer className="app-footer">
-      <div className="app-shell-container app-footer-inner">
-        <details className="app-footer-disclaimer">
-          <summary>Disclaimer</summary>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal trial-info-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Disclaimer</h2>
+          <button type="button" className="link-btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="modal-body">
           <p>
             Training insights are informational and should be used at your own
             discretion. Hand-history input is not saved for model training.
           </p>
-        </details>
-        <button
-          type="button"
-          className="app-footer-link app-footer-button"
-          onClick={onOpenAbout}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppFooter({ onOpenAbout, onOpenDisclaimer }) {
+  return (
+    <footer className="app-footer">
+      <div className="app-shell-container app-footer-inner">
+        <a
+          href="/disclaimer"
+          className="app-footer-link"
+          onClick={(event) => {
+            event.preventDefault();
+            onOpenDisclaimer();
+          }}
         >
-          About
-        </button>
+          Disclaimer
+        </a>
+        <a
+          href="/quick-tips"
+          className="app-footer-link"
+          onClick={(event) => {
+            event.preventDefault();
+            onOpenAbout();
+          }}
+        >
+          Quick Tips
+        </a>
+        <a className="app-footer-link" href="/articles">
+          Articles
+        </a>
         <a className="app-footer-link" href="mailto:qacopilotdev@gmail.com">
           Contact me
         </a>
@@ -322,6 +356,7 @@ function MobileScrollTopWidget({ enabled }) {
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
+  const marketingPage = MARKETING_ROUTE_LOOKUP.get(routePath);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
   const [theme, setTheme] = useState(() => {
@@ -338,6 +373,7 @@ function SignedInShell() {
   const [billingActionStatus, setBillingActionStatus] = useState("");
   const [billingActionLoading, setBillingActionLoading] = useState("");
   const [trialInfoOpen, setTrialInfoOpen] = useState(false);
+  const [disclaimerOpen, setDisclaimerOpen] = useState(false);
   const [mobileUtilityOpen, setMobileUtilityOpen] = useState(false);
 
   useEffect(() => {
@@ -394,6 +430,12 @@ function SignedInShell() {
 
   const handleCloseTrialInfo = useCallback(() => {
     setTrialInfoOpen(false);
+  }, []);
+  const handleOpenDisclaimer = useCallback(() => {
+    setDisclaimerOpen(true);
+  }, []);
+  const handleCloseDisclaimer = useCallback(() => {
+    setDisclaimerOpen(false);
   }, []);
 
   const openBillingCheckout = useCallback(async () => {
@@ -504,6 +546,7 @@ function SignedInShell() {
   const SectionComponent = currentSection.component;
 
   useEffect(() => {
+    if (marketingPage) return;
     if (routePath === "/coach") {
       setPageMeta({
         title: "Playback Poker Coach | AI Strategy Guidance",
@@ -520,7 +563,26 @@ function SignedInShell() {
         "Review tournament hands with AI-powered analysis to find leaks and improve MTT decisions.",
       path: "/review",
     });
-  }, [routePath]);
+  }, [marketingPage, routePath]);
+
+  if (marketingPage) {
+    const MarketingComponent = marketingPage.component;
+    return (
+      <>
+        <MarketingComponent />
+        <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
+        <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
+        <DisclaimerModal
+          open={disclaimerOpen}
+          onClose={handleCloseDisclaimer}
+        />
+        <AppFooter
+          onOpenAbout={handleOpenAbout}
+          onOpenDisclaimer={handleOpenDisclaimer}
+        />
+      </>
+    );
+  }
 
   if (!isLoaded) return null;
 
@@ -530,7 +592,9 @@ function SignedInShell() {
         <div className="auth-bar auth-bar-shell">
           <div className="auth-bar-nav">
             {SECTION_CONFIG.map((section) => {
-              const enabled = Boolean(entitlements?.features?.[section.feature]);
+              const enabled = Boolean(
+                entitlements?.features?.[section.feature],
+              );
               return (
                 <button
                   key={section.path}
@@ -573,7 +637,9 @@ function SignedInShell() {
                 type="button"
                 className="top-nav-link top-nav-link--cta"
                 onClick={
-                  hasActiveSubscription ? openBillingPortal : openBillingCheckout
+                  hasActiveSubscription
+                    ? openBillingPortal
+                    : openBillingCheckout
                 }
                 disabled={Boolean(billingActionLoading)}
                 title={
@@ -748,8 +814,12 @@ function SignedInShell() {
       </ServerWakeGate>
       <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
       <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
+      <DisclaimerModal open={disclaimerOpen} onClose={handleCloseDisclaimer} />
       <MobileScrollTopWidget enabled={routePath === "/review"} />
-      <AppFooter onOpenAbout={handleOpenAbout} />
+      <AppFooter
+        onOpenAbout={handleOpenAbout}
+        onOpenDisclaimer={handleOpenDisclaimer}
+      />
     </>
   );
 }
@@ -815,28 +885,31 @@ function SignedOutShell() {
   }
 
   return (
-    <div className="auth-gate">
-      <img
-        src={mobileNavWordmark}
-        alt="Playback Poker"
-        className="auth-gate-brand"
-      />
-      <p>Sign in to access Hand Review and Coach.</p>
-      <div className="auth-actions">
-        <SignInButton mode="modal">
-          <button className="auth-button">Sign In</button>
-        </SignInButton>
-        <SignUpButton mode="modal">
-          <button className="auth-button secondary">Create Account</button>
-        </SignUpButton>
-      </div>
-      {SHOW_AUTH_ARTICLES_LINK ? (
+    <div className="auth-gate-layout">
+      <div className="auth-gate">
+        <img
+          src={mobileNavWordmark}
+          alt="Playback Poker"
+          className="auth-gate-brand"
+        />
+        <p>Sign in to access Hand Review and Coach.</p>
+        <div className="auth-actions">
+          <SignInButton mode="modal">
+            <button className="auth-button">Sign In</button>
+          </SignInButton>
+          <SignUpButton mode="modal">
+            <button className="auth-button secondary">Create Account</button>
+          </SignUpButton>
+        </div>
         <div className="auth-gate-secondary-links" aria-label="Learn more">
           <a className="auth-gate-secondary-link" href="/articles">
-            Read Strategy Articles
+            Browse our Playback Poker Articles
           </a>
         </div>
-      ) : null}
+      </div>
+      <div className="auth-gate-pseudo-footer">
+        <TrustMethodologyBanner />
+      </div>
     </div>
   );
 }

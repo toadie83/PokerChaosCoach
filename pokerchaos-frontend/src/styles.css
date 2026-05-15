@@ -926,11 +926,24 @@ h3,
   white-space: nowrap;
 }
 
-.app-footer-button {
+.app-footer-link-button {
+  appearance: none;
   background: transparent;
   border: none;
   padding: 0;
-  font-weight: 400;
+  margin: 0;
+  display: inline;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: inherit;
+  text-underline-offset: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
 }
 
 .app-footer-link:hover {
@@ -971,14 +984,24 @@ h3,
 .auth-gate {
   width: min(480px, 100%);
   margin-top: var(--spacing-7);
+  max-height: 300px;
   display: grid;
-  gap: var(--spacing-3);
+  gap: var(--spacing-2);
+  align-content: center;
   text-align: center;
   background: var(--bg-surface);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-lg);
-  padding: var(--spacing-5);
+  padding: var(--spacing-4);
   box-shadow: var(--shadow-lg);
+}
+
+.auth-gate-layout {
+  width: 100%;
+  max-width: var(--content-width);
+  min-height: calc(100vh - (var(--spacing-7) + var(--spacing-6)));
+  display: grid;
+  justify-items: center;
 }
 
 .marketing-shell {
@@ -1230,6 +1253,17 @@ h3,
   background: var(--bg-elevated);
 }
 
+.trust-hero-media-trigger {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-lg);
+  cursor: zoom-in;
+}
+
 .trust-hero-media img {
   display: block;
   width: 100%;
@@ -1249,9 +1283,159 @@ h3,
   display: none;
 }
 
+.trust-walkthrough-intro {
+  margin: 0 0 var(--spacing-4);
+  color: var(--text-secondary);
+}
+
+.trust-walkthrough-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
+}
+
+.trust-walkthrough-media {
+  margin: 0;
+  display: grid;
+  gap: var(--spacing-2);
+}
+
+.trust-walkthrough-media picture {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-elevated);
+}
+
+.trust-walkthrough-media-trigger {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.trust-walkthrough-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.trust-walkthrough-media figcaption {
+  margin: 0;
+  font-size: var(--font-small-size);
+  color: var(--text-muted);
+}
+
+.trust-walkthrough-copy {
+  display: grid;
+  gap: var(--spacing-3);
+}
+
+.trust-walkthrough-step-label {
+  margin: 0;
+  font-size: var(--font-small-size);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.trust-walkthrough-copy h3 {
+  margin: 0;
+}
+
+.trust-walkthrough-copy p {
+  margin: 0;
+}
+
+.trust-walkthrough-controls {
+  display: flex;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+}
+
+.trust-walkthrough-button {
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.trust-walkthrough-button:hover {
+  background: var(--bg-elevated);
+}
+
+.trust-walkthrough-step-list {
+  margin-top: var(--spacing-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.trust-walkthrough-step-pill {
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.trust-walkthrough-step-pill.is-active {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: var(--text-primary);
+}
+
+.trust-walkthrough-lightbox {
+  appearance: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  border: 0;
+  width: 100%;
+  padding: clamp(16px, 2vw, 28px);
+  background: rgba(2, 6, 23, 0.92);
+  cursor: zoom-out;
+  display: grid;
+  place-items: center;
+}
+
+.trust-walkthrough-lightbox figure {
+  margin: 0;
+  display: grid;
+  gap: var(--spacing-2);
+}
+
+.trust-walkthrough-lightbox img {
+  max-width: 96vw;
+  max-height: 86vh;
+  width: auto;
+  height: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
+}
+
+.trust-walkthrough-lightbox figcaption {
+  margin: 0;
+  color: #dbe4ef;
+  font-size: var(--font-small-size);
+  text-align: left;
+}
+
 .auth-gate-brand {
   display: block;
-  width: min(360px, 100%);
+  width: min(280px, 100%);
   height: auto;
   margin-inline: auto;
 }
@@ -1264,7 +1448,7 @@ h3,
 }
 
 .auth-gate-secondary-links {
-  margin-top: var(--spacing-5);
+  margin-top: var(--spacing-2);
   display: flex;
   justify-content: center;
 }
@@ -1279,6 +1463,25 @@ h3,
 
 .auth-gate-secondary-link:hover {
   color: var(--text-primary);
+}
+
+.auth-gate-trust-footer {
+  margin-top: 0;
+  display: grid;
+  gap: var(--spacing-2);
+  text-align: left;
+}
+
+.auth-gate-trust-footer .article-trust-strip {
+  margin-bottom: 0;
+}
+
+.auth-gate-pseudo-footer {
+  width: 100%;
+  margin-top: auto;
+  padding-top: var(--spacing-6);
+  padding-bottom: var(--spacing-4);
+  margin-inline: auto;
 }
 
 .auth-button {
@@ -1857,6 +2060,15 @@ button:disabled {
   }
   .trust-hero-media figcaption {
     text-align: left;
+  }
+  .trust-walkthrough-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trust-walkthrough-controls {
+    justify-content: flex-start;
+  }
+  .trust-walkthrough-step-list {
+    margin-top: var(--spacing-3);
   }
   .marketing-cta-button {
     width: 100%;

@@ -32,4 +32,40 @@
     <loc>https://www.playbackpoker.com/about</loc>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://www.playbackpoker.com/how-playback-poker-works</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/ai-limitations</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/methodology</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/supported-sites-formats</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/articles</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/articles/how-ai-poker-review-works</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/articles/how-to-export-gg-hand-histories</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/articles/best-mtt-study-workflow</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://www.playbackpoker.com/articles/how-pros-review-mtt-sessions</loc>
+    <changefreq>weekly</changefreq>
+  </url>
 </urlset>

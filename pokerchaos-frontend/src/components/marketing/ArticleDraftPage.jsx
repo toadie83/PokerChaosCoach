@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
 import {
   LANDING_PAGE_LABELS,
@@ -41,6 +41,18 @@ function upsertJsonLdScript(id, schema) {
 
 export default function ArticleDraftPage({ slug }) {
   const article = getArticleBySlug(slug);
+  const [walkthroughIndex, setWalkthroughIndex] = useState(0);
+  const [isWalkthroughImageExpanded, setIsWalkthroughImageExpanded] = useState(false);
+  const walkthroughSteps = Array.isArray(article?.walkthroughSteps)
+    ? article.walkthroughSteps
+    : [];
+  const hasWalkthrough = walkthroughSteps.length > 0;
+  const activeWalkthroughIndex = hasWalkthrough
+    ? Math.min(walkthroughIndex, walkthroughSteps.length - 1)
+    : 0;
+  const activeWalkthroughStep = hasWalkthrough
+    ? walkthroughSteps[activeWalkthroughIndex]
+    : null;
 
   useEffect(() => {
     if (!article) {
@@ -83,6 +95,14 @@ export default function ArticleDraftPage({ slug }) {
     });
   }, [article]);
 
+  useEffect(() => {
+    setWalkthroughIndex(0);
+  }, [article?.slug]);
+
+  useEffect(() => {
+    setIsWalkthroughImageExpanded(false);
+  }, [article?.slug, activeWalkthroughIndex]);
+
   if (!article) {
     return (
       <main className="marketing-shell">
@@ -122,7 +142,9 @@ export default function ArticleDraftPage({ slug }) {
       </section>
 
       <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">{article.cluster} Draft</p>
+        <p className="marketing-kicker">
+          {article.publishReady ? article.cluster : `${article.cluster} Draft`}
+        </p>
         <h1 className="marketing-title">{article.title}</h1>
         <p className="marketing-subtitle">{article.excerpt}</p>
         <div className="marketing-proof-row">
@@ -136,16 +158,145 @@ export default function ArticleDraftPage({ slug }) {
         </div>
       </section>
 
+      {hasWalkthrough ? (
+        <section className="panel">
+          <h2>{article.walkthroughTitle || "How-To Walkthrough"}</h2>
+          {article.walkthroughIntro ? (
+            <p className="trust-walkthrough-intro">{article.walkthroughIntro}</p>
+          ) : null}
+
+          <div className="trust-walkthrough-stage">
+            <figure className="trust-walkthrough-media">
+              <button
+                type="button"
+                className="trust-walkthrough-media-trigger"
+                onClick={() => setIsWalkthroughImageExpanded((current) => !current)}
+                aria-label="Expand walkthrough image"
+              >
+                <picture>
+                  {activeWalkthroughStep.sources?.map((source) => (
+                    <source
+                      key={`${source.type}-${source.srcSet}`}
+                      srcSet={source.srcSet}
+                      type={source.type}
+                    />
+                  ))}
+                  <img
+                    src={activeWalkthroughStep.src}
+                    alt={activeWalkthroughStep.alt}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </picture>
+              </button>
+              {activeWalkthroughStep.caption ? (
+                <figcaption>{activeWalkthroughStep.caption}</figcaption>
+              ) : null}
+            </figure>
+
+            <div className="trust-walkthrough-copy">
+              <p className="trust-walkthrough-step-label">
+                Step {activeWalkthroughIndex + 1} of {walkthroughSteps.length}
+              </p>
+              <h3>{activeWalkthroughStep.title}</h3>
+              <p>{activeWalkthroughStep.description}</p>
+              <div className="trust-walkthrough-controls">
+                <button
+                  type="button"
+                  className="trust-walkthrough-button"
+                  onClick={() =>
+                    setWalkthroughIndex((current) =>
+                      current === 0 ? walkthroughSteps.length - 1 : current - 1,
+                    )
+                  }
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="trust-walkthrough-button"
+                  onClick={() =>
+                    setWalkthroughIndex((current) =>
+                      current === walkthroughSteps.length - 1 ? 0 : current + 1,
+                    )
+                  }
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="trust-walkthrough-step-list">
+            {walkthroughSteps.map((step, index) => (
+              <button
+                key={step.title}
+                type="button"
+                className={
+                  index === activeWalkthroughIndex
+                    ? "trust-walkthrough-step-pill is-active"
+                    : "trust-walkthrough-step-pill"
+                }
+                onClick={() => setWalkthroughIndex(index)}
+                aria-label={`Show ${step.title}`}
+              >
+                {index + 1}. {step.title}
+              </button>
+            ))}
+          </div>
+
+          {isWalkthroughImageExpanded ? (
+            <button
+              type="button"
+              className="trust-walkthrough-lightbox"
+              aria-label="Close expanded walkthrough image"
+              onClick={() => setIsWalkthroughImageExpanded(false)}
+            >
+              <figure>
+                <img
+                  src={activeWalkthroughStep.src}
+                  alt={activeWalkthroughStep.alt}
+                  loading="eager"
+                  decoding="async"
+                />
+                {activeWalkthroughStep.caption ? (
+                  <figcaption>{activeWalkthroughStep.caption}</figcaption>
+                ) : null}
+              </figure>
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="panel">
-        <h2>Writing Blueprint</h2>
-        <div className="marketing-faq-grid">
-          {article.sectionPrompts.map((prompt) => (
-            <article className="marketing-faq-item" key={prompt}>
-              <h3>Section Prompt</h3>
-              <p>{prompt}</p>
-            </article>
-          ))}
-        </div>
+        <h2>
+          {article.publishReady
+            ? "Content"
+            : Array.isArray(article.bodySections)
+              ? "Draft Content"
+              : "Writing Blueprint"}
+        </h2>
+        {Array.isArray(article.bodySections) ? (
+          <div className="marketing-faq-grid">
+            {article.bodySections.map((section) => (
+              <article className="marketing-faq-item" key={section.heading}>
+                <h3>{section.heading}</h3>
+                {section.paragraphs.map((paragraph) => (
+                  <p key={paragraph}>{paragraph}</p>
+                ))}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="marketing-faq-grid">
+            {article.sectionPrompts.map((prompt) => (
+              <article className="marketing-faq-item" key={prompt}>
+                <h3>Section Prompt</h3>
+                <p>{prompt}</p>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel">
