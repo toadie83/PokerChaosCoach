@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from "react";
 import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
 import {
-  ARTICLE_CATALOG,
   LANDING_PAGE_LABELS,
   buildArticlePath,
   getPublishedArticles,
@@ -11,7 +10,7 @@ import { TRUST_PAGE_CATALOG } from "./trustCatalog.js";
 const PAGE_PATH = "/articles";
 const PAGE_TITLE = "Poker Study Articles | Playback Poker";
 const PAGE_DESCRIPTION =
-  "Authority article library for poker study workflows, hand review strategy, and tournament improvement guides.";
+  "Playback Poker article library covering tournament review workflows, leak detection, and practical study systems.";
 
 function upsertMetaTag({ name, property, content }) {
   const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
@@ -36,7 +35,8 @@ function upsertCanonicalTag(href) {
 }
 
 export default function ArticleHubPage() {
-  const hasPublishedArticles = getPublishedArticles().length > 0;
+  const publishedArticles = getPublishedArticles();
+  const hasPublishedArticles = publishedArticles.length > 0;
 
   useEffect(() => {
     const pageUrl = `${window.location.origin}${PAGE_PATH}`;
@@ -56,13 +56,13 @@ export default function ArticleHubPage() {
 
   const clusteredArticles = useMemo(() => {
     const map = new Map();
-    for (const article of ARTICLE_CATALOG) {
+    for (const article of publishedArticles) {
       const current = map.get(article.cluster) || [];
       current.push(article);
       map.set(article.cluster, current);
     }
     return Array.from(map.entries());
-  }, []);
+  }, [publishedArticles]);
   const publishedTrustPages = useMemo(
     () => TRUST_PAGE_CATALOG.filter((page) => page.publishReady),
     [],
@@ -79,17 +79,16 @@ export default function ArticleHubPage() {
       </section>
 
       <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">Authority Content Hub</p>
-        <h1 className="marketing-title">Poker Study Article Framework</h1>
+        <p className="marketing-kicker">Article Hub</p>
+        <h1 className="marketing-title">Poker Study Articles</h1>
         <p className="marketing-subtitle">
-          This hub organizes supporting content around clear topic clusters.
-          Draft pages are scaffolded so you can write final copy and add media
-          before publishing.
+          Practical guides on tournament review workflows, leak detection, and
+          session improvement systems used in Playback Poker study.
         </p>
         <div className="marketing-proof-row">
-          <span className="marketing-pill">Cluster-driven structure</span>
-          <span className="marketing-pill">Internal link-ready templates</span>
-          <span className="marketing-pill">Draft-first workflow</span>
+          <span className="marketing-pill">Published strategy content</span>
+          <span className="marketing-pill">Tournament-focused workflows</span>
+          <span className="marketing-pill">Actionable review systems</span>
         </div>
       </section>
 
@@ -107,29 +106,32 @@ export default function ArticleHubPage() {
             </div>
           </div>
         ) : null}
-        <div className="article-cluster-grid">
-          {clusteredArticles.map(([clusterName, articles]) => (
-            <article className="article-cluster-card" key={clusterName}>
-              <h3>{clusterName}</h3>
-              <ul className="article-list">
-                {articles.map((article) => (
-                  <li key={article.slug}>
-                    <a className="article-link" href={buildArticlePath(article.slug)}>
-                      {article.title}
-                    </a>
-                    <p className="article-meta">
-                      {article.publishReady
-                        ? "Publish ready"
-                        : "Draft outline"}{" "}
-                      | Landing link target:{" "}
-                      {LANDING_PAGE_LABELS[article.primaryLandingPath]}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ))}
-        </div>
+        {clusteredArticles.length > 0 ? (
+          <div className="article-cluster-grid">
+            {clusteredArticles.map(([clusterName, articles]) => (
+              <article className="article-cluster-card" key={clusterName}>
+                <h3>{clusterName}</h3>
+                <ul className="article-list">
+                  {articles.map((article) => (
+                    <li key={article.slug}>
+                      <a className="article-link" href={buildArticlePath(article.slug)}>
+                        {article.title}
+                      </a>
+                      <p className="article-meta">
+                        Landing link target:{" "}
+                        {LANDING_PAGE_LABELS[article.primaryLandingPath]}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="marketing-subtitle">
+            No published articles are available yet.
+          </p>
+        )}
       </section>
     </main>
   );

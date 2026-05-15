@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
 import { LANDING_PAGE_LABELS } from "./articleCatalog.js";
 import { getTrustPageByPath } from "./trustCatalog.js";
@@ -38,6 +38,19 @@ function upsertJsonLdScript(id, schema) {
 
 export default function TrustPageDraft({ path }) {
   const page = getTrustPageByPath(path);
+  const [walkthroughIndex, setWalkthroughIndex] = useState(0);
+  const [isWalkthroughImageExpanded, setIsWalkthroughImageExpanded] = useState(false);
+  const [isHeroImageExpanded, setIsHeroImageExpanded] = useState(false);
+  const walkthroughSteps = Array.isArray(page?.walkthroughSteps)
+    ? page.walkthroughSteps
+    : [];
+  const hasWalkthrough = walkthroughSteps.length > 0;
+  const activeWalkthroughIndex = hasWalkthrough
+    ? Math.min(walkthroughIndex, walkthroughSteps.length - 1)
+    : 0;
+  const activeWalkthroughStep = hasWalkthrough
+    ? walkthroughSteps[activeWalkthroughIndex]
+    : null;
 
   useEffect(() => {
     if (!page) {
@@ -79,6 +92,15 @@ export default function TrustPageDraft({ path }) {
       },
     });
   }, [page]);
+
+  useEffect(() => {
+    setWalkthroughIndex(0);
+  }, [page?.path]);
+
+  useEffect(() => {
+    setIsWalkthroughImageExpanded(false);
+    setIsHeroImageExpanded(false);
+  }, [page?.path, activeWalkthroughIndex]);
 
   if (!page) {
     return (
@@ -135,33 +157,194 @@ export default function TrustPageDraft({ path }) {
           </div>
           {page.heroMedia ? (
             <figure className="trust-hero-media">
-              <picture>
-                {page.heroMedia.sources?.map((source) => (
-                  <source
-                    key={`${source.type}-${source.srcSet}`}
-                    srcSet={source.srcSet}
-                    type={source.type}
+              {page.heroMedia.zoomEnabled === false ? (
+                <picture>
+                  {page.heroMedia.sources?.map((source) => (
+                    <source
+                      key={`${source.type}-${source.srcSet}`}
+                      srcSet={source.srcSet}
+                      type={source.type}
+                      sizes={page.heroMedia.sizes}
+                    />
+                  ))}
+                  <img
+                    src={page.heroMedia.src}
+                    alt={page.heroMedia.alt}
                     sizes={page.heroMedia.sizes}
+                    loading={page.heroMedia.loading || "lazy"}
+                    decoding={page.heroMedia.decoding || "async"}
+                    onError={(event) => {
+                      event.currentTarget.closest(".trust-hero-media")?.classList.add("is-missing");
+                    }}
                   />
-                ))}
-                <img
-                  src={page.heroMedia.src}
-                  alt={page.heroMedia.alt}
-                  sizes={page.heroMedia.sizes}
-                  loading={page.heroMedia.loading || "lazy"}
-                  decoding={page.heroMedia.decoding || "async"}
-                  onError={(event) => {
-                    event.currentTarget.closest(".trust-hero-media")?.classList.add("is-missing");
-                  }}
-                />
-              </picture>
+                </picture>
+              ) : (
+                <button
+                  type="button"
+                  className="trust-hero-media-trigger"
+                  onClick={() => setIsHeroImageExpanded((current) => !current)}
+                  aria-label="Expand hero image"
+                >
+                  <picture>
+                    {page.heroMedia.sources?.map((source) => (
+                      <source
+                        key={`${source.type}-${source.srcSet}`}
+                        srcSet={source.srcSet}
+                        type={source.type}
+                        sizes={page.heroMedia.sizes}
+                      />
+                    ))}
+                    <img
+                      src={page.heroMedia.src}
+                      alt={page.heroMedia.alt}
+                      sizes={page.heroMedia.sizes}
+                      loading={page.heroMedia.loading || "lazy"}
+                      decoding={page.heroMedia.decoding || "async"}
+                      onError={(event) => {
+                        event.currentTarget.closest(".trust-hero-media")?.classList.add("is-missing");
+                      }}
+                    />
+                  </picture>
+                </button>
+              )}
               {page.heroMedia.caption ? (
                 <figcaption>{page.heroMedia.caption}</figcaption>
               ) : null}
             </figure>
           ) : null}
         </div>
+
+        {page.heroMedia && page.heroMedia.zoomEnabled !== false && isHeroImageExpanded ? (
+          <button
+            type="button"
+            className="trust-walkthrough-lightbox"
+            aria-label="Close expanded hero image"
+            onClick={() => setIsHeroImageExpanded(false)}
+          >
+            <figure>
+              <img
+                src={page.heroMedia.src}
+                alt={page.heroMedia.alt}
+                loading="eager"
+                decoding="async"
+              />
+              {page.heroMedia.caption ? (
+                <figcaption>{page.heroMedia.caption}</figcaption>
+              ) : null}
+            </figure>
+          </button>
+        ) : null}
       </section>
+
+      {hasWalkthrough ? (
+        <section className="panel">
+          <h2>{page.walkthroughTitle || "How-To Walkthrough"}</h2>
+          {page.walkthroughIntro ? (
+            <p className="trust-walkthrough-intro">{page.walkthroughIntro}</p>
+          ) : null}
+
+          <div className="trust-walkthrough-stage">
+            <figure className="trust-walkthrough-media">
+              <button
+                type="button"
+                className="trust-walkthrough-media-trigger"
+                onClick={() => setIsWalkthroughImageExpanded((current) => !current)}
+                aria-label="Expand walkthrough image"
+              >
+                <picture>
+                  {activeWalkthroughStep.sources?.map((source) => (
+                    <source
+                      key={`${source.type}-${source.srcSet}`}
+                      srcSet={source.srcSet}
+                      type={source.type}
+                    />
+                  ))}
+                  <img
+                    src={activeWalkthroughStep.src}
+                    alt={activeWalkthroughStep.alt}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </picture>
+              </button>
+              {activeWalkthroughStep.caption ? (
+                <figcaption>{activeWalkthroughStep.caption}</figcaption>
+              ) : null}
+            </figure>
+
+            <div className="trust-walkthrough-copy">
+              <p className="trust-walkthrough-step-label">
+                Step {activeWalkthroughIndex + 1} of {walkthroughSteps.length}
+              </p>
+              <h3>{activeWalkthroughStep.title}</h3>
+              <p>{activeWalkthroughStep.description}</p>
+              <div className="trust-walkthrough-controls">
+                <button
+                  type="button"
+                  className="trust-walkthrough-button"
+                  onClick={() =>
+                    setWalkthroughIndex((current) =>
+                      current === 0 ? walkthroughSteps.length - 1 : current - 1,
+                    )
+                  }
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="trust-walkthrough-button"
+                  onClick={() =>
+                    setWalkthroughIndex((current) =>
+                      current === walkthroughSteps.length - 1 ? 0 : current + 1,
+                    )
+                  }
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="trust-walkthrough-step-list">
+            {walkthroughSteps.map((step, index) => (
+              <button
+                key={step.title}
+                type="button"
+                className={
+                  index === activeWalkthroughIndex
+                    ? "trust-walkthrough-step-pill is-active"
+                    : "trust-walkthrough-step-pill"
+                }
+                onClick={() => setWalkthroughIndex(index)}
+                aria-label={`Show ${step.title}`}
+              >
+                {index + 1}. {step.title}
+              </button>
+            ))}
+          </div>
+
+          {isWalkthroughImageExpanded ? (
+            <button
+              type="button"
+              className="trust-walkthrough-lightbox"
+              aria-label="Close expanded walkthrough image"
+              onClick={() => setIsWalkthroughImageExpanded(false)}
+            >
+              <figure>
+                <img
+                  src={activeWalkthroughStep.src}
+                  alt={activeWalkthroughStep.alt}
+                  loading="eager"
+                  decoding="async"
+                />
+                {activeWalkthroughStep.caption ? (
+                  <figcaption>{activeWalkthroughStep.caption}</figcaption>
+                ) : null}
+              </figure>
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="panel">
         <h2>

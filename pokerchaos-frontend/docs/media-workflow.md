@@ -67,10 +67,19 @@ Always include meaningful alt text for SEO and accessibility.
 
 ## Recommended Filenames: /supported-sites-formats
 
-Use these screenshot filenames when preparing media for the Supported Sites And Formats trust page:
+Use these screenshot filenames when preparing media for the Supported Sites And Formats trust page walkthrough:
 
-- `supported-sites-formats-upload-workflow.webp` (hero image)
-- `supported-sites-formats-export-source-pokercraft.webp`
-- `supported-sites-formats-hand-history-text-example.webp`
-- `supported-sites-formats-parse-success-overview.webp`
-- `supported-sites-formats-import-issue-example.webp`
+- `supported-sites-formats-export-source-pokercraft.webp` (step 1)
+- `supported-sites-formats-export-source-pokercraft-download.webp` (step 2)
+- `supported-sites-formats-parse-upload-overview.webp` (step 3)
+- `supported-sites-formats-parse-success-full.webp` (step 4)
+
+## Recommended Filenames: /articles/best-mtt-study-workflow
+
+Use these screenshot filenames for the Best MTT Study Workflow article walkthrough:
+
+- `best-mtt-study-workflow-step-1-parse-leak-priority.webp`
+- `best-mtt-study-workflow-step-2-biggest-drags.webp`
+- `best-mtt-study-workflow-step-3-ai-tournament-summary.webp`
+- `best-mtt-study-workflow-step-4-session-kpis.webp`
+- `best-mtt-study-workflow-step-5-hand-audit-jto-co-missed-open.webp`
