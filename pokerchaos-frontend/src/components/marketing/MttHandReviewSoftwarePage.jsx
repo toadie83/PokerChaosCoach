@@ -92,7 +92,7 @@ export default function MttHandReviewSoftwarePage() {
           name: "Which sites are supported for uploads?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Tournament uploads support GGPoker and PokerStars. Cash uploads currently support GGPoker.",
+            text: "Tournament and cash uploads support both GGPoker and PokerStars.",
           },
         },
       ],
@@ -203,8 +203,7 @@ export default function MttHandReviewSoftwarePage() {
           <article className="marketing-faq-item">
             <h3>Does cash upload support exist too?</h3>
             <p>
-              Yes. Cash uploads currently support GGPoker, with more rooms
-              planned.
+              Yes. Cash uploads support both GGPoker and PokerStars.
             </p>
           </article>
         </div>

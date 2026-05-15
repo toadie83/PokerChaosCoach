@@ -92,7 +92,7 @@ export default function PokerSessionReviewPage() {
           name: "Which uploads are supported today?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Tournament uploads support GGPoker and PokerStars. Cash uploads currently support GGPoker.",
+            text: "Tournament and cash uploads support both GGPoker and PokerStars.",
           },
         },
       ],
@@ -169,8 +169,7 @@ export default function PokerSessionReviewPage() {
           <article className="marketing-faq-item">
             <h3>Can I use this for both tournament and cash sessions?</h3>
             <p>
-              Yes. Tournament uploads support GGPoker and PokerStars. Cash
-              uploads currently support GGPoker.
+              Yes. Tournament and cash uploads support GGPoker and PokerStars.
             </p>
           </article>
           <article className="marketing-faq-item">

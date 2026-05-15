@@ -173,6 +173,9 @@ function detectHistoryFormat(headerLine) {
   if (/^PokerStars Hand #/i.test(header) && /Tournament #/i.test(header)) {
     return "pokerstars_tournament";
   }
+  if (/^PokerStars Hand #/i.test(header)) {
+    return "pokerstars_cash";
+  }
   return null;
 }
 
@@ -655,11 +658,34 @@ function parsePokerStarsTournamentHeader(headerLine) {
   };
 }
 
+function parsePokerStarsCashHeader(headerLine) {
+  const match =
+    /^PokerStars Hand #([^:]+):\s+(.+?)\s+\(([^)]+)\)\s+-\s+(.+)$/.exec(
+      headerLine
+    );
+  if (!match) return null;
+  const blindLabel = String(match[3] || "").trim() || null;
+  return {
+    site: "pokerstars",
+    gameType: "cash",
+    handId: String(match[1] || "").trim(),
+    tournamentId: "",
+    game: String(match[2] || "").trim(),
+    level: null,
+    blindLabel,
+    playedAtRaw: String(match[4] || "").trim(),
+    currency: parseCurrencyFromText(`${match[2]} ${match[3]} ${match[4]}`),
+  };
+}
+
 function parseHeaderForFormat(headerLine, format) {
   if (format === "gg_tournament") return parseGgTournamentHeader(headerLine);
   if (format === "gg_cash") return parseGgCashHeader(headerLine);
   if (format === "pokerstars_tournament") {
     return parsePokerStarsTournamentHeader(headerLine);
+  }
+  if (format === "pokerstars_cash") {
+    return parsePokerStarsCashHeader(headerLine);
   }
   return null;
 }
@@ -763,9 +789,10 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
       continue;
     }
 
-    const seatMatch = /^Seat (\d+):\s+(.+?)\s+\(\$?([\d,.]+) in chips\)$/i.exec(
-      line
-    );
+    const seatMatch =
+      /^Seat (\d+):\s+(.+?)\s+\(\$?([\d,.]+) in chips\)(?:\s+is sitting out)?$/i.exec(
+        line
+      );
     if (seatMatch) {
       seats.push({
         seat: Number(seatMatch[1]),

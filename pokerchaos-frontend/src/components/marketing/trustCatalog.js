@@ -1,3 +1,8 @@
+const R2_PUBLIC_MEDIA_BASE_URL =
+  "https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev";
+const FOUNDER_PORTRAIT_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/13242.webp`;
+const SUPPORTED_SITES_HERO_URL = `${R2_PUBLIC_MEDIA_BASE_URL}/supported-sites-formats-upload-workflow.webp`;
+
 export const TRUST_PAGE_CATALOG = [
   {
     path: "/about",
@@ -14,11 +19,11 @@ export const TRUST_PAGE_CATALOG = [
         "Trevor. Builder of Playback Poker. Long-time tournament player, QA engineer and toolmaker.",
       sources: [
         {
-          srcSet: "/images/about/13242.webp",
+          srcSet: FOUNDER_PORTRAIT_URL,
           type: "image/webp",
         },
       ],
-      src: "/images/about/13242.webp",
+      src: FOUNDER_PORTRAIT_URL,
       sizes: "(max-width: 640px) 72vw, (max-width: 900px) 220px, 220px",
       loading: "eager",
       decoding: "async",
@@ -136,15 +141,76 @@ export const TRUST_PAGE_CATALOG = [
     title: "Supported Sites And Formats",
     kicker: "Compatibility",
     description:
-      "Current upload compatibility for tournaments and cash, accepted formats, and planned expansion notes.",
+      "Current upload compatibility for tournament and cash hand histories across GGPoker and PokerStars, with accepted import methods and expansion notes.",
     publishReady: false,
-    updatedAt: "2026-05-14",
+    updatedAt: "2026-05-15",
     primaryLandingPath: "/ggpoker-hand-review-tool",
-    sectionPrompts: [
-      "List current support: tournaments (GGPoker + PokerStars), cash (GGPoker).",
-      "Describe expected file/input format requirements and common import issues.",
-      "Add a short roadmap note for more rooms and format expansion.",
-      "Include a simple troubleshooting section for missing/partial hand histories.",
+    heroMedia: {
+      alt: "Playback Poker upload workflow showing supported sites and hand history import",
+      caption:
+        "Upload workflow reference for supported poker sites and hand history formats.",
+      sources: [
+        {
+          srcSet: SUPPORTED_SITES_HERO_URL,
+          type: "image/webp",
+        },
+      ],
+      src: SUPPORTED_SITES_HERO_URL,
+      sizes: "(max-width: 640px) 92vw, (max-width: 900px) 360px, 420px",
+      loading: "lazy",
+      decoding: "async",
+    },
+    bodySections: [
+      {
+        heading: "Supported Sites And Formats",
+        paragraphs: [
+          "Playback Poker is built around practical tournament and session review workflows. Support is expanding steadily, but the current focus is on reliable parsing, structured analysis, and meaningful review output for supported formats.",
+        ],
+      },
+      {
+        heading: "Currently Supported",
+        paragraphs: [
+          "Playback Poker now supports hand history parsing for both tournament and cash formats across GGPoker and PokerStars.",
+          "Supported uploads can be used for hand parsing, session and tournament review, leak analysis, missed spot identification, opponent flagging, ranking and scoring, and structured review workflows.",
+          "Tournament reporting depth is currently the most mature, while cash workflow depth continues to improve.",
+        ],
+      },
+      {
+        heading: "Supported File Formats",
+        paragraphs: [
+          "Playback Poker currently expects hand history text content from supported poker clients.",
+          "For PokerStars, you can upload saved hand history log files directly, and mobile users can import by copying and pasting hand history text from emailed logs.",
+          "For GGPoker, supported inputs include hand history exports from PokerCraft.",
+          "For best results, use complete exports, avoid manually edited files, keep original formatting intact, and ensure the import contains full hand data.",
+        ],
+      },
+      {
+        heading: "Common Import Issues",
+        paragraphs: [
+          "If a file fails to process correctly, the most common causes are partial hand histories, modified formatting, unsupported room variations, and corrupted downloads.",
+          "Some exports may contain incomplete tournament data or missing hands.",
+          "Editing hand history files manually can break parsing structure.",
+          "Poker sites occasionally change hand history formatting, which can temporarily affect compatibility.",
+          "Incomplete or damaged exports may fail during upload or parsing.",
+        ],
+      },
+      {
+        heading: "Troubleshooting Tips",
+        paragraphs: [
+          "If an upload looks incomplete or produces limited analysis, re-export directly from the poker client, confirm the export includes all hands for the session or tournament, avoid rewriting hand text manually, and retry using the original unmodified export.",
+          "For PokerStars mobile email imports, paste the full original hand history text exactly as exported.",
+          "If issues continue, support for additional formats or formatting changes may still be in progress.",
+        ],
+      },
+      {
+        heading: "Expansion Roadmap",
+        paragraphs: [
+          "Playback Poker is being developed iteratively around real player workflows and real tournament data.",
+          "Planned expansion areas include additional poker rooms, broader cash game support, deeper tournament categorisation, improved spot classification, expanded hand review coverage, and richer opponent analysis workflows.",
+          "The goal is not simply to support more files, but to make review workflows faster, clearer, and more actionable for players trying to improve their game.",
+          "If you want to review your own tournaments and track your progress over time, you can try Playback Poker from the homepage.",
+        ],
+      },
     ],
   },
 ];
