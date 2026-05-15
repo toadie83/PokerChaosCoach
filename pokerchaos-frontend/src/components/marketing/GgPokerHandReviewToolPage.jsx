@@ -4,7 +4,7 @@ import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png"
 const PAGE_PATH = "/ggpoker-hand-review-tool";
 const PAGE_TITLE = "GGPoker Hand Review Tool | Playback Poker";
 const PAGE_DESCRIPTION =
-  "Review GGPoker tournament and cash hand histories with AI feedback. Spot leaks faster and run structured post-session study in Playback Poker.";
+  "Review GGPoker and PokerStars tournament and cash hand histories with AI feedback. Spot leaks faster and run structured post-session study in Playback Poker.";
 
 function upsertMetaTag({ name, property, content }) {
   const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
@@ -84,7 +84,7 @@ export default function GgPokerHandReviewToolPage() {
           name: "Does the tool support GGPoker cash hand uploads?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Yes. Cash uploads currently support GGPoker, with more rooms planned.",
+            text: "Yes. Cash uploads support both GGPoker and PokerStars.",
           },
         },
         {
@@ -113,13 +113,14 @@ export default function GgPokerHandReviewToolPage() {
         <p className="marketing-kicker">GGPoker Hand Review Tool</p>
         <h1 className="marketing-title">Review GGPoker Hands With AI</h1>
         <p className="marketing-subtitle">
-          Upload GGPoker hand histories and run tactical AI review across
-          preflop and postflop decisions. Find recurring leaks and build a
+          Upload hand histories and run tactical AI review across preflop and
+          postflop decisions. Import GGPoker exports from PokerCraft or
+          PokerStars hand history logs to find recurring leaks and build a
           sharper post-session study loop.
         </p>
         <div className="marketing-proof-row">
           <span className="marketing-pill">GGPoker tournament support</span>
-          <span className="marketing-pill">GGPoker cash support</span>
+          <span className="marketing-pill">GG + PokerStars cash support</span>
           <span className="marketing-pill">Leak-focused analysis</span>
         </div>
         <a className="auth-button marketing-cta-button" href="/">
@@ -131,10 +132,11 @@ export default function GgPokerHandReviewToolPage() {
         <h2>How It Works</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
-            <h3>1. Upload GGPoker Hands</h3>
+            <h3>1. Upload GG or PokerStars Hands</h3>
             <p>
-              Bring in tournament or cash hand histories and organize your
-              review around high-impact decisions.
+              Bring in tournament or cash hand histories from PokerCraft
+              exports or PokerStars logs and organize your review around
+              high-impact decisions.
             </p>
           </article>
           <article className="marketing-card">
@@ -166,8 +168,7 @@ export default function GgPokerHandReviewToolPage() {
           <article className="marketing-faq-item">
             <h3>Can I review GGPoker cash hands too?</h3>
             <p>
-              Yes. Cash uploads currently support GGPoker, with more rooms
-              coming soon.
+              Yes. Cash uploads support both GGPoker and PokerStars.
             </p>
           </article>
           <article className="marketing-faq-item">

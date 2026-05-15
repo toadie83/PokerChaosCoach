@@ -30,6 +30,7 @@ import {
   requestBillingPortalSession,
   requestEntitlements,
 } from "./api/aiService.js";
+import { initAnalytics, trackPageView } from "./lib/analytics.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
 import desktopNavWordmark from "./assets/brand/playback-nav-image-desktop.png";
 import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
@@ -41,6 +42,7 @@ const DEFAULT_ROUTE = "/review";
 const SHOW_AUTH_ARTICLES_LINK = false;
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
+const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
 const MARKETING_PAGE_CONFIG = [
   {
     path: "/ai-poker-hand-analyzer",
@@ -840,6 +842,46 @@ function SignedOutShell() {
 }
 
 function Shell() {
+  useEffect(() => {
+    if (!initAnalytics()) return undefined;
+
+    const sendPageView = () => {
+      window.requestAnimationFrame(() => {
+        trackPageView();
+      });
+    };
+
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+
+    const emitRouteChange = () => {
+      window.dispatchEvent(new Event(SPA_ROUTE_CHANGE_EVENT));
+    };
+
+    window.history.pushState = function pushStatePatched(...args) {
+      const result = originalPushState.apply(this, args);
+      emitRouteChange();
+      return result;
+    };
+
+    window.history.replaceState = function replaceStatePatched(...args) {
+      const result = originalReplaceState.apply(this, args);
+      emitRouteChange();
+      return result;
+    };
+
+    window.addEventListener(SPA_ROUTE_CHANGE_EVENT, sendPageView);
+    window.addEventListener("popstate", sendPageView);
+    sendPageView();
+
+    return () => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+      window.removeEventListener(SPA_ROUTE_CHANGE_EVENT, sendPageView);
+      window.removeEventListener("popstate", sendPageView);
+    };
+  }, []);
+
   if (!clerkPublishableKey) {
     return (
       <div className="auth-gate">

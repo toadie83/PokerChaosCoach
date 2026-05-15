@@ -92,7 +92,7 @@ export default function PokerLeakFinderPage() {
           name: "Does this work for tournament and cash reviews?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Yes. Tournament uploads support GGPoker and PokerStars. Cash uploads currently support GGPoker.",
+            text: "Yes. Tournament and cash uploads support both GGPoker and PokerStars.",
           },
         },
       ],
@@ -194,14 +194,13 @@ export default function PokerLeakFinderPage() {
           <article className="marketing-faq-item">
             <h3>Can I use this for GGPoker reviews?</h3>
             <p>
-              Yes. GGPoker is supported for tournament and cash uploads today.
+              Yes. GGPoker is supported for both tournament and cash uploads.
             </p>
           </article>
           <article className="marketing-faq-item">
             <h3>Does this also support PokerStars uploads?</h3>
             <p>
-              Yes for tournaments. Tournament uploads support PokerStars and
-              GGPoker. Cash currently supports GGPoker.
+              Yes. PokerStars is supported for both tournament and cash uploads.
             </p>
           </article>
         </div>

@@ -4,7 +4,7 @@ import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png"
 const PAGE_PATH = "/ai-poker-hand-analyzer";
 const PAGE_TITLE = "AI Poker Hand Analyzer | Playback Poker";
 const PAGE_DESCRIPTION =
-  "Review tournament hand histories with AI feedback. Tournament uploads support GGPoker and PokerStars today, with more rooms coming soon.";
+  "Review tournament and cash hand histories with AI feedback. Upload PokerStars logs or GGPoker PokerCraft exports for structured review.";
 
 function upsertMetaTag({ name, property, content }) {
   const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
@@ -92,7 +92,7 @@ export default function AiPokerHandAnalyzerPage() {
           name: "Can I use this as a GGPoker hand review tool?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Yes. Tournament uploads support GGPoker and PokerStars. Cash uploads currently support GGPoker, with additional rooms coming soon.",
+            text: "Yes. Tournament and cash uploads support both GGPoker and PokerStars.",
           },
         },
       ],
@@ -117,14 +117,13 @@ export default function AiPokerHandAnalyzerPage() {
         <p className="marketing-subtitle">
           Playback Poker helps you review MTT decisions, surface recurring
           leaks, and run cleaner post-session study with a tactical workflow.
-          Tournament uploads currently support GGPoker and PokerStars. Cash
-          uploads currently support GGPoker.
+          Tournament and cash uploads support both GGPoker and PokerStars.
         </p>
         <div className="marketing-proof-row">
           <span className="marketing-pill">MTT hand review workflow</span>
           <span className="marketing-pill">Leak-focused analysis</span>
           <span className="marketing-pill">Tournaments: GG + PokerStars</span>
-          <span className="marketing-pill">Cash: GG (more soon)</span>
+          <span className="marketing-pill">Cash: GG + PokerStars</span>
         </div>
         <a className="auth-button marketing-cta-button" href="/">
           Start Free Hand Review
@@ -196,8 +195,9 @@ export default function AiPokerHandAnalyzerPage() {
           <article className="marketing-faq-item">
             <h3>Which sites are supported right now?</h3>
             <p>
-              Tournament uploads support GGPoker and PokerStars. Cash uploads
-              currently support GGPoker. More rooms are coming soon.
+              Tournament and cash uploads support GGPoker and PokerStars.
+              PokerStars supports direct log upload and mobile email text
+              copy/paste imports, while GGPoker supports PokerCraft exports.
             </p>
           </article>
         </div>

@@ -1,16 +1,28 @@
-Place founder portrait assets here using these filenames:
+## Deprecated Local Asset Path
 
-- `founder-640.webp`
-- `founder-960.webp`
+Playback Poker content images no longer ship from the frontend bundle.
 
-Recommended export:
+Use Cloudflare R2 for content media:
 
-- WebP
-- Tight crop with face dominant
-- Reduce empty bottom-left area
-- Quality target around `72-80`
+- Bucket: `playbackpoker-media`
+- Public base URL: `https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/`
+- Preferred format: `.webp`
+- Target size: `100kb-400kb` for screenshots/content images
 
-The `/about` page uses:
+Example usage:
 
-- `src`: `/images/about/founder-960.webp`
-- `srcset`: `/images/about/founder-640.webp 640w, /images/about/founder-960.webp 960w`
+```html
+<img
+  src="https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/13242.webp"
+  alt="Playback Poker founder"
+/>
+```
+
+Naming standard:
+
+- Good: `ggpoker-hand-review-example.webp`
+- Good: `mtt-leak-analysis-dashboard.webp`
+- Bad: `image1.webp`
+- Bad: `screenshot-final-final.webp`
+
+Always include meaningful alt text for SEO and accessibility.
