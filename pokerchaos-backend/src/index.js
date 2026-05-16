@@ -20,8 +20,10 @@ import {
 } from "./handHistoryService.js";
 import {
   consumeAiTrialTokens,
+  deleteAiHandReviewsForTournament,
   deleteTournamentUpload,
   ensureAiTrialCredits,
+  getAiHandReviewsForTournament,
   getMonthlyAiUsage,
   getTournamentUpload,
   getBillingCustomerByUserId,
@@ -31,6 +33,7 @@ import {
   isDatabaseConfigured,
   listTournamentUploads,
   recordAiUsageEvent,
+  upsertAiHandReviews,
   upsertBillingCustomer,
   upsertBillingSubscription,
   upsertTournamentUpload,
@@ -134,6 +137,7 @@ const aiEstimatedTableHintTokens =
   aiEstimatedTableHintTokensRaw > 0
     ? Math.floor(aiEstimatedTableHintTokensRaw)
     : 10_000;
+const maxHandsPerAiReviewRequest = 30;
 const clerkClient = clerkSecretKey
   ? createClerkClient({ secretKey: clerkSecretKey })
   : null;
@@ -561,7 +565,10 @@ const handHistorySchema = z.object({
 });
 
 const handReviewSchema = z.object({
-  selectedHands: z.array(z.record(z.any())).min(1).max(30),
+  selectedHands: z
+    .array(z.record(z.any()))
+    .min(1)
+    .max(maxHandsPerAiReviewRequest),
   opponentSnapshot: z.record(z.any()).optional(),
   instruction: z.string().trim().max(700).optional(),
   model: z.string().trim().optional(),
@@ -599,6 +606,7 @@ const tournamentUploadSchema = z.object({
   tournamentId: z.string().trim().min(1).max(80).optional(),
   tournamentName: z.string().trim().max(160).optional(),
   uploadSource: z.string().trim().min(1).max(40).optional().default("ggpoker"),
+  reviewsByHandKey: z.record(z.any()).optional(),
 });
 
 const tournamentIdParamSchema = z.object({
@@ -1463,6 +1471,32 @@ app.post(
         opponentSnapshot: opponents,
         summary,
       });
+      const suppliedReviewsByHandKey =
+        parsed.data.reviewsByHandKey &&
+        typeof parsed.data.reviewsByHandKey === "object"
+          ? parsed.data.reviewsByHandKey
+          : null;
+      if (suppliedReviewsByHandKey) {
+        const allowedHandKeys = new Set(
+          compactHands
+            .map((hand) => String(hand?.handKey || "").trim())
+            .filter(Boolean)
+        );
+        const filteredReviewsByHandKey = {};
+        for (const [rawKey, review] of Object.entries(suppliedReviewsByHandKey)) {
+          const handKey = String(rawKey || "").trim();
+          if (!handKey || !allowedHandKeys.has(handKey)) continue;
+          if (!review || typeof review !== "object") continue;
+          filteredReviewsByHandKey[handKey] = review;
+        }
+        if (Object.keys(filteredReviewsByHandKey).length > 0) {
+          await upsertAiHandReviews({
+            userId: req.auth?.userId || "",
+            tournamentId: resolvedTournamentId,
+            reviewsByHandKey: filteredReviewsByHandKey,
+          });
+        }
+      }
 
       return res.json({
         saved: {
@@ -1541,6 +1575,11 @@ app.get(
         return res.status(404).json({ error: "Tournament upload not found." });
       }
 
+      const reviewsByHandKey = await getAiHandReviewsForTournament(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
+
       return res.json({
         tournament: {
           tournamentId: record.tournamentId,
@@ -1553,6 +1592,7 @@ app.get(
           summary: record.summary || {},
           opponents: record.opponentSnapshot || {},
           hands: Array.isArray(record.parsedHands) ? record.parsedHands : [],
+          reviewsByHandKey,
           historyText: record.historyText || "",
         },
       });
@@ -1586,6 +1626,10 @@ app.delete(
     }
 
     try {
+      await deleteAiHandReviewsForTournament(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
       const deleted = await deleteTournamentUpload(
         req.auth?.userId || "",
         parsedParams.data.tournamentId,
@@ -1627,6 +1671,10 @@ app.post(
     }
 
     try {
+      await deleteAiHandReviewsForTournament(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId
+      );
       const deleted = await deleteTournamentUpload(
         req.auth?.userId || "",
         parsedParams.data.tournamentId,
@@ -1653,6 +1701,18 @@ app.post(
   requireFeature("review"),
   requireReviewAi,
   async (req, res) => {
+    const selectedHandsRaw = Array.isArray(req.body?.selectedHands)
+      ? req.body.selectedHands
+      : [];
+    if (selectedHandsRaw.length > maxHandsPerAiReviewRequest) {
+      return res.status(400).json({
+        error: `You can review up to ${maxHandsPerAiReviewRequest} hands at once.`,
+        code: "HAND_REVIEW_LIMIT_EXCEEDED",
+        maxHandsPerRequest: maxHandsPerAiReviewRequest,
+        selectedHands: selectedHandsRaw.length,
+      });
+    }
+
     const parsed = handReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({
@@ -1696,6 +1756,7 @@ app.post(
         );
         usageEntries.push(review?.usage || null);
         reviews.push({
+          handKey: String(compactHand?.handKey || "").trim() || null,
           hand: compactHand,
           review,
         });

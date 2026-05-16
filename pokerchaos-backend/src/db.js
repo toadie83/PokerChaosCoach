@@ -96,6 +96,29 @@ export async function initDatabase() {
   `);
 
   await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS ai_hand_reviews (
+      user_id TEXT NOT NULL,
+      tournament_id TEXT NOT NULL,
+      hand_key TEXT NOT NULL,
+      overall_score INTEGER,
+      review_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, tournament_id, hand_key)
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS ai_hand_reviews_user_score_idx
+    ON ai_hand_reviews (user_id, tournament_id, overall_score, updated_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS ai_hand_reviews_user_updated_idx
+    ON ai_hand_reviews (user_id, updated_at DESC);
+  `);
+
+  await resolvedPool.query(`
     CREATE TABLE IF NOT EXISTS ai_usage_events (
       id BIGSERIAL PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -428,6 +451,103 @@ export async function deleteTournamentUpload(userId, tournamentId) {
     [userId, tournamentId]
   );
   return Number(result.rowCount) > 0;
+}
+
+export async function upsertAiHandReviews({
+  userId,
+  tournamentId,
+  reviewsByHandKey,
+}) {
+  const resolvedPool = getRequiredPool();
+  const entries = Object.entries(
+    reviewsByHandKey && typeof reviewsByHandKey === "object"
+      ? reviewsByHandKey
+      : {}
+  )
+    .map(([handKey, review]) => ({
+      handKey: String(handKey || "").trim(),
+      review: review && typeof review === "object" ? review : null,
+    }))
+    .filter((item) => item.handKey && item.review);
+
+  if (!entries.length) return { upserted: 0 };
+
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const item of entries) {
+      const overallScoreRaw = Number(item.review?.overall_score);
+      const overallScore = Number.isFinite(overallScoreRaw)
+        ? Math.trunc(overallScoreRaw)
+        : null;
+      await client.query(
+        `
+          INSERT INTO ai_hand_reviews (
+            user_id,
+            tournament_id,
+            hand_key,
+            overall_score,
+            review_json
+          ) VALUES ($1, $2, $3, $4, $5::jsonb)
+          ON CONFLICT (user_id, tournament_id, hand_key)
+          DO UPDATE SET
+            overall_score = EXCLUDED.overall_score,
+            review_json = EXCLUDED.review_json,
+            updated_at = NOW();
+        `,
+        [
+          userId,
+          tournamentId,
+          item.handKey,
+          overallScore,
+          toJsonbParam(item.review, {}),
+        ]
+      );
+    }
+    await client.query("COMMIT");
+    return { upserted: entries.length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getAiHandReviewsForTournament(userId, tournamentId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      SELECT hand_key, review_json
+      FROM ai_hand_reviews
+      WHERE user_id = $1 AND tournament_id = $2
+      ORDER BY updated_at DESC;
+    `,
+    [userId, tournamentId]
+  );
+  const reviewsByHandKey = {};
+  for (const row of result.rows) {
+    const key = String(row?.hand_key || "").trim();
+    if (!key) continue;
+    const review =
+      row?.review_json && typeof row.review_json === "object"
+        ? row.review_json
+        : null;
+    if (!review) continue;
+    reviewsByHandKey[key] = review;
+  }
+  return reviewsByHandKey;
+}
+
+export async function deleteAiHandReviewsForTournament(userId, tournamentId) {
+  const resolvedPool = getRequiredPool();
+  await resolvedPool.query(
+    `
+      DELETE FROM ai_hand_reviews
+      WHERE user_id = $1 AND tournament_id = $2;
+    `,
+    [userId, tournamentId]
+  );
 }
 
 export async function getMonthlyAiUsage(userId, periodMonth = new Date()) {

@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 const HAND_SPLIT_REGEX =
   /(?=^(?:\*{5,}\s*#\s*\d+\s*\*{5,}|Poker Hand #|PokerStars Hand #))/m;
 
@@ -224,6 +226,36 @@ function resolveHeroSummaryFromSummaryLines(summaryLines, heroName) {
     };
   }
   return { line: null, wonAmount: null };
+}
+
+function normalizeHandKeySource(hand) {
+  const site = String(hand?.site || "").trim().toLowerCase();
+  const gameType = String(hand?.gameType || "").trim().toLowerCase();
+  const handId = String(hand?.handId || "").trim();
+  const tournamentId = String(hand?.tournamentId || "").trim();
+  const playedAtEpoch = Number(hand?.playedAtEpoch);
+  const playedAt = String(hand?.playedAt || "").trim();
+  const heroName = String(hand?.heroName || "").trim();
+  const tableId = String(hand?.table?.id || "").trim();
+  const blindLabel = String(hand?.blindLabel || "").trim();
+  return [
+    site,
+    gameType,
+    handId,
+    tournamentId,
+    Number.isFinite(playedAtEpoch) ? String(playedAtEpoch) : "",
+    playedAt,
+    heroName,
+    tableId,
+    blindLabel,
+  ].join("|");
+}
+
+function buildStableHandKey(hand) {
+  const existing = String(hand?.handKey || "").trim();
+  if (existing) return existing;
+  const source = normalizeHandKeySource(hand);
+  return createHash("sha256").update(source).digest("hex");
 }
 
 const VPIP_ACTION_TYPES = new Set(["call", "raise", "bet", "jam"]);
@@ -1350,6 +1382,7 @@ export function buildOpponentSnapshot(hands, options = {}) {
 }
 
 export function compactHandForApi(hand) {
+  const handKey = buildStableHandKey(hand);
   const heroStreetActions = {};
   for (const street of ["preflop", "flop", "turn", "river"]) {
     heroStreetActions[street] = (hand.actionsByStreet?.[street] || [])
@@ -1362,6 +1395,7 @@ export function compactHandForApi(hand) {
   }
 
   return {
+    handKey,
     site: hand.site ?? null,
     gameType: hand.gameType ?? null,
     currency: hand.currency ?? null,

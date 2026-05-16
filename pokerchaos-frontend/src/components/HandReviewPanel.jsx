@@ -166,6 +166,8 @@ function scoreClass(score) {
 }
 
 function handKey(hand) {
+  const stable = String(hand?.handKey || "").trim();
+  if (stable) return stable;
   const handId = String(hand?.handId || "");
   const playedAt = String(hand?.playedAt || "");
   const tournamentId = String(hand?.tournamentId || "");
@@ -651,11 +653,17 @@ function buildTableHintParagraph(review) {
   return parts.join(" ");
 }
 
-const TIME_FILTER_OPTIONS = [
-  { code: "all_time", label: "All time", ms: null },
-  { code: "last_1h", label: "Last 1 hour", ms: 60 * 60 * 1000 },
-  { code: "last_2h", label: "Last 2 hours", ms: 2 * 60 * 60 * 1000 },
+const AI_SCORE_FILTER_OPTIONS = [
+  { code: "all", label: "All hands" },
+  { code: "unreviewed", label: "Unreviewed only" },
+  { code: "all_reviewed", label: "All reviewed" },
+  { code: "score_gte_0", label: "AI score >= 0" },
+  { code: "score_gt_0", label: "AI score > 0" },
+  { code: "score_lt_0", label: "AI score < 0" },
+  { code: "score_lte_-2", label: "AI score <= -2" },
 ];
+const MAX_HANDS_PER_AI_REVIEW = 30;
+const ANALYZE_LIMIT_HINT_MIN_SELECTION = 5;
 
 function parsePlayedAtEpoch(raw) {
   if (typeof raw !== "string") return null;
@@ -2546,7 +2554,7 @@ export default function HandReviewPanel() {
   const [handLimit, setHandLimit] = useState(200);
   const [preflopHandSet, setPreflopHandSet] = useState("all_hands");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
-  const [timeFilter, setTimeFilter] = useState("all_time");
+  const [aiScoreFilter, setAiScoreFilter] = useState("all");
   const [sourceFileName, setSourceFileName] = useState("");
   const [loadingParse, setLoadingParse] = useState(false);
   const [loadingReview, setLoadingReview] = useState(false);
@@ -2591,6 +2599,7 @@ export default function HandReviewPanel() {
   const [blindDefenseReview, setBlindDefenseReview] = useState(null);
   const [icmReview, setIcmReview] = useState(null);
   const [tableHintReview, setTableHintReview] = useState(null);
+  const [reviewProgressPct, setReviewProgressPct] = useState(0);
   const [selectedHandKeys, setSelectedHandKeys] = useState(() => new Set());
   const [selectedAuditHandKey, setSelectedAuditHandKey] = useState("");
   const [pendingAuditScrollKey, setPendingAuditScrollKey] = useState("");
@@ -2604,7 +2613,35 @@ export default function HandReviewPanel() {
     readCashNoticeDismissed(),
   );
   const copyTimeoutRef = useRef(null);
+  const reviewProgressIntervalRef = useRef(null);
   const handRowRefs = useRef(new Map());
+
+  const stopReviewProgress = () => {
+    if (reviewProgressIntervalRef.current) {
+      clearInterval(reviewProgressIntervalRef.current);
+      reviewProgressIntervalRef.current = null;
+    }
+  };
+
+  const startReviewProgress = (handCount) => {
+    stopReviewProgress();
+    setReviewProgressPct(1);
+    const expectedMs = Math.min(
+      60_000,
+      Math.max(8_000, (Number(handCount) || 1) * 2_000),
+    );
+    const tickMs = 250;
+    const maxWhilePending = 96;
+    const steps = Math.max(1, Math.floor(expectedMs / tickMs));
+    const increment = (maxWhilePending - 1) / steps;
+
+    reviewProgressIntervalRef.current = setInterval(() => {
+      setReviewProgressPct((previous) => {
+        if (previous >= maxWhilePending) return previous;
+        return Math.min(maxWhilePending, previous + increment);
+      });
+    }, tickMs);
+  };
 
   const canSubmit = historyText.trim().length > 0;
   const hasActiveSubscription = Boolean(
@@ -2795,14 +2832,6 @@ export default function HandReviewPanel() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [parsedHands]);
   const filteredParsedHands = useMemo(() => {
-    const timeOption =
-      TIME_FILTER_OPTIONS.find((option) => option.code === timeFilter) ||
-      TIME_FILTER_OPTIONS[0];
-    const cutoffEpoch =
-      Number.isFinite(Number(timeOption.ms)) && Number(timeOption.ms) > 0
-        ? Date.now() - Number(timeOption.ms)
-        : null;
-
     return parsedHands.filter((hand) => {
       if (
         outcomeFilter !== "all" &&
@@ -2810,12 +2839,27 @@ export default function HandReviewPanel() {
       ) {
         return false;
       }
-      if (cutoffEpoch === null) return true;
-      const playedAtEpoch = getHandPlayedAtEpoch(hand);
-      if (!Number.isFinite(Number(playedAtEpoch))) return false;
-      return Number(playedAtEpoch) >= cutoffEpoch;
+      if (aiScoreFilter === "all") return true;
+
+      const key = handKey(hand);
+      const review = key ? reviewsByHandKey[key] : null;
+      const score = Number(review?.overall_score);
+      const hasScore = Number.isFinite(score);
+
+      if (aiScoreFilter === "unreviewed") {
+        return !review || !hasScore;
+      }
+      if (aiScoreFilter === "all_reviewed") {
+        return Boolean(review) && hasScore;
+      }
+      if (!hasScore) return false;
+      if (aiScoreFilter === "score_gte_0") return score >= 0;
+      if (aiScoreFilter === "score_gt_0") return score > 0;
+      if (aiScoreFilter === "score_lt_0") return score < 0;
+      if (aiScoreFilter === "score_lte_-2") return score <= -2;
+      return true;
     });
-  }, [parsedHands, outcomeFilter, timeFilter]);
+  }, [parsedHands, outcomeFilter, aiScoreFilter, reviewsByHandKey]);
   const parsedHandByKey = useMemo(() => {
     const map = new Map();
     for (const hand of parsedHands) {
@@ -2826,6 +2870,10 @@ export default function HandReviewPanel() {
   const selectedHands = filteredParsedHands.filter((hand) =>
     selectedHandKeys.has(handKey(hand)),
   );
+  const selectedUnreviewedHands = selectedHands.filter((hand) => {
+    const key = handKey(hand);
+    return !reviewsByHandKey[key];
+  });
   const detectedTournamentIds = useMemo(() => {
     const ids = new Set();
     for (const hand of parsedHands) {
@@ -2872,6 +2920,11 @@ export default function HandReviewPanel() {
     sourceFileName,
   ]);
   const selectedCount = selectedHands.length;
+  const selectedUnreviewedCount = selectedUnreviewedHands.length;
+  const selectedAlreadyReviewedCount = Math.max(
+    0,
+    selectedCount - selectedUnreviewedCount,
+  );
   const reviewedCount = parsedHands.reduce(
     (count, hand) => (reviewsByHandKey[handKey(hand)] ? count + 1 : count),
     0,
@@ -3607,6 +3660,7 @@ export default function HandReviewPanel() {
       if (copyTimeoutRef.current) {
         clearTimeout(copyTimeoutRef.current);
       }
+      stopReviewProgress();
     };
   }, []);
 
@@ -3767,7 +3821,7 @@ export default function HandReviewPanel() {
     );
     if (!visibleNow) {
       setOutcomeFilter("all");
-      setTimeFilter("all_time");
+      setAiScoreFilter("all");
       setSelectedHandKeys(new Set());
     }
     setPendingAuditScrollKey(key);
@@ -3794,7 +3848,7 @@ export default function HandReviewPanel() {
     setTableHintReview(null);
     setTableHintReviewError("");
     setOutcomeFilter("all");
-    setTimeFilter("all_time");
+    setAiScoreFilter("all");
     setSelectedHandKeys(new Set());
     setInsightsTab("tournament");
     setOpponentFilter("current_table");
@@ -3833,7 +3887,7 @@ export default function HandReviewPanel() {
         setIsParserCollapsed(true);
       }
       setOutcomeFilter("all");
-      setTimeFilter("all_time");
+      setAiScoreFilter("all");
       setSelectedHandKeys(new Set());
       setInsightsTab("tournament");
       setOpponentFilter("current_table");
@@ -3894,6 +3948,12 @@ export default function HandReviewPanel() {
     setSaveTournamentSuccess("");
     setLoadingTournamentSave(true);
     try {
+      const reviewsPayload = {};
+      for (const [rawKey, review] of Object.entries(reviewsByHandKey || {})) {
+        const key = String(rawKey || "").trim();
+        if (!key || !review || typeof review !== "object") continue;
+        reviewsPayload[key] = review;
+      }
       const payload = {
         historyText,
         heroName: heroName.trim() || "Hero",
@@ -3901,6 +3961,8 @@ export default function HandReviewPanel() {
         tournamentName:
           String(pendingTournamentSave.tournamentName || "").trim() ||
           undefined,
+        reviewsByHandKey:
+          Object.keys(reviewsPayload).length > 0 ? reviewsPayload : undefined,
       };
 
       const res = await requestTournamentUpload(payload);
@@ -3968,6 +4030,11 @@ export default function HandReviewPanel() {
         tournament.summary && typeof tournament.summary === "object"
           ? tournament.summary
           : null;
+      const hydratedReviews =
+        tournament.reviewsByHandKey &&
+        typeof tournament.reviewsByHandKey === "object"
+          ? tournament.reviewsByHandKey
+          : {};
 
       setParseResult({
         summary: summary || {
@@ -3996,11 +4063,11 @@ export default function HandReviewPanel() {
       setIcmReviewError("");
       setTableHintReview(null);
       setTableHintReviewError("");
-      setReviewsByHandKey({});
+      setReviewsByHandKey(hydratedReviews);
       setExpandedReviewLogicKeys(new Set());
       setSelectedHandKeys(new Set());
       setOutcomeFilter("all");
-      setTimeFilter("all_time");
+      setAiScoreFilter("all");
       setInsightsTab("tournament");
       setOpponentFilter("current_table");
       setCopiedOpponentKey("");
@@ -4051,18 +4118,32 @@ export default function HandReviewPanel() {
   };
 
   const runReview = async () => {
+    if (loadingReview) return;
     if (quickReviewHandKey) return;
     if (selectedCount === 0) {
       setError("Select at least one parsed hand for review.");
+      return;
+    }
+    if (selectedUnreviewedCount === 0) {
+      setError(
+        "All selected hands are already AI reviewed. Use the per-hand AI review action to re-check a specific hand.",
+      );
+      return;
+    }
+    if (selectedUnreviewedCount > MAX_HANDS_PER_AI_REVIEW) {
+      setError(
+        `You selected ${selectedUnreviewedCount} unreviewed hands. Analyze supports up to ${MAX_HANDS_PER_AI_REVIEW} hands at once.`,
+      );
       return;
     }
     setError("");
     setShowUpgradePrompt(false);
     setAiAccessErrorCode("");
     setLoadingReview(true);
+    startReviewProgress(selectedUnreviewedCount);
     try {
       const reviewPayload = {
-        selectedHands,
+        selectedHands: selectedUnreviewedHands,
       };
       if (opponentSnapshot && typeof opponentSnapshot === "object") {
         reviewPayload.opponentSnapshot = opponentSnapshot;
@@ -4072,7 +4153,8 @@ export default function HandReviewPanel() {
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
-          const key = handKey(item?.hand || {});
+          const key =
+            String(item?.handKey || "").trim() || handKey(item?.hand || {});
           if (key) {
             next[key] = item?.review || null;
           }
@@ -4081,6 +4163,7 @@ export default function HandReviewPanel() {
       });
       setShowUpgradePrompt(false);
       setAiAccessErrorCode("");
+      setReviewProgressPct(100);
     } catch (err) {
       if (isUpgradeRequiredError(err)) {
         setShowUpgradePrompt(true);
@@ -4089,7 +4172,9 @@ export default function HandReviewPanel() {
       }
       setError(err?.message || "Failed to review hands.");
     } finally {
+      stopReviewProgress();
       setLoadingReview(false);
+      setReviewProgressPct(0);
     }
   };
 
@@ -4113,7 +4198,8 @@ export default function HandReviewPanel() {
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
-          const key = handKey(item?.hand || {});
+          const key =
+            String(item?.handKey || "").trim() || handKey(item?.hand || {});
           if (key) {
             next[key] = item?.review || null;
           }
@@ -4421,7 +4507,7 @@ export default function HandReviewPanel() {
                   setTableHintReview(null);
                   setTableHintReviewError("");
                   setOutcomeFilter("all");
-                  setTimeFilter("all_time");
+                  setAiScoreFilter("all");
                   setSelectedHandKeys(new Set());
                   setInsightsTab("tournament");
                   setOpponentFilter("current_table");
@@ -4569,15 +4655,15 @@ export default function HandReviewPanel() {
               </select>
             </label>
             <label>
-              Time window
+              AI score
               <select
-                value={timeFilter}
+                value={aiScoreFilter}
                 onChange={(e) => {
-                  setTimeFilter(e.target.value);
+                  setAiScoreFilter(e.target.value);
                   setSelectedHandKeys(new Set());
                 }}
               >
-                {TIME_FILTER_OPTIONS.map((option) => (
+                {AI_SCORE_FILTER_OPTIONS.map((option) => (
                   <option key={option.code} value={option.code}>
                     {option.label}
                   </option>
@@ -4608,14 +4694,35 @@ export default function HandReviewPanel() {
               className="hand-review-action-primary"
               onClick={runReview}
               disabled={
-                selectedCount === 0 ||
+                selectedUnreviewedCount === 0 ||
+                selectedUnreviewedCount > MAX_HANDS_PER_AI_REVIEW ||
                 loadingReview ||
                 Boolean(quickReviewHandKey)
               }
             >
-              {loadingReview || quickReviewHandKey ? "Reviewing..." : "Analyze"}
+              {loadingReview
+                ? `Reviewing... ${Math.max(
+                    1,
+                    Math.min(100, Math.round(reviewProgressPct)),
+                  )}%`
+                : quickReviewHandKey
+                  ? "Reviewing..."
+                  : "Analyze"}
             </button>
           </div>
+        ) : null}
+        {filteredParsedHands.length > 0 && selectedAlreadyReviewedCount > 0 ? (
+          <p className="hand-review-empty">
+            Bulk analyze skips {selectedAlreadyReviewedCount} already reviewed hand
+            {selectedAlreadyReviewedCount === 1 ? "" : "s"}.
+          </p>
+        ) : null}
+        {filteredParsedHands.length > 0 &&
+        selectedCount >= ANALYZE_LIMIT_HINT_MIN_SELECTION ? (
+          <p className="hand-review-empty">
+            Analyze limit: up to {MAX_HANDS_PER_AI_REVIEW} unreviewed selected
+            hands per run.
+          </p>
         ) : null}
 
         {filteredParsedHands.length > 0 ? (
