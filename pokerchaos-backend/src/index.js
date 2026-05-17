@@ -18,6 +18,7 @@ import {
   parseHandHistory,
   sortHands,
 } from "./handHistoryService.js";
+import { buildValidatedHandState } from "./handStateValidationService.js";
 import {
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
@@ -1745,10 +1746,18 @@ app.post(
       const usageEntries = [];
       for (const hand of parsed.data.selectedHands) {
         const compactHand = sanitizeHandForStreetFairness(hand);
-        const reviewHand = attachOpponentContextToHand(
+        const reviewHandWithOpponents = attachOpponentContextToHand(
           compactHand,
           opponentLookup,
         );
+        const { handState, validation } = buildValidatedHandState(
+          reviewHandWithOpponents,
+        );
+        const reviewHand = {
+          ...reviewHandWithOpponents,
+          validatedHandState: handState,
+          handStateValidation: validation,
+        };
         const review = await reviewTournamentHand(
           reviewHand,
           parsed.data.instruction,
@@ -1758,6 +1767,8 @@ app.post(
         reviews.push({
           handKey: String(compactHand?.handKey || "").trim() || null,
           hand: compactHand,
+          validatedHandState: handState,
+          handStateValidation: validation,
           review,
         });
       }

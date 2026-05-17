@@ -2534,7 +2534,8 @@ button:disabled {
 }
 
 [data-theme="light"] .tournament-coach-summary--hero,
-[data-theme="light"] .tournament-ai-review-card--authority {
+[data-theme="light"] .tournament-ai-review-card--authority,
+[data-theme="light"] .tournament-ai-review-card--table {
   border-color: var(--accent-hover);
   background: var(--surface-insight);
 }
@@ -2646,6 +2647,17 @@ button:disabled {
 
 [data-theme="light"] .hand-row-review {
   border-top-color: var(--review-border-soft);
+}
+
+[data-theme="light"] .hand-review-score-breakdown {
+  border-color: var(--review-chip-border);
+  background: var(--review-inset-bg);
+}
+
+[data-theme="light"] .review-confidence-pill {
+  border-color: var(--review-chip-border);
+  background: var(--surface-passive);
+  color: var(--review-text-soft);
 }
 
 [data-theme="light"] .hand-row-position-badge,
@@ -3407,6 +3419,17 @@ button:disabled {
   gap: var(--spacing-2);
 }
 
+.tournament-ai-review-card--table {
+  border-color: rgb(var(--accent-primary-rgb) / 0.3);
+  background: var(--surface-insight);
+}
+
+.table-hint-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
 .ai-briefing-priority {
   display: grid;
   gap: var(--spacing-1);
@@ -4041,18 +4064,73 @@ button:disabled {
 }
 
 .hand-row-review {
-  margin-top: var(--spacing-1);
-  padding-top: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  padding-top: var(--spacing-2);
   border-top: 1px dashed rgb(var(--border-primary-rgb) / 0.88);
+  display: grid;
+  gap: var(--spacing-2);
 }
 
 .hand-row-review p {
   margin: var(--spacing-1) 0;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
+}
+
+.hand-review-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.review-verdict-pill {
+  font-weight: 700;
+}
+
+.review-confidence-pill {
+  font-size: 0.76rem;
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid rgb(var(--border-primary-rgb) / 0.5);
+  background: var(--surface-passive);
+}
+
+.review-confidence-pill--high {
+  border-color: rgb(var(--success-rgb) / 0.45);
+  color: var(--success);
+}
+
+.review-confidence-pill--medium {
+  border-color: rgb(var(--accent-primary-rgb) / 0.45);
+  color: var(--accent-hover);
+}
+
+.review-confidence-pill--low {
+  border-color: rgb(var(--warning-rgb) / 0.45);
+  color: var(--warning);
+}
+
+.hand-review-section {
+  display: grid;
+  gap: 2px;
+}
+
+.hand-review-section-label {
+  margin: 0;
+  font-size: 0.73rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.hand-review-section-copy {
+  margin: 0;
+  font-size: 0.83rem;
+  line-height: 1.45;
 }
 
 .hand-review-logic {
-  margin-top: var(--spacing-2);
+  margin-top: 0;
 }
 
 .hand-review-logic-toggle {
@@ -4163,7 +4241,7 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-1);
-  margin-bottom: var(--spacing-1);
+  margin-top: var(--spacing-2);
 }
 
 .hand-review-scores span {
@@ -4172,6 +4250,20 @@ button:disabled {
   border-radius: var(--radius-pill);
   border: 1px solid rgb(var(--border-primary-rgb) / 0.5);
   background: var(--surface-passive);
+}
+
+.hand-review-score-breakdown {
+  border: 1px solid rgb(var(--border-primary-rgb) / 0.62);
+  border-radius: var(--radius-sm);
+  background: var(--surface-passive-alt);
+  padding: var(--spacing-1) var(--spacing-2);
+}
+
+.hand-review-score-breakdown summary {
+  cursor: pointer;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  user-select: none;
 }
 
 .score-pill.good {

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { z } from "zod";
 
 let openaiClient = null;
 function getClient() {
@@ -107,6 +108,46 @@ const VALUE_TO_RANK = Object.entries(RANK_VALUES).reduce(
   },
   {},
 );
+
+const REVIEW_MODEL_OUTPUT_SCHEMA = z.object({
+  overall_score: z.number(),
+  preflop_score: z.number(),
+  flop_score: z.number(),
+  turn_score: z.number(),
+  river_score: z.number(),
+  confidence: z.enum(["low", "medium", "high"]),
+  what_was_good: z.string().min(1),
+  primary_leak: z.string().min(1),
+  better_line: z.string().min(1),
+  reasoning: z.string().min(1),
+});
+
+const NORMALIZED_REVIEW_SCHEMA = z.object({
+  overall_score: z.number(),
+  preflop_score: z.number().nullable(),
+  flop_score: z.number().nullable(),
+  turn_score: z.number().nullable(),
+  river_score: z.number().nullable(),
+  confidence: z.enum(["low", "medium", "high"]),
+  what_was_good: z.string().min(1),
+  primary_leak: z.string().min(1),
+  better_line: z.string().min(1),
+  reasoning: z.string().min(1),
+  usage: z
+    .object({
+      prompt_tokens: z.number().nullable(),
+      completion_tokens: z.number().nullable(),
+      total_tokens: z.number().nullable(),
+    })
+    .nullable(),
+  guardrail_warnings: z.array(z.string()).optional(),
+});
+
+const VALIDATION_SEVERITY = {
+  INFO: "info",
+  WARNING: "warning",
+  BLOCKER: "blocker",
+};
 
 function rankValueToName(value, plural = false) {
   const rank = VALUE_TO_RANK[value];
@@ -900,6 +941,2289 @@ function clampStreetScore(value) {
   return Math.max(-2, Math.min(2, rounded));
 }
 
+const ILLEGAL_AGGRESSIVE_PATTERNS = [
+  /\bshove\b/i,
+  /\bjam\b/i,
+  /\bre-?jam\b/i,
+  /\bre-?shove\b/i,
+  /\b4-?bet\b/i,
+  /\b3-?bet\b/i,
+  /\bclick[\s-]?back\b/i,
+  /\bre-?raise\b/i,
+  /\braise(?:d|s|ing)?\b/i,
+];
+const HARD_ILLEGAL_RECOMMENDATION_PATTERNS = [
+  /\b(?:should|must|always|never fold|best line is|recommended)\b[\s\S]{0,40}\b(?:raise|jam|shove|rejam|reshove|4-?bet)\b/i,
+  /\b(?:raise|jam|shove|rejam|reshove|4-?bet)\b[\s\S]{0,30}\b(?:now|here|instead)\b/i,
+];
+const PREFLOP_ENDED_FORBIDDEN_PATTERNS = [
+  /\bflop\b/i,
+  /\bturn\b/i,
+  /\briver\b/i,
+  /\bboard texture\b/i,
+  /\bimplied odds\b/i,
+  /\bmultiway\b/i,
+];
+const AMBIGUOUS_AGGRESSION_PATTERNS = [
+  /\bapply pressure\b/i,
+  /\bfight for the pot\b/i,
+  /\baggressive option\b/i,
+  /\bconsider(?:\s+\w+){0,2}\s+(?:jamming|jam|shoving|shove|raising|raise)\b/i,
+  /\bpress(?:ing)?(?:ure)?\b/i,
+];
+const CERTAINTY_PATTERNS = [
+  /\bmandatory\b/i,
+  /\b100%\b/i,
+  /\balways\b/i,
+  /\bnever\b/i,
+  /\bguaranteed\b/i,
+];
+const STACK_DEPTH_TIER = {
+  SHORT: "short",
+  MID: "mid",
+  DEEP: "deep",
+  UNKNOWN: "unknown",
+};
+const STACK_DEPTH_INCOHERENT_PATTERNS = {
+  [STACK_DEPTH_TIER.SHORT]: [
+    {
+      pattern: /\bpostflop (?:maneuverability|maneuvering|playability)\b/i,
+      label: "postflop maneuverability",
+    },
+    {
+      pattern: /\bsmall\s*3-?bet(?:s)?\b/i,
+      label: "small 3-bets",
+    },
+    {
+      pattern: /\bspeculative (?:realization|flat(?:s|ting)?|call(?:s|ing)?)\b/i,
+      label: "speculative realization",
+    },
+    {
+      pattern: /\bthin exploit flat(?:s|ting)?\b/i,
+      label: "thin exploit flats",
+    },
+    {
+      pattern: /\bset[-\s]?min(?:e|ing)\b/i,
+      label: "set-mining framing",
+    },
+  ],
+  [STACK_DEPTH_TIER.MID]: [
+    {
+      pattern: /\bdeep-?stack(?:ed)?\s+postflop\s+maneuver(?:ing|ability)?\b/i,
+      label: "deep-stack maneuverability claim",
+    },
+    {
+      pattern: /\b(?:pure|strict|only)\s+shove\/?fold\b/i,
+      label: "pure shove/fold framing",
+    },
+  ],
+  [STACK_DEPTH_TIER.DEEP]: [
+    {
+      pattern: /\b(?:pure|strict|only)\s+shove\/?fold\b/i,
+      label: "pure shove/fold framing",
+    },
+    {
+      pattern: /\bno postflop (?:maneuverability|edge|realization)\b/i,
+      label: "no-postflop claim",
+    },
+  ],
+};
+const TERMINOLOGY_PATTERNS = {
+  trips_as_pair: /\b(top pair|single pair|one pair)\b/i,
+  overpair_as_weak: /\b(middle pair|weak pair)\b/i,
+  bluff_catcher_reference: /\bbluff[ -]?catch(?:er|ing)\b/i,
+  top_pair_label: /\btop pair\b/i,
+  medium_strength_pair_label: /\bmedium[-\s]?strength pair\b/i,
+  showdown_hand_label: /\bshowdown hand\b/i,
+  thin_value_label: /\bthin value\b/i,
+  induce_bluffs_label: /\binduce bluffs?\b/i,
+  bluff_catching_line_label: /\bbluff[-\s]?catching line\b/i,
+};
+const PASSIVE_RIVER_CHECK_PATTERN =
+  /\b(check(?:ing)?(?:\s+back)?(?:\s+the)?\s+river|river check)\b/i;
+const PAIRED_BOARD_OVERSTATEMENT_PATTERN =
+  /\b(uncapped value pressure|strong nut advantage)\b/i;
+const FALSE_SHOWDOWN_LINE_PATTERN =
+  /\b(check[-\s]?call|check and call|induce bluffs?|bluff[ -]?catch(?:er|ing)?)\b/i;
+const BOARD_RELATIVE_OVERCLAIM_PATTERN =
+  /\b(thin value|medium[-\s]?strength made hand|top pair)\b/i;
+const SPECULATIVE_PREFLOP_SUGGESTION_PATTERN =
+  /\b(slightly too tight|slightly tight|consider (?:calling|a call)|call occasionally|light 3-?bet|small 3-?bet|3-?bet(?:\/| or )?call|postflop maneuverability|speculative flat(?:s|ting)?|defend (?:wider|more often))\b/i;
+const WEAK_OFFSUIT_AGGRESSION_PATTERN =
+  /\b(call(?:ing)?|3-?bet(?:ting)?|re-?jam(?:ming)?|shove|jam|maneuverability)\b/i;
+
+const SAFE_REWRITE_RULES = [
+  {
+    pattern: /\bapply pressure\b/gi,
+    replacement: "continue cautiously",
+  },
+  {
+    pattern: /\bconsider(?:\s+\w+){0,2}\s+(?:jamming|jam|shoving|shove|raising|raise)\b/gi,
+    replacement: "consider continuing",
+  },
+  {
+    pattern: /\bfight for the pot\b/gi,
+    replacement: "evaluate calling frequency",
+  },
+  {
+    pattern: /\baggressive option\b/gi,
+    replacement: "more active continuation",
+  },
+];
+const USER_FACING_BANNED_TERMS = [
+  /\bvalidation\b/i,
+  /\bnode\b/i,
+  /\bconstrained action set\b/i,
+  /\bdeterministic\b/i,
+  /\bschema\b/i,
+  /\bvalidator\b/i,
+  /\brecovery\b/i,
+  /\bunsupported concept\b/i,
+  /\blegal action set\b/i,
+  /\bchecks failed\b/i,
+  /\bguardrails?\b/i,
+];
+const COACHING_SANITIZE_REPLACEMENTS = [
+  {
+    pattern: /line selection should stay within legal actions for this node\.?/gi,
+    replacement: "This appears to be a fairly standard decision without major deviation.",
+  },
+  {
+    pattern: /the review correctly preserved decision focus under a constrained action set\.?/gi,
+    replacement: "The preflop decision itself appears fundamentally reasonable.",
+  },
+  {
+    pattern: /concept-heavy language was reduced because required supporting data is not validated in this hand\.?/gi,
+    replacement:
+      "This spot appears relatively close, so recommendations are intentionally conservative.",
+  },
+  {
+    pattern: /given this node, keep the plan centered on calling or folding\.?/gi,
+    replacement: "This spot appears close; focus on choosing between the most practical options.",
+  },
+  {
+    pattern: /stay with the clearest legal options in this node/gi,
+    replacement: "Stay with the clearest practical options in this spot",
+  },
+];
+const HARSH_TONE_PATTERNS = [
+  { pattern: /\bsignificant leak\b/gi, replacement: "meaningful adjustment area" },
+  { pattern: /\bmajor mistake\b/gi, replacement: "costly spot" },
+  { pattern: /\bmistake\b/gi, replacement: "slightly costly decision" },
+  { pattern: /\bbad\b/gi, replacement: "suboptimal" },
+  { pattern: /\bincorrect\b/gi, replacement: "less preferred" },
+  { pattern: /\bwrong\b/gi, replacement: "likely less optimal" },
+];
+const INTERNAL_JARGON_RULES = [
+  {
+    pattern: /\bboard-relative strength\b/gi,
+    replacement: "how strongly hero's hand holds up on this board",
+    label: "board-relative strength",
+  },
+  {
+    pattern: /\bboard-pair-plus-kicker\b/gi,
+    replacement: "paired board with limited showdown value",
+    label: "board-pair-plus-kicker",
+  },
+  {
+    pattern: /\bhero does not materially improve the paired board\b/gi,
+    replacement: "hero's hand remains very weak on the paired board",
+    label: "materially improve board",
+  },
+  {
+    pattern: /\bshowdown expectations should stay conservative\b/gi,
+    replacement: "this hand is unlikely to win often at showdown",
+    label: "showdown expectations should stay conservative",
+  },
+  {
+    pattern: /\beffectiveHandCategory\b/gi,
+    replacement: "hand profile",
+    label: "effectiveHandCategory",
+  },
+  {
+    pattern: /\bshowdownRelevance\b/gi,
+    replacement: "showdown value",
+    label: "showdownRelevance",
+  },
+  {
+    pattern: /\bheroContributionLevel\b/gi,
+    replacement: "hole-card contribution",
+    label: "heroContributionLevel",
+  },
+  {
+    pattern: /\bheroContribution\b/gi,
+    replacement: "hole-card contribution",
+    label: "heroContribution",
+  },
+  {
+    pattern: /\bmaterially improve board\b/gi,
+    replacement: "materially strengthen the hand",
+    label: "materially improve board",
+  },
+];
+const INTERNAL_JARGON_LEAK_PATTERNS = [
+  { pattern: /\bboard-relative\b/i, label: "board-relative" },
+  { pattern: /\bshowdownRelevance\b/i, label: "showdownRelevance" },
+  { pattern: /\beffectiveHandCategory\b/i, label: "effectiveHandCategory" },
+  { pattern: /\bboard-pair-plus-kicker\b/i, label: "board-pair-plus-kicker" },
+  { pattern: /\bheroContributionLevel\b/i, label: "heroContributionLevel" },
+  { pattern: /\bmaterially improve board\b/i, label: "materially improve board" },
+];
+const GENERIC_NARRATION_FLATTENING_PATTERN =
+  /\b(weak hand|limited showdown value|unlikely to win often(?: at showdown)?|practical line|intentionally conservative|cautious practical line)\b/i;
+const SHOWDOWN_PASSIVE_PATTERN =
+  /\b(bluff[ -]?catch(?:er|ing)|check[-\s]?call|check and call|induce bluffs?)\b/i;
+const OVERLY_WEAK_SHOWDOWN_PATTERN =
+  /\b(very little showdown value|limited showdown value|unlikely to win often(?: at showdown)?|bluff-or-give-up)\b/i;
+
+function hasIllegalAggressiveMention(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return ILLEGAL_AGGRESSIVE_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function hasHardIllegalRecommendation(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return HARD_ILLEGAL_RECOMMENDATION_PATTERNS.some((pattern) =>
+    pattern.test(value),
+  );
+}
+
+function hasAmbiguousAggressionWording(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return AMBIGUOUS_AGGRESSION_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function hasExcessiveCertaintyWording(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return CERTAINTY_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function longestConsecutiveRun(values = []) {
+  const unique = Array.from(new Set(values))
+    .filter((value) => Number.isFinite(Number(value)))
+    .map((value) => Number(value))
+    .sort((a, b) => a - b);
+  if (unique.length === 0) return 0;
+  let best = 1;
+  let run = 1;
+  for (let i = 1; i < unique.length; i += 1) {
+    if (unique[i] === unique[i - 1] + 1) {
+      run += 1;
+      if (run > best) best = run;
+    } else {
+      run = 1;
+    }
+  }
+  return best;
+}
+
+function rankCharToDescriptor(rankChar = "") {
+  const rank = String(rankChar || "").toUpperCase();
+  const rankName = rankValueToName(RANK_VALUES[rank], false);
+  const rankPlural = rankValueToName(RANK_VALUES[rank], true);
+  return {
+    rank,
+    rankName: String(rankName || rank).trim(),
+    rankPlural: String(rankPlural || `${rank}s`).trim(),
+  };
+}
+
+function compareCategoryStrength(a = "air", b = "air") {
+  const ranks = {
+    air: 0,
+    high_card: 0,
+    pair: 1,
+    two_pair: 2,
+    trips: 3,
+    straight: 4,
+    flush: 5,
+    full_house: 6,
+    quads: 7,
+  };
+  return (ranks[a] || 0) - (ranks[b] || 0);
+}
+
+function classifyFiveCardMadeHand(cards = []) {
+  const parsed = (Array.isArray(cards) ? cards : [])
+    .map((card) => (typeof card === "string" ? parseCardCodeSafe(card) : card))
+    .filter(Boolean);
+  if (parsed.length < 5) {
+    return {
+      category: "air",
+      pairType: "none",
+      topRank: null,
+      secondRank: null,
+    };
+  }
+  const rankCounts = new Map();
+  const suits = new Map();
+  for (const card of parsed) {
+    rankCounts.set(card.rank, (rankCounts.get(card.rank) || 0) + 1);
+    suits.set(card.suit, (suits.get(card.suit) || 0) + 1);
+  }
+  const entries = Array.from(rankCounts.entries()).sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return (RANK_VALUES[b[0]] || 0) - (RANK_VALUES[a[0]] || 0);
+  });
+  const topCount = entries[0]?.[1] || 1;
+  const secondCount = entries[1]?.[1] || 0;
+  const topRank = entries[0]?.[0] || null;
+  const secondRank = entries[1]?.[0] || null;
+  const hasFlush = Array.from(suits.values()).some((count) => count >= 5);
+  const hasStraightMade = hasStraight(parsed.map((card) => card.value));
+  let category = "air";
+  if (topCount === 4) category = "quads";
+  else if (topCount === 3 && secondCount >= 2) category = "full_house";
+  else if (hasFlush) category = "flush";
+  else if (hasStraightMade) category = "straight";
+  else if (topCount === 3) category = "trips";
+  else if (topCount === 2 && secondCount === 2) category = "two_pair";
+  else if (topCount === 2) category = "pair";
+  return {
+    category,
+    pairType: category === "pair" ? "pair" : "none",
+    topRank,
+    secondRank,
+  };
+}
+
+function deriveHandClassification(handState = {}) {
+  const effectiveStack = Number(handState?.effectiveStackBB);
+  const stackDepthTier = Number.isFinite(effectiveStack)
+    ? effectiveStack < 10
+      ? STACK_DEPTH_TIER.SHORT
+      : effectiveStack <= 20
+        ? STACK_DEPTH_TIER.MID
+        : STACK_DEPTH_TIER.DEEP
+    : STACK_DEPTH_TIER.UNKNOWN;
+  const heroCards = Array.isArray(handState?.heroHand)
+    ? handState.heroHand.map((card) => parseCardCodeSafe(card)).filter(Boolean)
+    : [];
+  const boardCards = Array.isArray(handState?.boardCards)
+    ? handState.boardCards.map((card) => parseCardCodeSafe(card)).filter(Boolean)
+    : [];
+  const boardValues = boardCards.map((card) => card.value);
+  const boardSuits = boardCards.map((card) => card.suit);
+  const boardRanks = boardCards.map((card) => card.rank);
+  const boardRankCounts = new Map();
+  for (const rank of boardRanks) {
+    boardRankCounts.set(rank, (boardRankCounts.get(rank) || 0) + 1);
+  }
+  const pairedBoard = Array.from(boardRankCounts.values()).some((count) => count >= 2);
+  const connectedBoard =
+    boardValues.length >= 3 &&
+    (longestConsecutiveRun(boardValues) >= 3 ||
+      Math.max(...boardValues) - Math.min(...boardValues) <= 4);
+  const monotoneBoard =
+    boardSuits.length >= 3 && new Set(boardSuits).size === 1;
+
+  const blockers = Array.from(new Set(heroCards.map((card) => card.rank))).sort(
+    (a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0),
+  );
+  const boardOnlyClassification = classifyFiveCardMadeHand(boardCards);
+  const boardMadeHand = boardOnlyClassification.category;
+
+  if (heroCards.length !== 2) {
+    return {
+      madeHandCategory: "air",
+      pairType: "none",
+      tripsType: "none",
+      showdownStrength: "none",
+      showdownRelevance: "none",
+      bluffCatcher: false,
+      boardMadeHand,
+      heroImprovesBoard: false,
+      heroContributionLevel: "none",
+      kickerStrength: "none",
+      boardPairKickerClass: "air",
+      effectiveHandCategory: "air",
+      drawsPresent: { flushDraw: false, straightDraw: false },
+      blockers,
+      boardInteraction: { pairedBoard, connectedBoard, monotoneBoard },
+      stackDepthTier,
+      primaryMadeRank: null,
+      kickerRanks: [],
+    };
+  }
+
+  const cards = [...heroCards, ...boardCards];
+  const suitCounts = new Map();
+  const rankCounts = new Map();
+  for (const card of cards) {
+    suitCounts.set(card.suit, (suitCounts.get(card.suit) || 0) + 1);
+    rankCounts.set(card.rank, (rankCounts.get(card.rank) || 0) + 1);
+  }
+  const rankEntries = Array.from(rankCounts.entries()).sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return (RANK_VALUES[b[0]] || 0) - (RANK_VALUES[a[0]] || 0);
+  });
+  const topCount = rankEntries[0]?.[1] || 1;
+  const secondCount = rankEntries[1]?.[1] || 0;
+  const topRank = rankEntries[0]?.[0] || null;
+  const allValues = cards.map((card) => card.value);
+  const heroValues = heroCards.map((card) => card.value);
+  const straightMade = hasStraight(allValues);
+  const hasFlush = Array.from(suitCounts.values()).some((count) => count >= 5);
+
+  let madeHandCategory = "air";
+  if (topCount === 4) madeHandCategory = "quads";
+  else if (topCount === 3 && secondCount >= 2) madeHandCategory = "full_house";
+  else if (hasFlush) madeHandCategory = "flush";
+  else if (straightMade) madeHandCategory = "straight";
+  else if (topCount === 3) madeHandCategory = "trips";
+  else if (topCount === 2 && secondCount === 2) madeHandCategory = "two_pair";
+  else if (topCount === 2) madeHandCategory = "pair";
+
+  let pairType = "none";
+  if (madeHandCategory === "pair" && boardCards.length > 0) {
+    const pairRank = rankEntries.find(([, count]) => count >= 2)?.[0] || null;
+    const boardSorted = Array.from(new Set(boardValues)).sort((a, b) => b - a);
+    const boardHigh = boardSorted[0] ?? null;
+    const boardSecond = boardSorted[1] ?? null;
+    const pairValue = pairRank ? RANK_VALUES[pairRank] : null;
+    const heroPocketPair =
+      heroCards[0]?.rank &&
+      heroCards[1]?.rank &&
+      heroCards[0].rank === heroCards[1].rank;
+    const pairOnBoard = pairRank
+      ? (boardRankCounts.get(pairRank) || 0) > 0
+      : false;
+    if (
+      heroPocketPair &&
+      pairRank &&
+      heroCards[0].rank === pairRank &&
+      !pairOnBoard &&
+      Number.isFinite(boardHigh) &&
+      pairValue > boardHigh
+    ) {
+      pairType = "overpair";
+    } else if (pairRank && Number.isFinite(boardHigh) && pairValue === boardHigh) {
+      pairType = "top";
+    } else if (pairRank && Number.isFinite(boardSecond) && pairValue >= boardSecond) {
+      pairType = "middle";
+    } else if (pairRank) {
+      pairType = "bottom";
+    }
+  }
+
+  let tripsType = "none";
+  if (madeHandCategory === "trips" && topRank) {
+    const heroTripCount = heroCards.filter((card) => card.rank === topRank).length;
+    if (heroTripCount === 2) tripsType = "set";
+    else if (heroTripCount === 1) tripsType = "trips";
+    else tripsType = "board_trips";
+  }
+
+  let showdownStrength = "none";
+  if (madeHandCategory === "pair") {
+    showdownStrength =
+      pairType === "overpair" || pairType === "top" ? "medium" : "weak";
+  } else if (madeHandCategory === "two_pair") {
+    showdownStrength = "strong";
+  } else if (madeHandCategory === "trips") {
+    showdownStrength = tripsType === "board_trips" ? "medium" : "strong";
+  } else if (
+    madeHandCategory === "straight" ||
+    madeHandCategory === "flush" ||
+    madeHandCategory === "full_house" ||
+    madeHandCategory === "quads"
+  ) {
+    showdownStrength = "strong";
+  }
+
+  const flushDraw = !hasFlush
+    ? Array.from(suitCounts.entries()).some(
+        ([suit, count]) =>
+          count === 4 && heroCards.some((card) => card.suit === suit),
+      )
+    : false;
+  const straightDraw = !straightMade
+    ? Boolean(detectStraightDraw(allValues, heroValues, false))
+    : false;
+  const drawsPresent = {
+    flushDraw,
+    straightDraw,
+  };
+  const topDescriptor = rankCharToDescriptor(topRank || "");
+  const boardTopDescriptor = rankCharToDescriptor(
+    boardOnlyClassification?.topRank || "",
+  );
+  const heroKickerRanks = heroCards
+    .map((card) => card.rank)
+    .filter((rank) => rank !== topDescriptor.rank)
+    .sort((a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0));
+  const heroHighKickerRank = heroCards
+    .map((card) => card.rank)
+    .sort((a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0))[0] || null;
+  const heroHighKickerValue = RANK_VALUES[heroHighKickerRank] || 0;
+  const boardMainRank = boardTopDescriptor.rank || null;
+  const boardTopKickerValue = Math.max(
+    0,
+    ...boardCards
+      .map((card) => (card.rank !== boardMainRank ? card.value : 0))
+      .filter((value) => Number.isFinite(value)),
+  );
+
+  let heroContributionLevel = "none";
+  const categoryDelta = compareCategoryStrength(madeHandCategory, boardMadeHand);
+  if (categoryDelta >= 2) heroContributionLevel = "strong";
+  else if (categoryDelta === 1) heroContributionLevel = "moderate";
+  else if (categoryDelta === 0 && boardMadeHand === "pair" && madeHandCategory === "pair") {
+    if (heroHighKickerValue >= 14) heroContributionLevel = "moderate";
+    else if (heroHighKickerValue >= 13)
+      heroContributionLevel = "weak";
+    else heroContributionLevel = "none";
+  } else if (
+    categoryDelta === 0 &&
+    boardMadeHand === "two_pair" &&
+    madeHandCategory === "two_pair"
+  ) {
+    heroContributionLevel = heroHighKickerValue >= 13 ? "weak" : "none";
+  } else if (
+    categoryDelta === 0 &&
+    boardMadeHand === "trips" &&
+    madeHandCategory === "trips"
+  ) {
+    heroContributionLevel = heroHighKickerValue >= 13 ? "weak" : "none";
+  }
+
+  const heroImprovesBoard =
+    heroContributionLevel === "moderate" || heroContributionLevel === "strong";
+
+  let effectiveHandCategory = madeHandCategory;
+  if (boardMadeHand === "pair" && madeHandCategory === "pair") {
+    const kickerTag = heroHighKickerRank
+      ? String(heroHighKickerRank).toLowerCase()
+      : "x";
+    if (heroHighKickerValue >= 14) effectiveHandCategory = "top_pair_top_kicker";
+    else effectiveHandCategory = `board_pair_${kickerTag}_high`;
+  } else if (
+    boardMadeHand === "two_pair" &&
+    madeHandCategory === "two_pair" &&
+    !heroImprovesBoard
+  ) {
+    effectiveHandCategory = "board_two_pair";
+  } else if (
+    boardMadeHand === "trips" &&
+    madeHandCategory === "trips" &&
+    !heroImprovesBoard
+  ) {
+    effectiveHandCategory = "board_trips";
+  }
+
+  let kickerStrength = "none";
+  let boardPairKickerClass = "air";
+  if (boardMadeHand === "pair") {
+    if (heroHighKickerValue >= 14) {
+      kickerStrength = "strong";
+      boardPairKickerClass = "strong_kicker";
+    } else if (heroHighKickerValue >= 13) {
+      kickerStrength = "medium";
+      boardPairKickerClass = "strong_kicker";
+    } else if (heroHighKickerValue >= 11) {
+      kickerStrength = "weak";
+      boardPairKickerClass = "weak_kicker";
+    } else if (heroHighKickerValue > 0) {
+      kickerStrength = "weak";
+      boardPairKickerClass = "air";
+    }
+  }
+
+  if (boardMadeHand === "pair" && madeHandCategory === "pair") {
+    if (heroContributionLevel === "none") showdownStrength = "none";
+    else if (heroContributionLevel === "weak") showdownStrength = "weak";
+    else if (heroHighKickerValue >= 14) showdownStrength = "strong";
+    else showdownStrength = "medium";
+  } else if (!heroImprovesBoard && categoryDelta <= 0 && showdownStrength === "medium") {
+    showdownStrength = "weak";
+  }
+
+  let showdownRelevance = "none";
+  if (showdownStrength === "strong") showdownRelevance = "meaningful";
+  else if (showdownStrength === "medium") showdownRelevance = "meaningful";
+  else if (showdownStrength === "weak") showdownRelevance = "marginal";
+  if (
+    boardMadeHand === "pair" &&
+    madeHandCategory === "pair" &&
+    !heroImprovesBoard
+  ) {
+    if (kickerStrength === "strong") showdownRelevance = "meaningful";
+    else if (kickerStrength === "medium") showdownRelevance = "marginal";
+    else showdownRelevance = "none";
+  }
+
+  const meaningfulKickerInteraction =
+    boardMadeHand === "pair" &&
+    madeHandCategory === "pair" &&
+    heroHighKickerValue >= 13;
+  const bluffCatcherCategoryEligible = ["pair", "two_pair", "trips"].includes(
+    String(madeHandCategory || ""),
+  );
+  const bluffCatcher =
+    boardCards.length >= 3 &&
+    bluffCatcherCategoryEligible &&
+    !drawsPresent.flushDraw &&
+    !drawsPresent.straightDraw &&
+    (heroImprovesBoard || meaningfulKickerInteraction) &&
+    (showdownStrength === "weak" || showdownStrength === "medium") &&
+    showdownRelevance !== "none";
+
+  return {
+    madeHandCategory,
+    pairType,
+    tripsType,
+    boardMadeHand,
+    heroImprovesBoard,
+    heroContributionLevel,
+    kickerStrength,
+    showdownRelevance,
+    boardPairKickerClass,
+    effectiveHandCategory,
+    showdownStrength,
+    bluffCatcher,
+    drawsPresent,
+    blockers,
+    boardInteraction: {
+      pairedBoard,
+      connectedBoard,
+      monotoneBoard,
+    },
+    stackDepthTier,
+    primaryMadeRank: topDescriptor.rank || null,
+    kickerRanks: heroKickerRanks,
+  };
+}
+
+function handClassificationForContext(handContext = {}) {
+  if (
+    handContext?.handClassification &&
+    typeof handContext.handClassification === "object"
+  ) {
+    return handContext.handClassification;
+  }
+  return deriveHandClassification(handContext?.validatedHandState || {});
+}
+
+function compactHeroHandFromState(handState = {}) {
+  const cards = Array.isArray(handState?.heroHand) ? handState.heroHand : [];
+  if (cards.length !== 2) return null;
+  const c1 = parseCardCodeSafe(cards[0]);
+  const c2 = parseCardCodeSafe(cards[1]);
+  if (!c1 || !c2) return null;
+  return `${c1.rank}${c1.suit}${c2.rank}${c2.suit}`;
+}
+
+function preflopHandClassContextFromState(handState = {}) {
+  const compact = compactHeroHandFromState(handState);
+  const rangeCategory = categorizeRangeHand(compact);
+  const tier = String(rangeCategory?.tier || "unknown");
+  if (["premium", "strong"].includes(tier)) return "premium";
+  if (["medium", "marginal"].includes(tier)) return "speculative";
+  if (tier === "trash") return "trash";
+  return "speculative";
+}
+
+function facingActionStrengthFromState(handState = {}) {
+  const facingBet = Number(handState?.facingBet) || 0;
+  const potSize = Number(handState?.potSize) || 0;
+  if (facingBet <= 0) return "weak";
+  if (Boolean(handState?.isAllInFacingAction)) return "strong";
+  if (potSize > 0 && facingBet >= potSize * 0.8) return "strong";
+  return "standard";
+}
+
+function chosenActionFromContext(handContext = {}) {
+  const selected = String(
+    handContext?.handStateValidation?.selectedHeroDecision?.type || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (selected) return selected;
+  const foldedStreet = String(
+    handContext?.reviewContext?.heroFoldedStreet || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (foldedStreet) return "fold";
+  return "unknown";
+}
+
+function decisionEvaluationForContext(handContext = {}, handClassification = {}) {
+  const handState = handContext?.validatedHandState || {};
+  const street = String(handState?.street || "").trim().toLowerCase();
+  const chosenAction = chosenActionFromContext(handContext);
+  const handClassContext = preflopHandClassContextFromState(handState);
+  const facingActionStrength = facingActionStrengthFromState(handState);
+  const effectiveStackBB = Number(handState?.effectiveStackBB);
+  const under20bb = Number.isFinite(effectiveStackBB) && effectiveStackBB < 20;
+  const preflopFoldProtectionEligible =
+    street === "preflop" &&
+    chosenAction === "fold" &&
+    ["trash", "speculative"].includes(handClassContext) &&
+    (handClassContext === "trash" || under20bb);
+
+  let actionQuality = "close";
+  let actionAlignment = "standard";
+  if (preflopFoldProtectionEligible) {
+    actionQuality = "good";
+    actionAlignment = "standard";
+  } else if (
+    street === "preflop" &&
+    ["jam", "shove", "raise", "call"].includes(chosenAction) &&
+    handClassContext === "trash" &&
+    facingActionStrength !== "weak"
+  ) {
+    actionQuality = "poor";
+    actionAlignment = "major_error";
+  } else if (
+    street === "preflop" &&
+    chosenAction === "fold" &&
+    handClassContext === "premium"
+  ) {
+    actionQuality = "poor";
+    actionAlignment = "slightly_tight";
+  } else if (
+    street === "preflop" &&
+    ["call", "raise", "jam", "shove"].includes(chosenAction) &&
+    handClassContext === "speculative" &&
+    under20bb &&
+    facingActionStrength !== "weak"
+  ) {
+    actionQuality = "poor";
+    actionAlignment = "slightly_loose";
+  }
+
+  return {
+    chosenAction,
+    actionQuality,
+    actionAlignment,
+    handClassContext,
+    facingActionStrength,
+    preflopFoldProtectionEligible,
+    under20bb,
+    stackDepthTier: handClassification?.stackDepthTier || STACK_DEPTH_TIER.UNKNOWN,
+  };
+}
+
+function terminologyMismatches(text, handClassification = {}) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const mismatches = [];
+  if (
+    handClassification?.madeHandCategory === "trips" &&
+    TERMINOLOGY_PATTERNS.trips_as_pair.test(value)
+  ) {
+    mismatches.push("trips_as_pair");
+  }
+  if (
+    handClassification?.pairType === "overpair" &&
+    TERMINOLOGY_PATTERNS.overpair_as_weak.test(value)
+  ) {
+    mismatches.push("overpair_as_weak");
+  }
+  if (
+    handClassification?.bluffCatcher === false &&
+    TERMINOLOGY_PATTERNS.bluff_catcher_reference.test(value)
+  ) {
+    mismatches.push("bluff_catcher_misuse");
+  }
+  if (handClassification?.heroImprovesBoard === false) {
+    if (TERMINOLOGY_PATTERNS.top_pair_label.test(value)) {
+      mismatches.push("board_relative_top_pair_overclaim");
+    }
+    if (TERMINOLOGY_PATTERNS.medium_strength_pair_label.test(value)) {
+      mismatches.push("board_relative_medium_pair_overclaim");
+    }
+    if (TERMINOLOGY_PATTERNS.showdown_hand_label.test(value)) {
+      mismatches.push("board_relative_showdown_overclaim");
+    }
+    if (TERMINOLOGY_PATTERNS.bluff_catcher_reference.test(value)) {
+      mismatches.push("board_relative_bluff_catcher_overclaim");
+    }
+  }
+  const effective = String(handClassification?.effectiveHandCategory || "");
+  const weakBoardPair =
+    effective.startsWith("board_pair_") &&
+    !["moderate", "strong"].includes(
+      String(handClassification?.heroContributionLevel || ""),
+    );
+  if (weakBoardPair) {
+    if (TERMINOLOGY_PATTERNS.thin_value_label.test(value)) {
+      mismatches.push("board_pair_thin_value_overclaim");
+    }
+    if (
+      TERMINOLOGY_PATTERNS.induce_bluffs_label.test(value) ||
+      TERMINOLOGY_PATTERNS.bluff_catching_line_label.test(value)
+    ) {
+      mismatches.push("board_pair_bluff_plan_overclaim");
+    }
+  }
+  if (
+    String(handClassification?.showdownRelevance || "none") === "none" &&
+    TERMINOLOGY_PATTERNS.showdown_hand_label.test(value)
+  ) {
+    mismatches.push("showdown_relevance_overclaim");
+  }
+  return Array.from(new Set(mismatches));
+}
+
+function strategicContradictions(text, handContext = {}, handClassification = {}) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const contradictions = [];
+  if (
+    (handClassification?.showdownStrength === "none" ||
+      String(handClassification?.showdownRelevance || "") === "none") &&
+    PASSIVE_RIVER_CHECK_PATTERN.test(value)
+  ) {
+    contradictions.push("showdown_contradiction");
+  }
+  if (
+    (handClassification?.showdownStrength === "none" ||
+      String(handClassification?.showdownRelevance || "") === "none") &&
+    FALSE_SHOWDOWN_LINE_PATTERN.test(value)
+  ) {
+    contradictions.push("false_showdown_line");
+  }
+  if (
+    handClassification?.bluffCatcher === false &&
+    TERMINOLOGY_PATTERNS.bluff_catcher_reference.test(value)
+  ) {
+    contradictions.push("bluff_catcher_contradiction");
+  }
+  if (
+    handClassification?.heroImprovesBoard === false &&
+    BOARD_RELATIVE_OVERCLAIM_PATTERN.test(value)
+  ) {
+    contradictions.push("board_relative_overclaim");
+  }
+  if (
+    handClassification?.boardInteraction?.pairedBoard &&
+    PAIRED_BOARD_OVERSTATEMENT_PATTERN.test(value)
+  ) {
+    contradictions.push("paired_board_overstatement");
+  }
+  const shortStackMentions = stackDepthIncoherentMentions(value, handContext);
+  if (shortStackMentions.length > 0) {
+    contradictions.push("stack_depth_incoherence");
+  }
+  return Array.from(new Set(contradictions));
+}
+
+function terminologyRewriteFallback(fieldName, handClassification = {}) {
+  const field = String(fieldName || "").trim();
+  const made = handClassification?.madeHandCategory;
+  const primary = rankCharToDescriptor(handClassification?.primaryMadeRank || "");
+  const kicker = Array.isArray(handClassification?.kickerRanks)
+    ? handClassification.kickerRanks[0]
+    : null;
+  const kickerLabel = kicker ? rankCharToDescriptor(kicker).rankName : "kicker";
+  if (made === "trips") {
+    const tripsLabel =
+      handClassification?.tripsType === "set"
+        ? `a set of ${primary.rankPlural || "trips"}`
+        : `trip ${primary.rankPlural || "cards"}`;
+    if (field === "better_line") {
+      return `Frame this as ${tripsLabel} with ${kickerLabel} kicker using three-of-a-kind terminology.`;
+    }
+    if (field === "reasoning") {
+      return `Terminology should reflect ${tripsLabel} strength using three-of-a-kind framing.`;
+    }
+    return `The hand should be described as ${tripsLabel} with three-of-a-kind precision.`;
+  }
+  if (handClassification?.pairType === "overpair") {
+    if (field === "better_line") {
+      return "With an overpair, keep the line anchored to overpair strength and protection/value planning.";
+    }
+    return "This holding is an overpair and should be framed with overpair terminology.";
+  }
+  if (handClassification?.heroImprovesBoard === false) {
+    const effective = String(handClassification?.effectiveHandCategory || "");
+    if (effective.startsWith("board_pair_")) {
+      if (field === "better_line") {
+        return "This is mostly a board-pair-plus-kicker spot, so avoid thin-value or passive-call assumptions without stronger kicker leverage.";
+      }
+      if (field === "reasoning") {
+        return "Because hero does not materially improve the paired board, showdown expectations should stay conservative.";
+      }
+      return "The line was reframed around board-relative strength rather than overstating made-hand value.";
+    }
+    if (field === "better_line") {
+      return "Use board-relative strength framing and avoid labeling this as a clear top-pair or medium-strength showdown hand.";
+    }
+    return "Terminology was aligned with board-relative strength and hero contribution level.";
+  }
+  if (field === "better_line") {
+    return "Use terminology that matches the validated hand category and board interaction.";
+  }
+  return "Hand-category terminology was aligned with deterministic classification.";
+}
+
+function contradictionRewriteFallback(fieldName, contradiction = "", handClassification = {}) {
+  const field = String(fieldName || "").trim();
+  if (contradiction === "showdown_contradiction") {
+    if (field === "better_line") {
+      return "With minimal showdown value, evaluate higher-EV aggression or disciplined folds instead of defaulting to passive river checks.";
+    }
+    return "Minimal showdown value and passive river-check framing were inconsistent, so the line was reframed.";
+  }
+  if (contradiction === "bluff_catcher_contradiction") {
+    if (field === "better_line") {
+      return "This holding is better framed through value/protection logic than pure bluff-response framing.";
+    }
+    return "The line was reframed to match the validated hand profile and value/protection incentives.";
+  }
+  if (contradiction === "false_showdown_line") {
+    if (field === "better_line") {
+      return "With effectively no showdown value, avoid passive call-down lines and choose between disciplined folds or selective aggression based on blockers and range pressure.";
+    }
+    return "The line removed passive showdown logic that conflicted with near-zero showdown value.";
+  }
+  if (contradiction === "board_relative_overclaim") {
+    if (field === "reasoning") {
+      return "This paired-board spot is mostly board-driven, so avoid overclaiming top-pair or thin-value strength without meaningful hero contribution.";
+    }
+    return "Board-relative strength framing replaced overconfident made-hand claims.";
+  }
+  if (contradiction === "paired_board_overstatement") {
+    if (field === "reasoning") {
+      return "On paired boards, avoid blanket nut-advantage claims and anchor pressure statements to concrete value distribution.";
+    }
+    return "Overstated paired-board advantage language was replaced with structure-aware phrasing.";
+  }
+  if (contradiction === "stack_depth_incoherence") {
+    return stackDepthFieldFallback(field, handClassification?.stackDepthTier);
+  }
+  if (field === "reasoning" && handClassification?.showdownStrength === "none") {
+    return "The line was rewritten to keep showdown-value framing consistent with the validated hand strength.";
+  }
+  return "Strategic contradiction language was adjusted for coherence.";
+}
+
+function effectiveStackBBFromContext(handContext = {}) {
+  const stack = Number(handContext?.validatedHandState?.effectiveStackBB);
+  return Number.isFinite(stack) && stack >= 0 ? stack : null;
+}
+
+function stackDepthTierForContext(handContext = {}) {
+  const stack = effectiveStackBBFromContext(handContext);
+  if (!Number.isFinite(stack)) return STACK_DEPTH_TIER.UNKNOWN;
+  if (stack < 10) return STACK_DEPTH_TIER.SHORT;
+  if (stack <= 20) return STACK_DEPTH_TIER.MID;
+  return STACK_DEPTH_TIER.DEEP;
+}
+
+function stackDepthIncoherentMentions(text, handContext = {}) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const tier = stackDepthTierForContext(handContext);
+  const rules = STACK_DEPTH_INCOHERENT_PATTERNS[tier] || [];
+  const matches = [];
+  for (const rule of rules) {
+    if (rule.pattern.test(value)) matches.push(rule.label);
+  }
+  return Array.from(new Set(matches));
+}
+
+function stackDepthFieldFallback(fieldName, tier) {
+  const safeField = String(fieldName || "").trim();
+  if (tier === STACK_DEPTH_TIER.SHORT) {
+    if (safeField === "primary_leak") {
+      return "At this stack depth, the biggest risk is overcomplicating a spot that usually rewards simplified commitment decisions.";
+    }
+    if (safeField === "better_line") {
+      return "With under 10BB effective, prioritize simplified shove/fold-style decisions and direct equity realization.";
+    }
+    if (safeField === "reasoning") {
+      return "Short-stack decisions are driven by immediate equity realization and tournament-life pressure, not speculative multi-street planning.";
+    }
+    return "The line stayed disciplined by keeping a short-stack spot simple and tournament-life aware.";
+  }
+  if (tier === STACK_DEPTH_TIER.MID) {
+    if (safeField === "primary_leak") {
+      return "This stack depth rewards selective leverage decisions rather than treating every spot as pure shove/fold.";
+    }
+    if (safeField === "better_line") {
+      return "In the 10-20BB range, prefer selective reshove or flat decisions anchored to SPR and leverage dynamics.";
+    }
+    if (safeField === "reasoning") {
+      return "Mid-stack play should balance leverage, SPR, and selective aggression rather than deep-stack or all-in-only assumptions.";
+    }
+    return "The review kept focus on practical mid-stack decisions with manageable leverage.";
+  }
+  if (tier === STACK_DEPTH_TIER.DEEP) {
+    if (safeField === "primary_leak") {
+      return "At deeper stacks, a pure shove/fold framing usually misses higher-EV maneuverability options.";
+    }
+    if (safeField === "better_line") {
+      return "With 20BB+ effective, use wider postflop-aware planning instead of reducing the spot to shove/fold only.";
+    }
+    if (safeField === "reasoning") {
+      return "Deeper stacks permit meaningful postflop realization and pressure lines, so all-in-only framing is often too narrow.";
+    }
+    return "The line preserved flexibility appropriate for a deeper-stack decision tree.";
+  }
+  return String(safeField || "");
+}
+
+function enforceStackDepthConstraints(
+  text,
+  handContext = {},
+  guardrailNotes = [],
+  fieldName = "",
+) {
+  const value = String(text || "").trim();
+  if (!value) return value;
+  const tier = stackDepthTierForContext(handContext);
+  if (tier === STACK_DEPTH_TIER.UNKNOWN) return value;
+  const blocked = stackDepthIncoherentMentions(value, handContext);
+  if (blocked.length === 0) return value;
+  guardrailNotes.push(
+    `Stack-depth incoherent language removed from ${fieldName}: ${blocked.join(", ")}.`,
+  );
+  return stackDepthFieldFallback(fieldName, tier);
+}
+
+function buildFinding({ type, severity, field = null, message }) {
+  return { type, severity, field, message };
+}
+
+function summarizeFindings(findings = [], rewrittenFields = []) {
+  const list = Array.isArray(findings) ? findings : [];
+  const blockerCount = list.filter(
+    (item) => item?.severity === VALIDATION_SEVERITY.BLOCKER,
+  ).length;
+  const warningCount = list.filter(
+    (item) => item?.severity === VALIDATION_SEVERITY.WARNING,
+  ).length;
+  const infoCount = list.filter(
+    (item) => item?.severity === VALIDATION_SEVERITY.INFO,
+  ).length;
+  return {
+    blockerCount,
+    warningCount,
+    infoCount,
+    rewrittenFields: Array.from(
+      new Set((Array.isArray(rewrittenFields) ? rewrittenFields : []).filter(Boolean)),
+    ),
+  };
+}
+
+function deterministicVariantIndex(seedText, variantCount) {
+  const text = String(seedText || "");
+  if (!text || !Number.isFinite(variantCount) || variantCount <= 1) return 0;
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
+  }
+  return Math.abs(hash) % variantCount;
+}
+
+function diversifyExploitNarrative(text, seedText = "") {
+  let value = String(text || "");
+  if (!value) return value;
+  const alternatives = [
+    "has defended infrequently so far",
+    "appears cautious versus aggression",
+    "continues less often than population average",
+    "has surrendered to preflop pressure frequently",
+  ];
+  value = value.replace(/\bfolds too much vs opens\b/gi, () => {
+    const idx = deterministicVariantIndex(seedText, alternatives.length);
+    return alternatives[idx];
+  });
+  value = value.replace(/\bpassive opponent\b/gi, "more selective opponent");
+  value = value.replace(/\bsteal wider\b/gi, "open a bit wider in late position");
+  value = value.replace(/\bapply pressure\b/gi, "lean into disciplined aggression");
+  return value;
+}
+
+function sanitizeInfrastructureLanguage(text) {
+  let value = String(text || "").trim();
+  if (!value) return value;
+  for (const rule of COACHING_SANITIZE_REPLACEMENTS) {
+    value = value.replace(rule.pattern, rule.replacement);
+  }
+  for (const banned of USER_FACING_BANNED_TERMS) {
+    if (banned.test(value)) {
+      value = value.replace(
+        banned,
+        "context",
+      );
+    }
+  }
+  return value.trim();
+}
+
+function softenCoachingTone(text, confidence = "medium") {
+  let value = String(text || "").trim();
+  if (!value) return value;
+  const conf = String(confidence || "").toLowerCase();
+  if (conf === "high") return value;
+  for (const rule of HARSH_TONE_PATTERNS) {
+    value = value.replace(rule.pattern, rule.replacement);
+  }
+  return value.trim();
+}
+
+function containsBannedInfrastructureLanguage(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return USER_FACING_BANNED_TERMS.some((pattern) => pattern.test(value));
+}
+
+function detectInternalJargonLeaks(text) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const leaks = [];
+  for (const rule of INTERNAL_JARGON_LEAK_PATTERNS) {
+    if (rule.pattern.test(value)) leaks.push(rule.label);
+  }
+  return Array.from(new Set(leaks));
+}
+
+function humanizeCoachingLanguage(text) {
+  let value = String(text || "").trim();
+  if (!value) return value;
+  for (const rule of INTERNAL_JARGON_RULES) {
+    value = value.replace(rule.pattern, rule.replacement);
+  }
+  value = value
+    .replace(/\bboard[-\s]?driven hand profile\b/gi, "board-driven hand")
+    .replace(/\bclassification\b/gi, "assessment")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return value;
+}
+
+function pairedBoardNarrationTemplate(field, handClassification = {}) {
+  const safeField = String(field || "").trim();
+  const relevance = String(handClassification?.showdownRelevance || "none");
+  const kickerRank = Array.isArray(handClassification?.kickerRanks)
+    ? handClassification.kickerRanks[0]
+    : null;
+  const kickerName = kickerRank
+    ? rankCharToDescriptor(kickerRank).rankName
+    : "high-card";
+
+  if (relevance === "none") {
+    if (safeField === "primary_leak") {
+      return "This paired river leaves hero with very little showdown value, so passive call-down plans can overestimate how often this hand wins.";
+    }
+    if (safeField === "better_line") {
+      return "Hero's hand has very little showdown value on this paired river, so this is mostly bluff-or-give-up territory instead of a passive call-down.";
+    }
+    if (safeField === "reasoning") {
+      return "With a weak kicker and no meaningful board improvement, this holding is unlikely to win often at showdown.";
+    }
+    if (safeField === "what_was_good") {
+      return "You avoided overcommitting chips with a very weak paired-board holding.";
+    }
+    return "";
+  }
+
+  if (relevance === "marginal") {
+    if (safeField === "primary_leak") {
+      return "This paired river leaves only marginal showdown value, so over-bluffing can burn equity that could still be realized at showdown.";
+    }
+    if (safeField === "better_line") {
+      return `${kickerName}-high may occasionally win at showdown here, making a more controlled river line reasonable when aggression lacks clear fold equity.`;
+    }
+    if (safeField === "reasoning") {
+      return "The kicker retains some showdown value, which supports selective pot control more than automatic aggression.";
+    }
+    if (safeField === "what_was_good") {
+      return "The line preserved some showdown potential instead of forcing a high-variance bluff.";
+    }
+    return "";
+  }
+
+  if (relevance === "meaningful") {
+    if (safeField === "primary_leak") {
+      return "This holding carries meaningful showdown value here, so unnecessary bluffing can turn a strong hand into a lower-EV line.";
+    }
+    if (safeField === "better_line") {
+      return "This paired river gives hero a strong showdown hand, so reaching showdown comfortably is often higher EV than forcing aggression.";
+    }
+    if (safeField === "reasoning") {
+      return "Kicker strength and board interaction give hero clear showdown equity, making passive realization and selective value lines credible.";
+    }
+    if (safeField === "what_was_good") {
+      return "You kept focus on realizing a hand that already wins often at showdown.";
+    }
+    return "";
+  }
+
+  return "";
+}
+
+function applyKickerAwareNarrationDifferentiation(text, field, handClassification = {}) {
+  let value = String(text || "").trim();
+  if (!value) return value;
+  const pairedBoard = Boolean(handClassification?.boardInteraction?.pairedBoard);
+  if (!pairedBoard) return value;
+  const relevance = String(handClassification?.showdownRelevance || "none");
+  if (!["none", "marginal", "meaningful"].includes(relevance)) return value;
+  const template = pairedBoardNarrationTemplate(field, handClassification);
+  if (!template) return value;
+
+  const hasGenericFlattening = GENERIC_NARRATION_FLATTENING_PATTERN.test(value);
+  const hasFalsePassiveShowdown = relevance === "none" && SHOWDOWN_PASSIVE_PATTERN.test(value);
+  const needsMarginalUpgrade =
+    relevance === "marginal" && OVERLY_WEAK_SHOWDOWN_PATTERN.test(value);
+  const needsMeaningfulUpgrade =
+    relevance === "meaningful" && OVERLY_WEAK_SHOWDOWN_PATTERN.test(value);
+
+  if (
+    hasGenericFlattening ||
+    hasFalsePassiveShowdown ||
+    needsMarginalUpgrade ||
+    needsMeaningfulUpgrade
+  ) {
+    return template;
+  }
+
+  if (
+    relevance === "none" &&
+    !/\b(very little showdown value|unlikely to win often at showdown|bluff-or-give-up)\b/i.test(
+      value,
+    )
+  ) {
+    value = `${value} This paired river leaves hero with very little showdown value.`;
+  } else if (
+    relevance === "marginal" &&
+    !/\b(occasionally win at showdown|some showdown value remains|marginal showdown value)\b/i.test(
+      value,
+    )
+  ) {
+    value = `${value} Some showdown value remains, so a controlled line can be reasonable.`;
+  } else if (
+    relevance === "meaningful" &&
+    !/\b(meaningful showdown value|strong showdown hand|wins often at showdown)\b/i.test(
+      value,
+    )
+  ) {
+    value = `${value} This hand has meaningful showdown value and can often realize equity without forcing aggression.`;
+  }
+  return value.trim();
+}
+
+function finalizeCoachingPresentation(review = {}, handContext = {}) {
+  const out = { ...review };
+  const handState = handContext?.validatedHandState || {};
+  const handClassification = handClassificationForContext(handContext);
+  const seed = [
+    String(handState?.street || ""),
+    String(handState?.heroPosition || ""),
+    String(handState?.math?.potOddsRatio || ""),
+  ].join("|");
+  const presentationWarnings = [];
+
+  for (const field of ["primary_leak", "better_line", "what_was_good", "reasoning"]) {
+    let value = String(out[field] || "").trim();
+    value = sanitizeInfrastructureLanguage(value);
+    value = diversifyExploitNarrative(value, seed + field);
+    value = softenCoachingTone(value, out.confidence);
+    value = humanizeCoachingLanguage(value);
+    value = applyKickerAwareNarrationDifferentiation(
+      value,
+      field,
+      handClassification,
+    );
+    const jargonLeaks = detectInternalJargonLeaks(value);
+    if (jargonLeaks.length > 0) {
+      presentationWarnings.push({
+        type: "internal_jargon_leak",
+        severity: VALIDATION_SEVERITY.WARNING,
+        field,
+        message: `Internal terminology leak detected in ${field}: ${jargonLeaks.join(", ")}.`,
+      });
+      value = humanizeCoachingLanguage(value);
+    }
+    if (detectInternalJargonLeaks(value).length > 0) {
+      value = pairedBoardNarrationTemplate(field, handClassification);
+      if (!value) {
+        value =
+          field === "reasoning"
+            ? "The paired board weakens hero's hand here, so the recommendation stays practical and showdown-aware."
+            : field === "better_line"
+              ? "This paired board leaves hero with limited showdown value, so a cautious practical line is preferred."
+              : field === "primary_leak"
+                ? "The line likely overestimates how often this hand wins at showdown on paired boards."
+                : "The review stays grounded in practical coaching language and realistic showdown expectations.";
+      }
+    }
+    value = sanitizeInfrastructureLanguage(value);
+    out[field] = value;
+  }
+
+  if (containsBannedInfrastructureLanguage(JSON.stringify(out))) {
+    out.primary_leak =
+      "This spot appears relatively close, so the adjustment should stay practical and conservative.";
+    out.better_line =
+      "Use the cleanest practical option based on position, stack depth, and available opponent evidence.";
+    out.what_was_good =
+      "The decision process stayed disciplined in a close and variance-sensitive spot.";
+    out.reasoning =
+      "The available evidence supports a cautious, fundamentals-first recommendation rather than an aggressive deviation.";
+  }
+  if (presentationWarnings.length > 0 && process.env.DEBUG_AI_VALIDATION === "true") {
+    const prior = Array.isArray(out.guardrail_warnings) ? out.guardrail_warnings : [];
+    out.guardrail_warnings = [
+      ...prior,
+      ...presentationWarnings.map((item) => `${item.type}:${item.field}`),
+    ];
+  }
+
+  return out;
+}
+
+function sanitizeForIllegalAggressiveMentions(
+  text,
+  fallback,
+  guardrailNotes,
+  fieldName,
+) {
+  const value = String(text || "").trim();
+  if (!value) return String(fallback || "").trim();
+  if (!hasIllegalAggressiveMention(value)) return value;
+  guardrailNotes.push(
+    `Illegal aggressive action mention removed from ${fieldName}.`,
+  );
+  return String(fallback || "").trim();
+}
+
+function hasImpossibleCardReference(text, heroHand = []) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  const heroCards = new Set(
+    (Array.isArray(heroHand) ? heroHand : [])
+      .map((card) => String(card || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (!heroCards.size) return false;
+
+  const directPattern = /\b([2-9TJQKA][cdhs])x\b/gi;
+  let match = null;
+  while ((match = directPattern.exec(value)) !== null) {
+    const card = String(match[1] || "").toLowerCase();
+    if (heroCards.has(card)) return true;
+  }
+  return false;
+}
+
+function hasPreflopEndedForbiddenLanguage(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return PREFLOP_ENDED_FORBIDDEN_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function preflopEndedForHandContext(handContext = {}) {
+  const foldedStreet = String(
+    handContext?.reviewContext?.heroFoldedStreet || "",
+  ).toLowerCase();
+  if (foldedStreet === "preflop") return true;
+  const handState = handContext?.validatedHandState || {};
+  return (
+    String(handState?.street || "").toLowerCase() === "preflop" &&
+    Array.isArray(handState?.boardCards) &&
+    handState.boardCards.length === 0
+  );
+}
+
+function scrubPreflopEndedField(text, fallback, guardrailNotes, fieldName) {
+  const value = String(text || "").trim();
+  if (!value) return String(fallback || "").trim();
+  if (!hasPreflopEndedForbiddenLanguage(value)) return value;
+  guardrailNotes.push(
+    `Postflop-only language removed from ${fieldName} for preflop-ended hand.`,
+  );
+  return String(fallback || "").trim();
+}
+
+function collectReviewTextFields(response = {}) {
+  return {
+    primary_leak: String(response?.primary_leak || "").trim(),
+    better_line: String(response?.better_line || "").trim(),
+    reasoning: String(response?.reasoning || "").trim(),
+    what_was_good: String(response?.what_was_good || "").trim(),
+  };
+}
+
+function extractRatioMentions(text) {
+  const value = String(text || "");
+  const ratios = [];
+  const ratioPattern = /(\d+(?:\.\d+)?)\s*:\s*1\b/g;
+  let match = null;
+  while ((match = ratioPattern.exec(value)) !== null) {
+    const left = Number(match[1]);
+    if (Number.isFinite(left) && left > 0) ratios.push(left);
+  }
+  return ratios;
+}
+
+function hasConflictingActionTerms(text) {
+  const value = String(text || "").toLowerCase();
+  if (!value) return false;
+  if (/\bcall\s+or\s+fold\b/.test(value)) return false;
+  const hasFold = /\bfold\b/.test(value);
+  const hasCall = /\bcall\b/.test(value);
+  const hasJam = /\b(jam|shove)\b/.test(value);
+  return (hasFold && hasCall) || (hasFold && hasJam);
+}
+
+function conceptMentions(text) {
+  const value = String(text || "");
+  const mentions = [];
+  if (/\bfold equity\b/i.test(value)) mentions.push("fold_equity");
+  if (/\bpolarized range\b/i.test(value)) mentions.push("polarized_range");
+  if (/\bmdf\b/i.test(value) || /\bminimum defense frequency\b/i.test(value)) {
+    mentions.push("mdf");
+  }
+  if (/\bicm pressure\b/i.test(value)) mentions.push("icm_pressure");
+  if (/\bsolver-?approved\b/i.test(value)) mentions.push("solver_approved");
+  return mentions;
+}
+
+function conceptPrerequisites(handContext = {}) {
+  const handState = handContext?.validatedHandState || {};
+  const hasPotOddsValidated =
+    handState?.math &&
+    typeof handState.math === "object" &&
+    Number.isFinite(Number(handState.math.callAmount)) &&
+    Number.isFinite(Number(handState.math.finalPotIfCall)) &&
+    typeof handState.math.potOddsRatio === "string" &&
+    handState.math.potOddsRatio.trim().length > 0;
+  return {
+    fold_equity: Boolean(handState?.heroCanRaise),
+    polarized_range: Boolean(handContext?.villainRangeModelAvailable),
+    mdf: Boolean(hasPotOddsValidated),
+    icm_pressure: Boolean(handContext?.payoutDataAvailable),
+    solver_approved: Boolean(handContext?.solverSourceAvailable),
+  };
+}
+
+function enforceUnsupportedConcepts(text, prereqs, guardrailNotes, fieldName) {
+  const value = String(text || "").trim();
+  if (!value) return value;
+  const mentions = conceptMentions(value);
+  if (mentions.length === 0) return value;
+
+  const blocked = mentions.filter((concept) => !prereqs?.[concept]);
+  if (blocked.length === 0) return value;
+  guardrailNotes.push(
+    `Unsupported concept mention removed from ${fieldName}: ${blocked.join(", ")}.`,
+  );
+  return "Concept-heavy language was reduced because required supporting data is not validated in this hand.";
+}
+
+function validateReviewModelOutputContract(parsed) {
+  const result = REVIEW_MODEL_OUTPUT_SCHEMA.safeParse(parsed);
+  if (result.success) {
+    return { valid: true, findings: [], errors: [], summary: summarizeFindings([]) };
+  }
+  const findings = result.error.issues.map((issue) =>
+    buildFinding({
+      type: "malformed_schema",
+      severity: VALIDATION_SEVERITY.BLOCKER,
+      field: issue.path?.[0] ? String(issue.path[0]) : null,
+      message: `${issue.path.join(".") || "root"}: ${issue.message}`,
+    }),
+  );
+  return {
+    valid: false,
+    findings,
+    errors: findings.map((item) => item.message),
+    summary: summarizeFindings(findings),
+  };
+}
+
+function classifyReviewValidationFindings(response, handContext = {}) {
+  const findings = [];
+  const schemaResult = NORMALIZED_REVIEW_SCHEMA.safeParse(response);
+  if (!schemaResult.success) {
+    for (const issue of schemaResult.error.issues) {
+      findings.push(
+        buildFinding({
+          type: "malformed_schema",
+          severity: VALIDATION_SEVERITY.BLOCKER,
+          field: issue.path?.[0] ? String(issue.path[0]) : null,
+          message: `${issue.path.join(".") || "root"}: ${issue.message}`,
+        }),
+      );
+    }
+  }
+
+  const normalized = schemaResult.success ? schemaResult.data : response || {};
+  const texts = collectReviewTextFields(normalized);
+  const mergedText = Object.values(texts).join(" ");
+  const handState = handContext?.validatedHandState || {};
+  const handClassification = handClassificationForContext(handContext);
+  const decisionEvaluation = decisionEvaluationForContext(
+    handContext,
+    handClassification,
+  );
+  const legalActions = Array.isArray(handState?.legalActions)
+    ? handState.legalActions.map((action) =>
+        String(action || "")
+          .trim()
+          .toLowerCase(),
+      )
+    : [];
+
+  const facingBet = Number(handState?.facingBet) || 0;
+  const hasContradictoryLegalActions =
+    (facingBet > 0 && legalActions.includes("check")) ||
+    (facingBet <= 0 && legalActions.includes("call")) ||
+    (legalActions.includes("call") && legalActions.includes("check"));
+  if (hasContradictoryLegalActions) {
+    findings.push(
+      buildFinding({
+        type: "contradictory_legal_actions",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message: "Legal actions conflict with current facing-bet state.",
+      }),
+    );
+  }
+
+  const heroCannotRaise =
+    !Boolean(handState?.heroCanRaise) &&
+    legalActions.length > 0 &&
+    !legalActions.includes("raise") &&
+    !legalActions.includes("bet");
+  if (heroCannotRaise && hasHardIllegalRecommendation(mergedText)) {
+    findings.push(
+      buildFinding({
+        type: "illegal_action_recommendation",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message:
+          "Illegal action recommendation detected in call/fold-only decision node.",
+      }),
+    );
+  }
+
+  const heroHand = Array.isArray(handState?.heroHand) ? handState.heroHand : [];
+  const prereqs = conceptPrerequisites(handContext);
+  for (const [fieldName, text] of Object.entries(texts)) {
+    const terminologyIssues = terminologyMismatches(text, handClassification);
+    if (terminologyIssues.length > 0) {
+      findings.push(
+        buildFinding({
+          type: "terminology_mismatch",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Terminology mismatch detected in ${fieldName}: ${terminologyIssues.join(", ")}.`,
+        }),
+      );
+    }
+    const contradictions = strategicContradictions(
+      text,
+      handContext,
+      handClassification,
+    );
+    for (const contradiction of contradictions) {
+      findings.push(
+        buildFinding({
+          type: contradiction,
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Strategic contradiction detected in ${fieldName}: ${contradiction}.`,
+        }),
+      );
+    }
+    if (hasImpossibleCardReference(text, heroHand)) {
+      findings.push(
+        buildFinding({
+          type: "impossible_card_reference",
+          severity: VALIDATION_SEVERITY.BLOCKER,
+          field: fieldName,
+          message: `Impossible card reference found in ${fieldName}.`,
+        }),
+      );
+    }
+    if (heroCannotRaise && hasIllegalAggressiveMention(text)) {
+      findings.push(
+        buildFinding({
+          type: "ambiguous_aggression_wording",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message:
+            "Aggressive wording detected in a call/fold-only decision node.",
+        }),
+      );
+    }
+    if (hasConflictingActionTerms(text)) {
+      findings.push(
+        buildFinding({
+          type: "conflicting_action_language",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Conflicting action language detected in ${fieldName}.`,
+        }),
+      );
+    }
+    if (hasAmbiguousAggressionWording(text)) {
+      findings.push(
+        buildFinding({
+          type: "ambiguous_aggression_wording",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Ambiguous aggression phrasing detected in ${fieldName}.`,
+        }),
+      );
+    }
+    if (hasExcessiveCertaintyWording(text)) {
+      findings.push(
+        buildFinding({
+          type: "excessive_certainty_wording",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Excessive certainty wording detected in ${fieldName}.`,
+        }),
+      );
+    }
+    if (preflopEndedForHandContext(handContext) && hasPreflopEndedForbiddenLanguage(text)) {
+      findings.push(
+        buildFinding({
+          type: "preflop_scope_leak",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Postflop-only language detected in ${fieldName} for preflop-ended hand.`,
+        }),
+      );
+    }
+
+    const fieldConcepts = conceptMentions(text);
+    const blockedFieldConcepts = fieldConcepts.filter(
+      (concept) => !prereqs?.[concept],
+    );
+    if (blockedFieldConcepts.length > 0) {
+      findings.push(
+        buildFinding({
+          type: "unsupported_concept",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: fieldName,
+          message: `Unsupported concepts referenced in ${fieldName}: ${blockedFieldConcepts.join(", ")}.`,
+        }),
+      );
+    }
+  }
+
+  const foldedStreet = String(
+    handContext?.reviewContext?.heroFoldedStreet || "",
+  ).toLowerCase();
+  const hasFlopMention = /\bflop\b/i.test(mergedText);
+  const hasTurnMention = /\bturn\b/i.test(mergedText);
+  const hasRiverMention = /\briver\b/i.test(mergedText);
+  if (foldedStreet === "preflop" && (hasFlopMention || hasTurnMention || hasRiverMention)) {
+    findings.push(
+      buildFinding({
+        type: "street_progression_mismatch",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message:
+          "Response references postflop streets after a preflop fold endpoint.",
+      }),
+    );
+  }
+  if (foldedStreet === "flop" && (hasTurnMention || hasRiverMention)) {
+    findings.push(
+      buildFinding({
+        type: "street_progression_mismatch",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message: "Response references turn/river after flop fold endpoint.",
+      }),
+    );
+  }
+  if (foldedStreet === "turn" && hasRiverMention) {
+    findings.push(
+      buildFinding({
+        type: "street_progression_mismatch",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message: "Response references river after turn fold endpoint.",
+      }),
+    );
+  }
+  const expectedRatioText = String(handState?.math?.potOddsRatio || "").trim();
+  if (expectedRatioText) {
+    const expectedLeft = Number(expectedRatioText.split(":")[0]);
+    if (Number.isFinite(expectedLeft)) {
+      const mentionedRatios = extractRatioMentions(mergedText);
+      for (const ratioLeft of mentionedRatios) {
+        if (Math.abs(ratioLeft - expectedLeft) > 0.15) {
+          findings.push(
+            buildFinding({
+              type: "pot_odds_mismatch",
+              severity: VALIDATION_SEVERITY.BLOCKER,
+              message: `Pot-odds ratio mismatch (mentioned ${ratioLeft.toFixed(2)}:1 vs validated ${expectedLeft.toFixed(2)}:1).`,
+            }),
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  const handStateIssues = Array.isArray(handContext?.handStateValidation?.issues)
+    ? handContext.handStateValidation.issues
+    : [];
+  if (handStateIssues.some((issue) => /Duplicate cards detected/i.test(issue))) {
+    findings.push(
+      buildFinding({
+        type: "duplicate_cards",
+        severity: VALIDATION_SEVERITY.BLOCKER,
+        message: "Duplicate cards detected in validated hand state.",
+      }),
+    );
+  }
+
+  if (String(normalized?.reasoning || "").trim().length > 420) {
+    findings.push(
+      buildFinding({
+        type: "verbosity",
+        severity: VALIDATION_SEVERITY.INFO,
+        field: "reasoning",
+        message: "Reasoning is verbose and could be more concise.",
+      }),
+    );
+  }
+  if (/no clear strengths identified/i.test(String(normalized?.what_was_good || ""))) {
+    findings.push(
+      buildFinding({
+        type: "low_value_coaching",
+        severity: VALIDATION_SEVERITY.INFO,
+        field: "what_was_good",
+        message: "What-was-good section is generic.",
+      }),
+    );
+  }
+
+  if (decisionEvaluation.preflopFoldProtectionEligible) {
+    if (
+      Number.isFinite(Number(normalized?.preflop_score)) &&
+      Number(normalized.preflop_score) < 0
+    ) {
+      findings.push(
+        buildFinding({
+          type: "action_relative_scoring_mismatch",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: "preflop_score",
+          message:
+            "Negative preflop score conflicts with a protected preflop fold decision.",
+        }),
+      );
+    }
+    if (
+      Number.isFinite(Number(normalized?.overall_score)) &&
+      Number(normalized.overall_score) < 0
+    ) {
+      findings.push(
+        buildFinding({
+          type: "action_relative_scoring_mismatch",
+          severity: VALIDATION_SEVERITY.WARNING,
+          field: "overall_score",
+          message:
+            "Negative overall score conflicts with action-relative preflop fold quality.",
+        }),
+      );
+    }
+    for (const [fieldName, text] of Object.entries(texts)) {
+      if (SPECULATIVE_PREFLOP_SUGGESTION_PATTERN.test(text)) {
+        findings.push(
+          buildFinding({
+            type: "preflop_fold_protection_language",
+            severity: VALIDATION_SEVERITY.WARNING,
+            field: fieldName,
+            message: `Speculative preflop defend language detected in ${fieldName} for protected fold spot.`,
+          }),
+        );
+      }
+    }
+  }
+
+  if (
+    String(handState?.street || "").toLowerCase() === "preflop" &&
+    decisionEvaluation.under20bb &&
+    decisionEvaluation.handClassContext === "trash"
+  ) {
+    for (const [fieldName, text] of Object.entries(texts)) {
+      if (
+        WEAK_OFFSUIT_AGGRESSION_PATTERN.test(text) &&
+        SPECULATIVE_PREFLOP_SUGGESTION_PATTERN.test(text)
+      ) {
+        findings.push(
+          buildFinding({
+            type: "weak_offsuit_speculative_leak",
+            severity: VALIDATION_SEVERITY.WARNING,
+            field: fieldName,
+            message: `Weak offsuit speculative suggestion detected in ${fieldName} under 20BB.`,
+          }),
+        );
+      }
+    }
+  }
+
+  const summary = summarizeFindings(findings);
+  return {
+    valid: summary.blockerCount === 0,
+    findings,
+    summary,
+    errors: findings.map((item) => item.message),
+  };
+}
+
+function validatePostGenerationReview(response, handContext = {}) {
+  return classifyReviewValidationFindings(response, handContext);
+}
+
+export const __reviewTrustTestables = {
+  VALIDATION_SEVERITY,
+  validateReviewModelOutputContract,
+  validatePostGenerationReview,
+  classifyReviewValidationFindings,
+  applyReviewGuardrails,
+  finalizeCoachingPresentation,
+  opponentConfidenceTier,
+  buildOpponentConfidenceNarrative,
+  conceptMentions,
+  conceptPrerequisites,
+  deriveHandClassification,
+  decisionEvaluationForContext,
+};
+
+function safeFallbackReviewText(validationIssues = [], pipelineIssues = []) {
+  const issueHint =
+    Array.isArray(validationIssues) && validationIssues.length
+      ? " Key details may be incomplete."
+      : "";
+  const pipelineHint =
+    Array.isArray(pipelineIssues) && pipelineIssues.length
+      ? " Some assumptions remain uncertain."
+      : "";
+  return {
+    primary_leak:
+      "This spot appears more context-sensitive than usual, so recommendations are intentionally conservative.",
+    better_line:
+      "Stay with the clearest legal options in this node and avoid high-variance commitments without stronger supporting reads.",
+    what_was_good:
+      "You reached a disciplined endpoint by preserving stack and avoiding unsupported high-risk lines.",
+    reasoning:
+      `The available context leaves this decision close, so the coaching is intentionally cautious.${issueHint}${pipelineHint}`.trim(),
+  };
+}
+
+function guardrailConfidence(
+  handContext = {},
+  modelConfidence = "medium",
+  validationSummary = {},
+) {
+  const safeModelConfidence = ["low", "medium", "high"].includes(
+    String(modelConfidence || "").toLowerCase(),
+  )
+    ? String(modelConfidence || "").toLowerCase()
+    : "medium";
+  const validation = handContext?.handStateValidation || {};
+  const handState = handContext?.validatedHandState || {};
+  if (!validation?.isValid) return "low";
+
+  const hasCoreFields =
+    String(handState?.street || "").trim().length > 0 &&
+    Array.isArray(handState?.heroHand) &&
+    handState.heroHand.length === 2 &&
+    Array.isArray(handState?.legalActions) &&
+    handState.legalActions.length > 0;
+  if (!hasCoreFields) return "low";
+
+  const hasStackDepth = Number.isFinite(Number(handState?.effectiveStackBB));
+  if (!hasStackDepth && safeModelConfidence === "high") return "medium";
+
+  const legalActions = Array.isArray(handState?.legalActions)
+    ? handState.legalActions.map((action) =>
+        String(action || "")
+          .trim()
+          .toLowerCase(),
+      )
+    : [];
+  const isCallFoldNode =
+    legalActions.length === 2 &&
+    legalActions.includes("call") &&
+    legalActions.includes("fold");
+  if (
+    String(handState?.street || "").toLowerCase() === "preflop" &&
+    Boolean(handState?.isAllInFacingAction) &&
+    isCallFoldNode &&
+    safeModelConfidence === "high"
+  ) {
+    return "medium";
+  }
+
+  if ((Number(validationSummary?.warningCount) || 0) > 0) {
+    return safeModelConfidence === "high" ? "medium" : safeModelConfidence;
+  }
+
+  return safeModelConfidence;
+}
+
+function enforceActionRelativeDecisionScoring(
+  review = {},
+  handContext = {},
+  handClassification = {},
+  guardrailNotes = [],
+  rewrittenFields = new Set(),
+) {
+  const out = { ...review };
+  const markRewriteIfChanged = (field, before, after) => {
+    if (String(before || "") !== String(after || "")) rewrittenFields.add(field);
+  };
+  const decisionEvaluation = decisionEvaluationForContext(
+    handContext,
+    handClassification,
+  );
+  if (!decisionEvaluation.preflopFoldProtectionEligible) {
+    return { review: out, decisionEvaluation };
+  }
+
+  const preflopBefore = out.preflop_score;
+  const overallBefore = out.overall_score;
+  if (Number.isFinite(Number(out.preflop_score)) && Number(out.preflop_score) < 0) {
+    out.preflop_score = decisionEvaluation.facingActionStrength === "strong" ? 1 : 0;
+    guardrailNotes.push(
+      "Preflop score capped to action-relative neutral/positive for protected weak-hand fold.",
+    );
+  }
+  if (Number.isFinite(Number(out.overall_score)) && Number(out.overall_score) < 0) {
+    out.overall_score = Math.max(
+      Number(out.preflop_score) || 0,
+      decisionEvaluation.facingActionStrength === "strong" ? 1 : 0,
+    );
+    guardrailNotes.push(
+      "Overall score capped to action-relative neutral/positive for protected weak-hand fold.",
+    );
+  }
+  if (String(preflopBefore) !== String(out.preflop_score)) rewrittenFields.add("preflop_score");
+  if (String(overallBefore) !== String(out.overall_score)) rewrittenFields.add("overall_score");
+
+  const rewriteNeeded = ["primary_leak", "better_line", "reasoning"].some((field) =>
+    SPECULATIVE_PREFLOP_SUGGESTION_PATTERN.test(String(out[field] || "")),
+  );
+  if (rewriteNeeded) {
+    const primaryBefore = out.primary_leak;
+    const betterBefore = out.better_line;
+    const goodBefore = out.what_was_good;
+    const reasoningBefore = out.reasoning;
+    out.primary_leak =
+      "No major strategic leak stands out in this preflop fold; the decision appears disciplined for hand quality and stack depth.";
+    out.better_line =
+      "Folding preflop is a reasonable default here; only deviate with strong exploit evidence.";
+    out.what_was_good =
+      "Hero avoided a low-EV dominated continue and preserved stack in a standard preflop spot.";
+    out.reasoning =
+      "With a weak offsuit holding and limited stack depth leverage, folding preflop is a practical action-relative decision.";
+    markRewriteIfChanged("primary_leak", primaryBefore, out.primary_leak);
+    markRewriteIfChanged("better_line", betterBefore, out.better_line);
+    markRewriteIfChanged("what_was_good", goodBefore, out.what_was_good);
+    markRewriteIfChanged("reasoning", reasoningBefore, out.reasoning);
+    guardrailNotes.push(
+      "Speculative preflop defend language removed for protected weak-hand fold spot.",
+    );
+  }
+
+  return { review: out, decisionEvaluation };
+}
+
+function applyReviewGuardrails(response, handContext = {}, findings = []) {
+  const guarded = { ...response };
+  const handState = handContext?.validatedHandState || {};
+  const handClassification = handClassificationForContext(handContext);
+  const legalActions = Array.isArray(handState?.legalActions)
+    ? handState.legalActions.map((action) =>
+        String(action || "")
+          .trim()
+          .toLowerCase(),
+      )
+    : [];
+  const heroCanRaise = Boolean(handState?.heroCanRaise);
+  const cannotRaise =
+    !heroCanRaise &&
+    legalActions.length > 0 &&
+    !legalActions.includes("raise") &&
+    !legalActions.includes("bet");
+  const guardrailNotes = [];
+  const rewrittenFields = new Set();
+  const markRewriteIfChanged = (field, before, after) => {
+    if (String(before || "") !== String(after || "")) rewrittenFields.add(field);
+  };
+  const warningFields = new Set(
+    (Array.isArray(findings) ? findings : [])
+      .filter((item) => item?.severity === VALIDATION_SEVERITY.WARNING)
+      .map((item) => String(item?.field || "").trim())
+      .filter(Boolean),
+  );
+  const shouldTouchField = (field) =>
+    warningFields.size === 0 || warningFields.has(field);
+  const contradictionTypes = new Set([
+    "showdown_contradiction",
+    "false_showdown_line",
+    "board_relative_overclaim",
+    "bluff_catcher_contradiction",
+    "paired_board_overstatement",
+    "stack_depth_incoherence",
+  ]);
+  const contradictionWarningCount = (Array.isArray(findings) ? findings : []).filter(
+    (item) =>
+      item?.severity === VALIDATION_SEVERITY.WARNING &&
+      contradictionTypes.has(String(item?.type || "")),
+  ).length;
+
+  if (cannotRaise && (warningFields.size === 0 || warningFields.size > 0)) {
+    if (shouldTouchField("primary_leak")) {
+    const before = guarded.primary_leak;
+    guarded.primary_leak = sanitizeForIllegalAggressiveMentions(
+      guarded.primary_leak,
+      "Line selection should stay within legal actions for this node.",
+      guardrailNotes,
+      "primary_leak",
+    );
+    markRewriteIfChanged("primary_leak", before, guarded.primary_leak);
+    }
+    if (shouldTouchField("better_line")) {
+    const before = guarded.better_line;
+    guarded.better_line = sanitizeForIllegalAggressiveMentions(
+      guarded.better_line,
+      "In this spot, hero options are limited to call or fold.",
+      guardrailNotes,
+      "better_line",
+    );
+    markRewriteIfChanged("better_line", before, guarded.better_line);
+    }
+    if (shouldTouchField("reasoning")) {
+    const before = guarded.reasoning;
+    guarded.reasoning = sanitizeForIllegalAggressiveMentions(
+      guarded.reasoning,
+      "Given this node, keep the plan centered on calling or folding.",
+      guardrailNotes,
+      "reasoning",
+    );
+    markRewriteIfChanged("reasoning", before, guarded.reasoning);
+    }
+    if (shouldTouchField("what_was_good")) {
+    const before = guarded.what_was_good;
+    guarded.what_was_good = sanitizeForIllegalAggressiveMentions(
+      guarded.what_was_good,
+      "The review correctly preserved decision focus under a constrained action set.",
+      guardrailNotes,
+      "what_was_good",
+    );
+    markRewriteIfChanged("what_was_good", before, guarded.what_was_good);
+    }
+  }
+
+  const heroHand = Array.isArray(handState?.heroHand) ? handState.heroHand : [];
+  const prereqs = conceptPrerequisites(handContext);
+  const isPreflopEnded = preflopEndedForHandContext(handContext);
+  const impossibleCardFieldFallback = {
+    primary_leak:
+      "Card-removal claims should reference only cards that remain available in villain ranges.",
+    better_line:
+      "Keep range language anchored to validated visible cards and avoid impossible blocker references.",
+    reasoning:
+      "An impossible card reference was removed because it conflicted with hero's known cards.",
+    what_was_good:
+      "The final recommendation now excludes contradictory card-combo references.",
+  };
+  if (shouldTouchField("primary_leak") && hasImpossibleCardReference(guarded.primary_leak, heroHand)) {
+    const before = guarded.primary_leak;
+    guardrailNotes.push(
+      "Impossible villain card reference removed from primary_leak.",
+    );
+    guarded.primary_leak = impossibleCardFieldFallback.primary_leak;
+    markRewriteIfChanged("primary_leak", before, guarded.primary_leak);
+  }
+  if (shouldTouchField("better_line") && hasImpossibleCardReference(guarded.better_line, heroHand)) {
+    const before = guarded.better_line;
+    guardrailNotes.push(
+      "Impossible villain card reference removed from better_line.",
+    );
+    guarded.better_line = impossibleCardFieldFallback.better_line;
+    markRewriteIfChanged("better_line", before, guarded.better_line);
+  }
+  if (shouldTouchField("reasoning") && hasImpossibleCardReference(guarded.reasoning, heroHand)) {
+    const before = guarded.reasoning;
+    guardrailNotes.push(
+      "Impossible villain card reference removed from reasoning.",
+    );
+    guarded.reasoning = impossibleCardFieldFallback.reasoning;
+    markRewriteIfChanged("reasoning", before, guarded.reasoning);
+  }
+  if (shouldTouchField("what_was_good") && hasImpossibleCardReference(guarded.what_was_good, heroHand)) {
+    const before = guarded.what_was_good;
+    guardrailNotes.push(
+      "Impossible villain card reference removed from what_was_good.",
+    );
+    guarded.what_was_good = impossibleCardFieldFallback.what_was_good;
+    markRewriteIfChanged("what_was_good", before, guarded.what_was_good);
+  }
+
+  if (shouldTouchField("primary_leak")) {
+    guarded.primary_leak = enforceUnsupportedConcepts(
+      guarded.primary_leak,
+      prereqs,
+      guardrailNotes,
+      "primary_leak",
+    );
+  }
+  if (shouldTouchField("better_line")) {
+    guarded.better_line = enforceUnsupportedConcepts(
+      guarded.better_line,
+      prereqs,
+      guardrailNotes,
+      "better_line",
+    );
+  }
+  if (shouldTouchField("reasoning")) {
+    guarded.reasoning = enforceUnsupportedConcepts(
+      guarded.reasoning,
+      prereqs,
+      guardrailNotes,
+      "reasoning",
+    );
+  }
+  if (shouldTouchField("what_was_good")) {
+    guarded.what_was_good = enforceUnsupportedConcepts(
+      guarded.what_was_good,
+      prereqs,
+      guardrailNotes,
+      "what_was_good",
+    );
+  }
+
+  for (const field of ["primary_leak", "better_line", "reasoning", "what_was_good"]) {
+    if (!shouldTouchField(field)) continue;
+    const before = String(guarded[field] || "");
+    let text = before;
+    const terminologyIssues = terminologyMismatches(text, handClassification);
+    if (terminologyIssues.length > 0) {
+      text = terminologyRewriteFallback(field, handClassification);
+      guardrailNotes.push(
+        `Terminology mismatch rewritten in ${field}: ${terminologyIssues.join(", ")}.`,
+      );
+    }
+    const contradictions = strategicContradictions(
+      text,
+      handContext,
+      handClassification,
+    );
+    if (contradictions.length > 0) {
+      const priorityContradiction = contradictions[0];
+      text = contradictionRewriteFallback(
+        field,
+        priorityContradiction,
+        handClassification,
+      );
+      guardrailNotes.push(
+        `Strategic contradiction rewritten in ${field}: ${priorityContradiction}.`,
+      );
+    }
+    text = enforceStackDepthConstraints(
+      text,
+      handContext,
+      guardrailNotes,
+      field,
+    );
+    for (const rule of SAFE_REWRITE_RULES) {
+      text = text.replace(rule.pattern, rule.replacement);
+    }
+    if (hasExcessiveCertaintyWording(text)) {
+      text = text
+        .replace(/\bmandatory\b/gi, "often reasonable")
+        .replace(/\balways\b/gi, "typically")
+        .replace(/\bnever\b/gi, "rarely")
+        .replace(/\bguaranteed\b/gi, "likely");
+      guardrailNotes.push(`Certainty wording softened in ${field}.`);
+    }
+    if (hasConflictingActionTerms(text)) {
+      text = field === "better_line"
+        ? "Choose the higher-EV option between calling and folding based on validated pot odds and opponent range assumptions."
+        : text;
+      if (field === "better_line") {
+        guardrailNotes.push("Conflicting action wording rewritten in better_line.");
+      }
+    }
+    guarded[field] = text.trim();
+    markRewriteIfChanged(field, before, guarded[field]);
+  }
+
+  if (isPreflopEnded) {
+    if (shouldTouchField("primary_leak")) {
+    const before = guarded.primary_leak;
+    guarded.primary_leak = scrubPreflopEndedField(
+      guarded.primary_leak,
+      "Keep analysis anchored to preflop decision quality only for this hand.",
+      guardrailNotes,
+      "primary_leak",
+    );
+    markRewriteIfChanged("primary_leak", before, guarded.primary_leak);
+    }
+    if (shouldTouchField("better_line")) {
+    const before = guarded.better_line;
+    guarded.better_line = scrubPreflopEndedField(
+      guarded.better_line,
+      "Given a preflop endpoint, compare only fold versus call against validated all-in math and ranges.",
+      guardrailNotes,
+      "better_line",
+    );
+    markRewriteIfChanged("better_line", before, guarded.better_line);
+    }
+    if (shouldTouchField("reasoning")) {
+    const before = guarded.reasoning;
+    guarded.reasoning = scrubPreflopEndedField(
+      guarded.reasoning,
+      "Hand ended preflop, so postflop concepts are intentionally excluded from this explanation.",
+      guardrailNotes,
+      "reasoning",
+    );
+    markRewriteIfChanged("reasoning", before, guarded.reasoning);
+    }
+    if (shouldTouchField("what_was_good")) {
+    const before = guarded.what_was_good;
+    guarded.what_was_good = scrubPreflopEndedField(
+      guarded.what_was_good,
+      "Preflop execution was isolated cleanly without leaking into postflop narratives.",
+      guardrailNotes,
+      "what_was_good",
+    );
+    markRewriteIfChanged("what_was_good", before, guarded.what_was_good);
+    }
+  }
+
+  const actionRelativeAdjusted = enforceActionRelativeDecisionScoring(
+    guarded,
+    handContext,
+    handClassification,
+    guardrailNotes,
+    rewrittenFields,
+  );
+  Object.assign(guarded, actionRelativeAdjusted.review);
+
+  const warningCount = (Array.isArray(findings) ? findings : []).filter(
+    (item) => item?.severity === VALIDATION_SEVERITY.WARNING,
+  ).length;
+  guarded.confidence = guardrailConfidence(handContext, guarded.confidence, {
+    warningCount,
+  });
+  if (contradictionWarningCount >= 2) {
+    if (guarded.confidence === "high") guarded.confidence = "medium";
+    else if (guarded.confidence === "medium") guarded.confidence = "low";
+  }
+  if (guardrailNotes.length > 0 && process.env.DEBUG_AI_VALIDATION === "true") {
+    guarded.guardrail_warnings = guardrailNotes;
+  }
+  return { review: guarded, rewrittenFields: Array.from(rewrittenFields) };
+}
+
 function normalizeReviewResponse(parsed, completion, handContext = {}) {
   const confidenceRaw = String(parsed?.confidence || "medium")
     .trim()
@@ -953,6 +3277,67 @@ function normalizeReviewResponse(parsed, completion, handContext = {}) {
   }
 
   return response;
+}
+
+function attachValidationSummary(review, summary) {
+  if (!review || typeof review !== "object") return review;
+  if (process.env.DEBUG_AI_VALIDATION !== "true") return review;
+  return {
+    ...review,
+    validationSummary: {
+      blockerCount: Number(summary?.blockerCount) || 0,
+      warningCount: Number(summary?.warningCount) || 0,
+      infoCount: Number(summary?.infoCount) || 0,
+      rewrittenFields: Array.isArray(summary?.rewrittenFields)
+        ? summary.rewrittenFields
+        : [],
+    },
+  };
+}
+
+function opponentConfidenceTier(handsSeen) {
+  const n = Number(handsSeen) || 0;
+  if (n >= 75) return "high";
+  if (n >= 20) return "moderate";
+  return "low";
+}
+
+function formatPctOrNa(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${n.toFixed(1)}%` : "n/a";
+}
+
+function buildOpponentEvidenceLine(opponent = {}) {
+  const handsSeen = Number(opponent?.handsSeen) || 0;
+  const foldVsOpen = formatPctOrNa(opponent?.foldToPreflopRaisePct);
+  const vpip = formatPctOrNa(opponent?.enteredPotPct);
+  const pfr = formatPctOrNa(opponent?.preflopRaisePct);
+  return `Stats: VPIP ${vpip}, PFR ${pfr}, Fold-vs-open ${foldVsOpen} over ${handsSeen} hands.`;
+}
+
+function buildOpponentConfidenceNarrative(opponent = {}) {
+  const handsSeen = Number(opponent?.handsSeen) || 0;
+  const tier = opponentConfidenceTier(handsSeen);
+  const playNote = String(opponent?.playNote?.text || "").trim();
+  const tags =
+    Array.isArray(opponent?.tags) && opponent.tags.length > 0
+      ? opponent.tags.join(", ")
+      : "";
+  if (tier === "low") {
+    return "Limited observations suggest early tendencies only; avoid strong exploit assumptions.";
+  }
+  if (tier === "moderate") {
+    return playNote
+      ? `Moderate-sample read: ${playNote}`
+      : "Appears somewhat directional so far, but extreme exploit assumptions are still premature.";
+  }
+  if (playNote) {
+    return `High-confidence read: ${playNote}`;
+  }
+  if (tags) {
+    return `High-confidence read from sample-backed tendencies: ${tags}.`;
+  }
+  return "High-confidence sample supports data-driven exploit adjustments.";
 }
 
 function toFinite(value, fallback = 0) {
@@ -1895,28 +4280,89 @@ export async function reviewTournamentHand(
       if (seatPosition) seatBits.push(seatPosition);
       parts.push(seatBits.join(" "));
     }
-    if (Number.isFinite(Number(opponent?.enteredPotPct))) {
-      parts.push(`VPIP ${Number(opponent.enteredPotPct).toFixed(1)}%`);
-    }
-    if (Number.isFinite(Number(opponent?.foldedPreflopPct))) {
-      parts.push(`Fold pre ${Number(opponent.foldedPreflopPct).toFixed(1)}%`);
-    }
-    if (Number.isFinite(Number(opponent?.preflopRaisePct))) {
-      parts.push(`PFR ${Number(opponent.preflopRaisePct).toFixed(1)}%`);
-    }
-    if (Array.isArray(opponent?.tags) && opponent.tags.length > 0) {
-      parts.push(`Tags: ${opponent.tags.join(", ")}`);
-    }
-    const playNote = String(opponent?.playNote?.text || "").trim();
-    if (playNote) {
-      parts.push(`Play note: ${playNote}`);
+    parts.push(buildOpponentEvidenceLine(opponent));
+    parts.push(buildOpponentConfidenceNarrative(opponent));
+    const tier = opponentConfidenceTier(handsSeen);
+    if (tier === "high" && Array.isArray(opponent?.tags) && opponent.tags.length > 0) {
+      parts.push(`Sample-backed tags: ${opponent.tags.join(", ")}`);
     }
     return `- ${parts.join(" | ")}`;
   });
 
+  const handState =
+    handContext?.validatedHandState &&
+    typeof handContext.validatedHandState === "object"
+      ? handContext.validatedHandState
+      : null;
+  const handStateValidation =
+    handContext?.handStateValidation &&
+    typeof handContext.handStateValidation === "object"
+      ? handContext.handStateValidation
+      : null;
+  const handClassification = deriveHandClassification(handState || {});
+  const decisionEvaluation = decisionEvaluationForContext(
+    handContext,
+    handClassification,
+  );
+  const enrichedHandContext = {
+    ...handContext,
+    handClassification,
+    decisionEvaluation,
+  };
+  const aiHandContext = {
+    handState,
+    handClassification,
+    decisionEvaluation,
+    handStateValidation,
+    reviewContext: handContext?.reviewContext || {},
+    heroOutcome: handContext?.heroOutcome || {},
+    opponentContext: {
+      snapshotIncluded: Boolean(handContext?.opponentContext?.snapshotIncluded),
+      topTagHints: Array.isArray(handContext?.opponentContext?.topTagHints)
+        ? handContext.opponentContext.topTagHints
+        : [],
+    },
+  };
+
+  if (handStateValidation && handStateValidation.isValid === false) {
+    const safe = safeFallbackReviewText(handStateValidation.issues || []);
+    const base = normalizeReviewResponse(
+      {
+        overall_score: 0,
+        preflop_score: 0,
+        flop_score: 0,
+        turn_score: 0,
+        river_score: 0,
+        confidence: "low",
+        what_was_good: safe.what_was_good,
+        primary_leak: safe.primary_leak,
+        better_line: safe.better_line,
+        reasoning: safe.reasoning,
+      },
+      null,
+      enrichedHandContext,
+    );
+    return finalizeCoachingPresentation(base, enrichedHandContext);
+  }
+
   const system = `You are a tournament poker hand reviewer.
 Grade decisions using sound GTO principles with practical exploit awareness.
 Do not claim solver precision. If data is missing, reduce confidence.
+The handState object is the source of truth for action legality and state facts.
+The handClassification object is the source of truth for hand-category terminology and showdown framing.
+Use provided handClassification as source of truth. Do not invent hand-category terminology.
+Board-relative hand strength matters.
+A paired board alone does not mean hero has top pair or meaningful showdown value.
+Use effectiveHandCategory and heroContributionLevel as source of truth.
+Use kickerStrength, showdownRelevance, and boardPairKickerClass as source of truth for kicker-driven river logic.
+Different levels of showdownRelevance should produce meaningfully different coaching recommendations.
+Do not flatten all paired-board holdings into the same conservative narrative.
+Kicker relevance should materially influence showdown expectations, bluff-catching potential, and river aggression recommendations.
+Evaluate the quality of hero's chosen action, not merely the strength of the hole cards.
+Weak hands folded correctly should not receive negative scoring simply because the cards themselves are weak.
+Avoid suggesting speculative calls or 3-bets with weak offsuit holdings unless stack depth, position, and exploit evidence strongly justify it.
+Do not invent mechanics, cards, stack math, or legal actions outside handState.
+Use only handState.math for pot-odds/SPR references; do not perform fresh arithmetic.
 Respond with strict JSON only.
 
 Output JSON:
@@ -1941,10 +4387,14 @@ Keep feedback concise and actionable.
 - If hero folded on a street, later streets must not be scored or used for leak claims.
 - If opponentContext is present, use it only as exploit context for those specific opponents in this hand.
 - Reliability by sample size: <12 hands low confidence, 12-30 medium, >30 stronger.
+- Stack-depth coaching constraints by effectiveStackBB:
+  - <10BB: prioritize shove/fold-style simplification, direct equity realization, and tournament-life pressure; avoid small 3-bets, speculative flats, and postflop maneuverability claims.
+  - 10-20BB: selective reshove/flat decisions and SPR/leverage language are acceptable.
+  - >20BB: postflop maneuverability and wider exploit narratives are acceptable; avoid framing every spot as pure shove/fold.
 - Do not make claims about hidden cards from opponent tags; keep uncertainty explicit.`;
 
   const user = `Hand context:
-${JSON.stringify(handContext, null, 2)}
+${JSON.stringify(aiHandContext, null, 2)}
 
 ${opponentLines.length ? `Opponent tendencies:\n${opponentLines.join("\n")}\n` : ""}
 
@@ -1953,16 +4403,133 @@ Instruction: ${
     "Review this hand street-by-street and score hero's line with practical GTO-informed reasoning."
   }`;
 
-  const { parsed, completion } = await completePrompt({
-    system,
-    user,
-    temperature: 0.25,
-    top_p: 0.7,
-    max_tokens: 420,
-    model,
-  });
+  const maxAttempts = 3;
+  let lastPipelineErrors = [];
+  let lastFindings = [];
+  let lastUsage = null;
 
-  return normalizeReviewResponse(parsed, completion, handContext);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const retryInstruction =
+      attempt > 0
+        ? `\n\nValidation retry requirements:\n- Fix every issue listed below.\n- Keep strict JSON shape unchanged.\nIssues:\n${lastPipelineErrors
+            .slice(0, 6)
+            .map((line) => `- ${line}`)
+            .join("\n")}`
+        : "";
+    const attemptUser = `${user}${retryInstruction}`;
+    const { parsed, completion } = await completePrompt({
+      system,
+      user: attemptUser,
+      temperature: 0.25,
+      top_p: 0.7,
+      max_tokens: 420,
+      model,
+    });
+    lastUsage = completion?.usage || null;
+
+    const contractValidation = validateReviewModelOutputContract(parsed);
+    if (!contractValidation.valid) {
+      lastFindings = contractValidation.findings || [];
+      lastPipelineErrors = (contractValidation.errors || []).slice(0, 8);
+      continue;
+    }
+
+    const normalized = normalizeReviewResponse(
+      parsed,
+      completion,
+      enrichedHandContext,
+    );
+    const postValidation = validatePostGenerationReview(
+      normalized,
+      enrichedHandContext,
+    );
+    lastFindings = postValidation.findings || [];
+
+    if ((postValidation.summary?.blockerCount || 0) > 0) {
+      lastPipelineErrors = (postValidation.errors || []).slice(0, 8);
+      continue;
+    }
+
+    if ((postValidation.summary?.warningCount || 0) > 0) {
+      const warningFindings = (postValidation.findings || []).filter(
+        (item) => item?.severity === VALIDATION_SEVERITY.WARNING,
+      );
+      const recovered = applyReviewGuardrails(
+        normalized,
+        enrichedHandContext,
+        warningFindings,
+      );
+      const recoveredValidation = validatePostGenerationReview(
+        recovered.review,
+        enrichedHandContext,
+      );
+      lastFindings = recoveredValidation.findings || [];
+      if ((recoveredValidation.summary?.blockerCount || 0) > 0) {
+        lastPipelineErrors = (recoveredValidation.errors || []).slice(0, 8);
+        continue;
+      }
+      const summaryWithRewrites = summarizeFindings(recoveredValidation.findings, [
+        ...(recoveredValidation.summary?.rewrittenFields || []),
+        ...(recovered.rewrittenFields || []),
+      ]);
+      const presented = finalizeCoachingPresentation(
+        recovered.review,
+        enrichedHandContext,
+      );
+      const withSummary = attachValidationSummary(presented, summaryWithRewrites);
+      return withSummary;
+    }
+
+    const confidenceAdjusted = {
+      ...normalized,
+      confidence: guardrailConfidence(
+        enrichedHandContext,
+        normalized.confidence,
+        postValidation.summary,
+      ),
+    };
+    const presented = finalizeCoachingPresentation(
+      confidenceAdjusted,
+      enrichedHandContext,
+    );
+    const withSummary = attachValidationSummary(presented, postValidation.summary);
+    return withSummary;
+  }
+
+  const safe = safeFallbackReviewText(
+    handStateValidation?.issues || [],
+    lastPipelineErrors.length > 0
+      ? lastPipelineErrors
+      : (Array.isArray(lastFindings) ? lastFindings.map((item) => item?.message) : []),
+  );
+  const fallbackReview = normalizeReviewResponse(
+    {
+      overall_score: 0,
+      preflop_score: 0,
+      flop_score: 0,
+      turn_score: 0,
+      river_score: 0,
+      confidence: "low",
+      what_was_good: safe.what_was_good,
+      primary_leak: safe.primary_leak,
+      better_line: safe.better_line,
+      reasoning: safe.reasoning,
+    },
+    lastUsage ? { usage: lastUsage } : null,
+    enrichedHandContext,
+  );
+  const fallbackWithConfidence = {
+    ...fallbackReview,
+    confidence: "low",
+  };
+  const presentedFallback = finalizeCoachingPresentation(
+    fallbackWithConfidence,
+    enrichedHandContext,
+  );
+  return attachValidationSummary(
+    presentedFallback,
+    summarizeFindings(lastFindings),
+  );
 }
 
 export async function reviewTournamentSummary(
