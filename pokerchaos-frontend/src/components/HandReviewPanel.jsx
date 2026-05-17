@@ -45,6 +45,93 @@ function formatScore(score) {
   return Number(score) > 0 ? `+${Number(score)}` : `${Number(score)}`;
 }
 
+function normalizeReviewConfidence(confidence) {
+  const value = String(confidence || "")
+    .trim()
+    .toLowerCase();
+  if (value === "high" || value === "medium" || value === "low") return value;
+  return "medium";
+}
+
+function confidenceUiLabel(confidence) {
+  const value = normalizeReviewConfidence(confidence);
+  if (value === "high") return "High confidence";
+  if (value === "low") return "Low confidence";
+  return "Moderate confidence";
+}
+
+function reviewVerdictLabel(overallScore) {
+  const score = Number(overallScore);
+  if (!Number.isFinite(score)) return "Spot appears close";
+  if (score >= 1) return "Line appears strong";
+  if (score <= -1) return "Adjustment recommended";
+  return "Spot appears close";
+}
+
+const INFRASTRUCTURE_COPY_RULES = [
+  {
+    pattern: /\bconstrained action set\b/gi,
+    replacement: "available options",
+  },
+  {
+    pattern: /\blegal action set\b/gi,
+    replacement: "available options",
+  },
+  {
+    pattern: /\bunsupported concept\b/gi,
+    replacement: "high-variance concept",
+  },
+  { pattern: /\bchecks failed\b/gi, replacement: "spot is close" },
+  { pattern: /\bdeterministic\b/gi, replacement: "structured" },
+  { pattern: /\bschema\b/gi, replacement: "format" },
+  { pattern: /\bvalidator\b/gi, replacement: "review pass" },
+  { pattern: /\bvalidation\b/gi, replacement: "review" },
+  { pattern: /\brecovery\b/gi, replacement: "follow-up" },
+  { pattern: /\bnode\b/gi, replacement: "spot" },
+];
+
+function sanitizeCoachingCopy(text) {
+  let value = String(text || "").trim();
+  if (!value) return "";
+  for (const { pattern, replacement } of INFRASTRUCTURE_COPY_RULES) {
+    value = value.replace(pattern, replacement);
+  }
+  return value.replace(/\s{2,}/g, " ").trim();
+}
+
+function sampleSizeTier(sampleSize) {
+  const n = Number(sampleSize);
+  if (!Number.isFinite(n) || n <= 0) return "low";
+  if (n < 20) return "low";
+  if (n < 75) return "medium";
+  return "high";
+}
+
+function sampleQualityLabel(sampleSize) {
+  const tier = sampleSizeTier(sampleSize);
+  if (tier === "high") return "Established sample";
+  if (tier === "medium") return "Building sample";
+  return "Early sample";
+}
+
+function summarizeOpponentSampleQuality(opponents) {
+  if (!Array.isArray(opponents) || opponents.length === 0) {
+    return {
+      tier: "low",
+      averageHands: 0,
+      label: "Sample quality unavailable",
+    };
+  }
+  const hands = opponents.map((player) => Number(player?.handsSeen) || 0);
+  const totalHands = hands.reduce((sum, value) => sum + value, 0);
+  const averageHands = totalHands / Math.max(1, hands.length);
+  return {
+    tier: sampleSizeTier(averageHands),
+    averageHands,
+    label: sampleQualityLabel(averageHands),
+  };
+}
+
 function formatAction(action) {
   if (!action) return "";
   if (action.type === "raise" && action.toAmount) {
@@ -569,11 +656,31 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
     );
   }
 
+  const strongestCandidates = [];
+  if (pre.noRaiseBeforeHeroSpots >= 12 && openRate >= 28) {
+    strongestCandidates.push("First-in opening discipline");
+  }
+  if (pre.facingOpenSpots >= 12 && defendRate >= 32) {
+    strongestCandidates.push("Facing-open defense coverage");
+  }
+  if (pre.blindFacingOpenSpots >= 12 && blindFoldRate <= 66) {
+    strongestCandidates.push("Blind defense frequency");
+  }
+  if (
+    pre.facedReraiseAfterAggressionSpots >= 8 &&
+    reraiseFoldRate > 0 &&
+    reraiseFoldRate <= 78
+  ) {
+    strongestCandidates.push("Response stability versus reraises");
+  }
+
   return {
     rating,
     primaryLeak:
       primary?.label || "No single dominant leak identified in current sample",
     secondaryLeak: secondary?.label || null,
+    strongestArea:
+      strongestCandidates[0] || "No clear strength signal yet in this sample",
     evidence: evidence.slice(0, 4),
     actions,
   };
@@ -604,40 +711,48 @@ function normalizeInsightLines(items, max = 8) {
 function buildAiSummaryParagraph(review) {
   if (!review || typeof review !== "object") return "";
   const joinSentences = (items, limit) =>
-    items.slice(0, limit).map(ensureSentenceEnding).filter(Boolean).join(" ");
-  const primaryLeak = String(review.primary_leak || "").trim();
-  const secondaryLeak = String(review.secondary_leak || "").trim();
-  const actions = normalizeInsightLines(review.actions, 8);
-  const warnings = normalizeInsightLines(review.warnings, 8);
+    items
+      .slice(0, limit)
+      .map((line) => ensureSentenceEnding(sanitizeCoachingCopy(line)))
+      .filter(Boolean)
+      .join(" ");
+  const primaryLeak = sanitizeCoachingCopy(review.primary_leak);
+  const secondaryLeak = sanitizeCoachingCopy(review.secondary_leak);
+  const actions = normalizeInsightLines(review.actions, 8).map(
+    sanitizeCoachingCopy,
+  );
+  const warnings = normalizeInsightLines(review.warnings, 8).map(
+    sanitizeCoachingCopy,
+  );
   const actionSnippet = joinSentences(actions, 3);
   const warningSnippet = joinSentences(warnings, 2);
 
   const parts = [];
   if (primaryLeak) {
-    parts.push(`Primary leak: ${ensureSentenceEnding(primaryLeak)}`);
+    parts.push(`Main improvement area: ${ensureSentenceEnding(primaryLeak)}`);
   }
   if (secondaryLeak && !/no secondary leak flagged/i.test(secondaryLeak)) {
-    parts.push(`Secondary leak: ${ensureSentenceEnding(secondaryLeak)}`);
+    parts.push(`Secondary focus: ${ensureSentenceEnding(secondaryLeak)}`);
   }
   if (actionSnippet) {
-    parts.push(`Priority fixes: ${actionSnippet}`);
+    parts.push(`Suggested adjustments: ${actionSnippet}`);
   }
   if (warningSnippet) {
-    parts.push(`Watch-outs: ${warningSnippet}`);
+    parts.push(`Context notes: ${warningSnippet}`);
   }
   return parts.join(" ");
 }
 
 function buildTableHintParagraph(review) {
   if (!review || typeof review !== "object") return "";
-  const plan = String(review.table_plan || "").trim();
+  const plan = sanitizeCoachingCopy(review.table_plan);
   const exploits = normalizeInsightLines(review.priority_exploits, 8)
     .slice(0, 2)
-    .map(ensureSentenceEnding)
+    .map((line) => ensureSentenceEnding(sanitizeCoachingCopy(line)))
     .join(" ");
   const adjustments = normalizeInsightLines(review.next_hour_adjustments, 8)
     .slice(0, 2)
-    .map(ensureSentenceEnding)
+    .map((line) => ensureSentenceEnding(sanitizeCoachingCopy(line)))
     .join(" ");
   const confidence = String(review.confidence || "")
     .trim()
@@ -645,8 +760,8 @@ function buildTableHintParagraph(review) {
 
   const parts = [];
   if (plan) parts.push(ensureSentenceEnding(plan));
-  if (exploits) parts.push(`Priority exploits: ${exploits}`);
-  if (adjustments) parts.push(`Next-hour adjustments: ${adjustments}`);
+  if (exploits) parts.push(`Observed tendencies: ${exploits}`);
+  if (adjustments) parts.push(`Practical adjustments: ${adjustments}`);
   if (confidence && ["low", "medium", "high"].includes(confidence)) {
     parts.push(`Confidence: ${confidence}.`);
   }
@@ -2626,9 +2741,10 @@ export default function HandReviewPanel() {
   const startReviewProgress = (handCount) => {
     stopReviewProgress();
     setReviewProgressPct(1);
+    const perHandEstimateMs = 3_000;
     const expectedMs = Math.min(
-      60_000,
-      Math.max(8_000, (Number(handCount) || 1) * 2_000),
+      90_000,
+      Math.max(12_000, (Number(handCount) || 1) * perHandEstimateMs),
     );
     const tickMs = 250;
     const maxWhilePending = 96;
@@ -3447,6 +3563,9 @@ export default function HandReviewPanel() {
     if (!Array.isArray(tournamentCoachSummary?.evidence)) return [];
     return tournamentCoachSummary.evidence.filter(Boolean).slice(0, 5);
   }, [tournamentCoachSummary]);
+  const coachStrongestArea = useMemo(() => {
+    return String(tournamentCoachSummary?.strongestArea || "").trim();
+  }, [tournamentCoachSummary]);
   const aiPrimaryAction = useMemo(
     () => aiSummaryActions.find(Boolean) || "",
     [aiSummaryActions],
@@ -3454,6 +3573,14 @@ export default function HandReviewPanel() {
   const aiSecondaryActions = useMemo(
     () => aiSummaryActions.filter(Boolean).slice(1, 4),
     [aiSummaryActions],
+  );
+  const tableHintConfidence = useMemo(
+    () => normalizeReviewConfidence(tableHintReview?.confidence),
+    [tableHintReview],
+  );
+  const tableHintSampleSummary = useMemo(
+    () => summarizeOpponentSampleQuality(visibleOpponentPlayers),
+    [visibleOpponentPlayers],
   );
   const tournamentSummaryPayload = useMemo(() => {
     if (!tournamentSummary) return null;
@@ -4701,10 +4828,13 @@ export default function HandReviewPanel() {
               }
             >
               {loadingReview
-                ? `Reviewing... ${Math.max(
-                    1,
-                    Math.min(100, Math.round(reviewProgressPct)),
-                  )}%`
+                ? (() => {
+                    const pct = Math.max(
+                      1,
+                      Math.min(100, Math.round(reviewProgressPct)),
+                    );
+                    return pct >= 96 ? "Finalising..." : `Reviewing... ${pct}%`;
+                  })()
                 : quickReviewHandKey
                   ? "Reviewing..."
                   : "Analyze"}
@@ -4735,6 +4865,12 @@ export default function HandReviewPanel() {
               const isQuickReviewLoading = quickReviewHandKey === rowKey;
               const attachedReview = reviewsByHandKey[rowKey];
               const isReviewLogicExpanded = expandedReviewLogicKeys.has(rowKey);
+              const reviewConfidence = normalizeReviewConfidence(
+                attachedReview?.confidence,
+              );
+              const reviewVerdict = reviewVerdictLabel(
+                attachedReview?.overall_score,
+              );
               const handPosition = hand.heroPosition || "Unknown position";
               const heroCardsLabel = formatHeroCards(hand.heroCards);
               const preflopLine =
@@ -4834,37 +4970,37 @@ export default function HandReviewPanel() {
                   </div>
                   {attachedReview ? (
                     <div className="hand-row-review">
-                      <div className="hand-review-scores">
+                      <div className="hand-review-headline">
                         <span
-                          className={`score-pill ${scoreClass(
+                          className={`score-pill review-verdict-pill ${scoreClass(
                             attachedReview.overall_score,
                           )}`}
                         >
-                          Overall {formatScore(attachedReview.overall_score)}
-                        </span>
-                        <span>
-                          Pre {formatScore(attachedReview.preflop_score)}
-                        </span>
-                        <span>
-                          Flop {formatScore(attachedReview.flop_score)}
-                        </span>
-                        <span>
-                          Turn {formatScore(attachedReview.turn_score)}
-                        </span>
-                        <span>
-                          River {formatScore(attachedReview.river_score)}
-                        </span>
-                        <span>
-                          Confidence {attachedReview.confidence || "medium"}
+                          Verdict: {reviewVerdict}
                         </span>
                       </div>
-                      <p>
-                        <strong>Summary:</strong> {attachedReview.primary_leak}
-                      </p>
-                      <p>
-                        <strong>Better line:</strong>{" "}
-                        {attachedReview.better_line}
-                      </p>
+                      <div className="hand-review-section">
+                        <p className="hand-review-section-label">Better line</p>
+                        <p className="hand-review-section-copy">
+                          {attachedReview.better_line}
+                        </p>
+                      </div>
+                      {attachedReview.what_was_good ? (
+                        <div className="hand-review-section">
+                          <p className="hand-review-section-label">
+                            What was good
+                          </p>
+                          <p className="hand-review-section-copy">
+                            {attachedReview.what_was_good}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="hand-review-section">
+                        <p className="hand-review-section-label">Summary</p>
+                        <p className="hand-review-section-copy">
+                          {attachedReview.primary_leak}
+                        </p>
+                      </div>
                       {(attachedReview.what_was_good ||
                         attachedReview.reasoning) && (
                         <div className="hand-review-logic">
@@ -4877,24 +5013,45 @@ export default function HandReviewPanel() {
                               ? "Hide full logic"
                               : "Reveal full logic"}
                           </button>
-                          {isReviewLogicExpanded ? (
-                            <div className="hand-review-logic-body">
-                              {attachedReview.what_was_good ? (
+                            {isReviewLogicExpanded ? (
+                              <div className="hand-review-logic-body">
                                 <p>
-                                  <strong>What was good:</strong>{" "}
-                                  {attachedReview.what_was_good}
+                                  <span
+                                    className={`review-confidence-pill review-confidence-pill--${reviewConfidence}`}
+                                  >
+                                    {confidenceUiLabel(attachedReview.confidence)}
+                                  </span>
                                 </p>
-                              ) : null}
-                              {attachedReview.reasoning ? (
-                                <p>
-                                  <strong>Reasoning:</strong>{" "}
-                                  {attachedReview.reasoning}
-                                </p>
-                              ) : null}
-                            </div>
-                          ) : null}
+                                {attachedReview.reasoning ? (
+                                  <p>
+                                    <strong>Deep reasoning:</strong>{" "}
+                                    {attachedReview.reasoning}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : null}
                         </div>
                       )}
+                      <details className="hand-review-score-breakdown">
+                        <summary>Score breakdown</summary>
+                        <div className="hand-review-scores">
+                          <span>
+                            Overall {formatScore(attachedReview.overall_score)}
+                          </span>
+                          <span>
+                            Pre {formatScore(attachedReview.preflop_score)}
+                          </span>
+                          <span>
+                            Flop {formatScore(attachedReview.flop_score)}
+                          </span>
+                          <span>
+                            Turn {formatScore(attachedReview.turn_score)}
+                          </span>
+                          <span>
+                            River {formatScore(attachedReview.river_score)}
+                          </span>
+                        </div>
+                      </details>
                     </div>
                   ) : null}
                   <details className="hand-breakdown">
@@ -5077,12 +5234,12 @@ export default function HandReviewPanel() {
                 </div>
                 {tournamentCoachSummary ? (
                   <div className="tournament-coach-summary tournament-coach-summary--hero">
-                    <h4>Coaching Narrative</h4>
+                    <h4>Session Coaching Overview</h4>
                     {tournamentCoachSummary.rating ? (
                       <section className="coach-narrative-section coach-narrative-section--evaluation">
                         <div className="coach-rating-hero">
                           <p className="coach-rating-label">
-                            Overall performance
+                            Session verdict
                           </p>
                           <p className="coach-rating-value">
                             {tournamentCoachSummary.rating.score10Label} (
@@ -5097,7 +5254,7 @@ export default function HandReviewPanel() {
                         {tournamentCoachSummary.rating.topDrags.length > 0 ? (
                           <details className="coach-drags-pill">
                             <summary>
-                              Biggest drags (
+                              Largest score drags (
                               {tournamentCoachSummary.rating.topDrags.length})
                             </summary>
                             <div className="tournament-summary-flags">
@@ -5121,13 +5278,23 @@ export default function HandReviewPanel() {
                     <section className="coach-narrative-section coach-narrative-section--priority">
                       <div className="coach-leaks-grid">
                         <div className="coach-leak-card coach-leak-card--primary">
-                          <span>Biggest leak</span>
-                          <strong>{tournamentCoachSummary.primaryLeak}</strong>
+                          <span>Biggest improvement area</span>
+                          <strong>
+                            {sanitizeCoachingCopy(tournamentCoachSummary.primaryLeak)}
+                          </strong>
                         </div>
                         {coachPrimaryAdjustment ? (
                           <div className="coach-leak-card coach-leak-card--adjustment">
-                            <span>Highest-priority adjustment</span>
-                            <strong>{coachPrimaryAdjustment}</strong>
+                            <span>Most profitable adjustment</span>
+                            <strong>
+                              {sanitizeCoachingCopy(coachPrimaryAdjustment)}
+                            </strong>
+                          </div>
+                        ) : null}
+                        {coachStrongestArea ? (
+                          <div className="coach-leak-card">
+                            <span>Strongest area</span>
+                            <strong>{sanitizeCoachingCopy(coachStrongestArea)}</strong>
                           </div>
                         ) : null}
                       </div>
@@ -5136,7 +5303,7 @@ export default function HandReviewPanel() {
                     {coachSupportingEvidence.length > 0 ? (
                       <section className="coach-narrative-section coach-narrative-section--evidence">
                         <p className="coach-summary-heading">
-                          <strong>Supporting evidence</strong>
+                          <strong>Key evidence</strong>
                         </p>
                         <div className="tournament-summary-flags coach-summary-flags">
                           {coachSupportingEvidence.map((line, idx) => (
@@ -5144,7 +5311,7 @@ export default function HandReviewPanel() {
                               key={`coach-evidence-${idx}`}
                               className="trend-flag watch"
                             >
-                              {line}
+                              {sanitizeCoachingCopy(line)}
                             </p>
                           ))}
                         </div>
@@ -5156,13 +5323,15 @@ export default function HandReviewPanel() {
                     postflopIpHighlights.length > 0 ? (
                       <section className="coach-narrative-section coach-narrative-section--secondary">
                         <p className="coach-summary-heading">
-                          <strong>Secondary insights</strong>
+                          <strong>Additional adjustments</strong>
                         </p>
                         <div className="tournament-summary-flags coach-summary-flags">
                           {tournamentCoachSummary.secondaryLeak ? (
                             <p className="trend-flag watch">
-                              Secondary leak:{" "}
-                              {tournamentCoachSummary.secondaryLeak}
+                              Secondary improvement area:{" "}
+                              {sanitizeCoachingCopy(
+                                tournamentCoachSummary.secondaryLeak,
+                              )}
                             </p>
                           ) : null}
                           {coachSecondaryAdjustments.map((line, idx) => (
@@ -5170,7 +5339,7 @@ export default function HandReviewPanel() {
                               key={`coach-secondary-action-${idx}`}
                               className="trend-flag good"
                             >
-                              {line}
+                              {sanitizeCoachingCopy(line)}
                             </p>
                           ))}
                           {postflopIpHighlights.map((line, idx) => (
@@ -5178,7 +5347,7 @@ export default function HandReviewPanel() {
                               key={`postflop-ip-highlight-${idx}`}
                               className="trend-flag watch"
                             >
-                              {line}
+                              {sanitizeCoachingCopy(line)}
                             </p>
                           ))}
                         </div>
@@ -5195,24 +5364,26 @@ export default function HandReviewPanel() {
                   >
                     {loadingSummaryReview
                       ? "Reviewing summary..."
-                      : "AI Review Summary"}
+                      : "Generate AI Coaching Brief"}
                   </button>
                   {summaryReviewError ? (
                     <p className="hand-review-error">{summaryReviewError}</p>
                   ) : null}
                   {summaryReview ? (
                     <div className="tournament-ai-review-card tournament-ai-review-card--authority">
-                      <h4>AI Coaching Briefing</h4>
+                      <h4>Coach Brief</h4>
                       <p className="tournament-ai-paragraph">
                         {buildAiSummaryParagraph(summaryReview)}
                       </p>
                       {aiPrimaryAction ? (
                         <div className="ai-briefing-priority">
                           <p className="coach-summary-heading">
-                            <strong>Highest-priority adjustment</strong>
+                            <strong>Suggested adjustment</strong>
                           </p>
                           <p className="trend-flag good">
-                            {ensureSentenceEnding(aiPrimaryAction)}
+                            {ensureSentenceEnding(
+                              sanitizeCoachingCopy(aiPrimaryAction),
+                            )}
                           </p>
                         </div>
                       ) : null}
@@ -5227,7 +5398,7 @@ export default function HandReviewPanel() {
                                 key={`ai-summary-action-${idx}`}
                                 className="trend-flag good"
                               >
-                                {ensureSentenceEnding(line)}
+                                {ensureSentenceEnding(sanitizeCoachingCopy(line))}
                               </p>
                             ))}
                           </div>
@@ -5236,7 +5407,7 @@ export default function HandReviewPanel() {
                       {aiSummaryWarnings.length > 0 ? (
                         <>
                           <p className="coach-summary-heading">
-                            <strong>Secondary risks</strong>
+                            <strong>Context watch-outs</strong>
                           </p>
                           <div className="tournament-summary-flags">
                             {aiSummaryWarnings.slice(0, 3).map((line, idx) => (
@@ -5244,7 +5415,7 @@ export default function HandReviewPanel() {
                                 key={`ai-summary-warning-${idx}`}
                                 className="trend-flag watch"
                               >
-                                {ensureSentenceEnding(line)}
+                                {ensureSentenceEnding(sanitizeCoachingCopy(line))}
                               </p>
                             ))}
                           </div>
@@ -5521,7 +5692,7 @@ export default function HandReviewPanel() {
                           line.startsWith("No dominant") ? "good" : "watch"
                         }`}
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -5652,10 +5823,10 @@ export default function HandReviewPanel() {
                 </details>
 
                 <details className="summary-section">
-                  <summary>Blind Defence (Full Tournament)</summary>
+                  <summary>Biggest Improvement Area: Blind Defence</summary>
                   <p className="hand-review-empty">
-                    Blind-focused audit for SB/BB versus opens across the full
-                    parsed tournament sample.
+                    SB and BB responses versus opens across the full session
+                    sample.
                   </p>
                   <div className="tournament-summary-metrics">
                     <span>
@@ -5735,7 +5906,7 @@ export default function HandReviewPanel() {
                           line.startsWith("No dominant") ? "good" : "watch"
                         }`}
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -5745,7 +5916,7 @@ export default function HandReviewPanel() {
                         key={`blind-warning-${idx}`}
                         className="trend-flag watch"
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -5759,7 +5930,7 @@ export default function HandReviewPanel() {
                     >
                       {loadingBlindDefenseReview
                         ? "Reviewing blind defense..."
-                        : "AI Review Blind Defence"}
+                        : "Generate Blind Defence Brief"}
                     </button>
                     {blindDefenseReviewError ? (
                       <p className="hand-review-error">
@@ -5774,7 +5945,7 @@ export default function HandReviewPanel() {
                         {aiBlindDefenseActions.length > 0 ? (
                           <>
                             <p>
-                              <strong>Priority fixes:</strong>
+                              <strong>Most profitable adjustments:</strong>
                             </p>
                             <div className="tournament-summary-flags">
                               {aiBlindDefenseActions
@@ -5784,7 +5955,9 @@ export default function HandReviewPanel() {
                                     key={`ai-blind-action-${idx}`}
                                     className="trend-flag good"
                                   >
-                                    {ensureSentenceEnding(line)}
+                                    {ensureSentenceEnding(
+                                      sanitizeCoachingCopy(line),
+                                    )}
                                   </p>
                                 ))}
                             </div>
@@ -5803,7 +5976,9 @@ export default function HandReviewPanel() {
                                     key={`ai-blind-warning-${idx}`}
                                     className="trend-flag watch"
                                   >
-                                    {ensureSentenceEnding(line)}
+                                    {ensureSentenceEnding(
+                                      sanitizeCoachingCopy(line),
+                                    )}
                                   </p>
                                 ))}
                             </div>
@@ -5892,7 +6067,7 @@ export default function HandReviewPanel() {
                           line.startsWith("No dominant") ? "good" : "watch"
                         }`}
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -5902,7 +6077,7 @@ export default function HandReviewPanel() {
                         key={`icm-warning-${idx}`}
                         className="trend-flag watch"
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -5914,7 +6089,7 @@ export default function HandReviewPanel() {
                     >
                       {loadingIcmReview
                         ? "Reviewing ICM spots..."
-                        : "AI Review ICM Spots"}
+                        : "Generate ICM Spot Brief"}
                     </button>
                     {icmReviewError ? (
                       <p className="hand-review-error">{icmReviewError}</p>
@@ -5927,7 +6102,7 @@ export default function HandReviewPanel() {
                         {aiIcmActions.length > 0 ? (
                           <>
                             <p>
-                              <strong>Priority fixes:</strong>
+                              <strong>Suggested adjustments:</strong>
                             </p>
                             <div className="tournament-summary-flags">
                               {aiIcmActions.slice(0, 4).map((line, idx) => (
@@ -5935,7 +6110,9 @@ export default function HandReviewPanel() {
                                   key={`ai-icm-action-${idx}`}
                                   className="trend-flag good"
                                 >
-                                  {ensureSentenceEnding(line)}
+                                  {ensureSentenceEnding(
+                                    sanitizeCoachingCopy(line),
+                                  )}
                                 </p>
                               ))}
                             </div>
@@ -5952,7 +6129,9 @@ export default function HandReviewPanel() {
                                   key={`ai-icm-warning-${idx}`}
                                   className="trend-flag watch"
                                 >
-                                  {ensureSentenceEnding(line)}
+                                  {ensureSentenceEnding(
+                                    sanitizeCoachingCopy(line),
+                                  )}
                                 </p>
                               ))}
                             </div>
@@ -6137,7 +6316,7 @@ export default function HandReviewPanel() {
                           line.startsWith("No dominant") ? "good" : "watch"
                         }`}
                       >
-                        {line}
+                        {sanitizeCoachingCopy(line)}
                       </p>
                     ))}
                   </div>
@@ -6406,16 +6585,16 @@ export default function HandReviewPanel() {
                       }`}
                       onClick={runTableHintReview}
                       disabled={loadingTableHintReview || !tableHintPayload}
-                      title="AI hint for current table"
-                      aria-label="AI hint for current table"
+                      title="Coaching hint for current table"
+                      aria-label="Coaching hint for current table"
                     >
                       <span aria-hidden="true">
-                        {loadingTableHintReview ? "..." : "⚡"}
+                        {loadingTableHintReview ? "..." : "Hint"}
                       </span>
                       <span>
                         {loadingTableHintReview
                           ? "Reviewing table..."
-                          : "AI Table Hint"}
+                          : "Generate Table Coaching Hint"}
                       </span>
                     </button>
                     {tableHintReviewError ? (
@@ -6424,14 +6603,30 @@ export default function HandReviewPanel() {
                       </p>
                     ) : null}
                     {tableHintReview ? (
-                      <div className="tournament-ai-review-card">
+                      <div className="tournament-ai-review-card tournament-ai-review-card--table">
+                        <h4>Current Table Coaching</h4>
+                        <div className="table-hint-meta">
+                          <span
+                            className={`review-confidence-pill review-confidence-pill--${tableHintConfidence}`}
+                          >
+                            {confidenceUiLabel(tableHintConfidence)}
+                          </span>
+                          <span
+                            className={`review-confidence-pill review-confidence-pill--${tableHintSampleSummary.tier}`}
+                          >
+                            {tableHintSampleSummary.label}
+                            {tableHintSampleSummary.averageHands > 0
+                              ? ` (${Math.round(tableHintSampleSummary.averageHands)} hands/player)`
+                              : ""}
+                          </span>
+                        </div>
                         <p className="tournament-ai-paragraph">
                           {buildTableHintParagraph(tableHintReview)}
                         </p>
                         {aiTableHintExploits.length > 0 ? (
                           <>
-                            <p>
-                              <strong>Priority exploits:</strong>
+                            <p className="coach-summary-heading">
+                              <strong>Observed tendency</strong>
                             </p>
                             <div className="tournament-summary-flags">
                               {aiTableHintExploits
@@ -6441,7 +6636,9 @@ export default function HandReviewPanel() {
                                     key={`ai-table-exploit-${idx}`}
                                     className="trend-flag good"
                                   >
-                                    {ensureSentenceEnding(line)}
+                                    {ensureSentenceEnding(
+                                      sanitizeCoachingCopy(line),
+                                    )}
                                   </p>
                                 ))}
                             </div>
@@ -6449,8 +6646,8 @@ export default function HandReviewPanel() {
                         ) : null}
                         {aiTableHintAdjustments.length > 0 ? (
                           <>
-                            <p>
-                              <strong>Next hour adjustments:</strong>
+                            <p className="coach-summary-heading">
+                              <strong>Practical adjustment</strong>
                             </p>
                             <div className="tournament-summary-flags">
                               {aiTableHintAdjustments
@@ -6460,7 +6657,9 @@ export default function HandReviewPanel() {
                                     key={`ai-table-adjustment-${idx}`}
                                     className="trend-flag good"
                                   >
-                                    {ensureSentenceEnding(line)}
+                                    {ensureSentenceEnding(
+                                      sanitizeCoachingCopy(line),
+                                    )}
                                   </p>
                                 ))}
                             </div>
@@ -6468,8 +6667,8 @@ export default function HandReviewPanel() {
                         ) : null}
                         {aiTableHintWarnings.length > 0 ? (
                           <>
-                            <p>
-                              <strong>Watch-outs:</strong>
+                            <p className="coach-summary-heading">
+                              <strong>Watch-outs</strong>
                             </p>
                             <div className="tournament-summary-flags">
                               {aiTableHintWarnings
@@ -6479,7 +6678,9 @@ export default function HandReviewPanel() {
                                     key={`ai-table-warning-${idx}`}
                                     className="trend-flag watch"
                                   >
-                                    {ensureSentenceEnding(line)}
+                                    {ensureSentenceEnding(
+                                      sanitizeCoachingCopy(line),
+                                    )}
                                   </p>
                                 ))}
                             </div>
@@ -6781,3 +6982,4 @@ export default function HandReviewPanel() {
     </section>
   );
 }
+
