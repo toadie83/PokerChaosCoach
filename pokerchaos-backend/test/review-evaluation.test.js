@@ -303,6 +303,49 @@ test('review QA allows "air" label for true low-equity trash holdings', () => {
   );
 });
 
+test("review QA flags premium hand misclassification language", () => {
+  const review = makeReview([
+    makeStreetNode({
+      street: "preflop",
+      boardTexture: "No board cards yet.",
+      insight:
+        "In high-pressure 3-bet spots with weak pairs and deep stacks, folding is preferred.",
+      takeaway: "Preserve stack with this marginal hand.",
+      classification: {
+        hand_tier: "premium",
+        premium_holding: true,
+      },
+    }),
+  ]);
+  const hand = { heroCards: ["Kd", "Kc"] };
+  const out = evaluatePokerReviewQuality({ review, hand }).evaluation;
+  assert.equal(
+    out.failures.some((item) => item.code === "premium_hand_misclassification"),
+    true,
+  );
+});
+
+test("review QA allows premium-hand language when framing is strong/value-oriented", () => {
+  const review = makeReview([
+    makeStreetNode({
+      street: "preflop",
+      boardTexture: "No board cards yet.",
+      insight: "KK is a premium pair and a standard high-equity continue versus pressure.",
+      takeaway: "Continue with this top-tier value hand in most baseline configurations.",
+      classification: {
+        hand_tier: "premium",
+        premium_holding: true,
+      },
+    }),
+  ]);
+  const hand = { heroCards: ["Kd", "Kc"] };
+  const out = evaluatePokerReviewQuality({ review, hand }).evaluation;
+  assert.equal(
+    out.failures.some((item) => item.code === "premium_hand_misclassification"),
+    false,
+  );
+});
+
 test("review QA catches coherence contradiction between score and matching actions", () => {
   const review = makeReview([
     {
