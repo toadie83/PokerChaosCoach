@@ -60,6 +60,45 @@ function isSpeculativeDefendableHolding(heroCards = []) {
   return isSuitedConnector || isSuitedGapper || isSuitedBroadway || isSuitedWheelAce;
 }
 
+function classifyStartingHandTier(heroCards = []) {
+  const cards = normalizeHeroCards(heroCards);
+  if (cards.length !== 2) return "unknown";
+  const v1 = RANK_VALUES[cards[0].rank] || 0;
+  const v2 = RANK_VALUES[cards[1].rank] || 0;
+  const suited = cards[0].suit === cards[1].suit;
+  const pair = cards[0].rank === cards[1].rank;
+  const hi = Math.max(v1, v2);
+  const lo = Math.min(v1, v2);
+  if (pair && hi >= 12) return "premium"; // QQ+
+  if (suited && hi === 14 && lo === 13) return "premium"; // AKs
+  if (pair && hi >= 10) return "strong";
+  return "other";
+}
+
+function isPremiumHoldingContext(node = {}, heroCards = []) {
+  const classification =
+    node?.classification && typeof node.classification === "object"
+      ? node.classification
+      : {};
+  const tier = String(classification?.hand_tier || "").trim().toLowerCase();
+  const pairType = String(classification?.pair_type || "").trim().toLowerCase();
+  const madeHandType = String(classification?.made_hand_type || "")
+    .trim()
+    .toLowerCase();
+  if (Boolean(classification?.premium_holding)) return true;
+  if (tier === "premium") return true;
+  if (pairType === "overpair" || madeHandType === "overpair") return true;
+  const street = String(node?.street || "").trim().toLowerCase();
+  if (street === "preflop" && classifyStartingHandTier(heroCards) === "premium") return true;
+  return false;
+}
+
+function hasPremiumExceptionLanguage(text = "") {
+  return /\b(icm|bubble|satellite|payout|exploit|population|extreme multiway|multiway all-?in)\b/i.test(
+    String(text || ""),
+  );
+}
+
 function boardCardsForStreet(hand = {}, street = "preflop") {
   const safeStreet = String(street || "").toLowerCase();
   if (safeStreet === "preflop") return [];
@@ -251,6 +290,10 @@ function evaluateTerminology(streetNodes = [], hand = {}) {
   const findings = [];
   const heroHand = Array.isArray(hand?.heroCards) ? hand.heroCards : [];
   const speculativeDefendableHeroHand = isSpeculativeDefendableHolding(heroHand);
+  const premiumWeakLabelPattern =
+    /\b(weak pair|marginal hand|marginal holding|speculative holding|weak showdown value|low showdown value|poor showdown value)\b/i;
+  const premiumPassiveFoldPattern =
+    /\b(folding is preferred|fold(?:ing)? (?:is )?(?:best|better|preferred)|preserve stack|stack preservation)\b/i;
   streetNodes.forEach((node) => {
     const street = String(node?.street || "").toLowerCase();
     const text = textForStreetNode(node);
@@ -300,6 +343,23 @@ function evaluateTerminology(streetNodes = [], hand = {}) {
           }),
         );
       }
+    }
+    const premiumSpot = isPremiumHoldingContext(node, heroHand);
+    if (
+      premiumSpot &&
+      (premiumWeakLabelPattern.test(text) || premiumPassiveFoldPattern.test(text)) &&
+      !hasPremiumExceptionLanguage(text)
+    ) {
+      findings.push(
+        makeFinding({
+          severity: "failure",
+          category: "terminology_accuracy",
+          code: "premium_hand_misclassification",
+          street,
+          message:
+            "Premium holding was framed with weak/marginal or passive fold-preservation language.",
+        }),
+      );
     }
   });
   return findings;
@@ -588,6 +648,11 @@ function suggestionsFromFindings(findings = []) {
   if (findings.some((item) => item.code === "air_overuse_speculative_holding")) {
     suggestions.push(
       'Reserve "air" for true low-equity misses; use nuanced labels for suited speculative/backdoor-capable holdings.',
+    );
+  }
+  if (findings.some((item) => item.code === "premium_hand_misclassification")) {
+    suggestions.push(
+      "Preserve premium-hand framing (premium pair/overpair/top-tier value) and avoid weak or default fold-preservation language without explicit ICM/exploit context.",
     );
   }
   if (!suggestions.length) {

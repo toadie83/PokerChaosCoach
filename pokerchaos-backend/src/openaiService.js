@@ -843,6 +843,10 @@ function categorizeRangeHand(compact) {
   return { tier: "trash", label: `${hi}${lo}o offsuit trash` };
 }
 
+function isPremiumTierLabel(tier = "") {
+  return String(tier || "").trim().toLowerCase() === "premium";
+}
+
 function positionCategory(seat) {
   const s = String(seat || "").toUpperCase();
   if (!s) return "unknown";
@@ -3475,6 +3479,13 @@ function buildStreetClassification({
   const classification = derived && typeof derived === "object"
     ? derived
     : fallbackClassification || {};
+  const compactHeroHand = compactHeroHandFromState(stateForStreet);
+  const rangeCategory = categorizeRangeHand(compactHeroHand);
+  const rangeTier = String(rangeCategory?.tier || "").trim().toLowerCase() || null;
+  const rangeLabel = String(rangeCategory?.label || "").trim() || null;
+  const premiumHolding =
+    isPremiumTierLabel(rangeTier) ||
+    String(classification?.pairType || "").trim().toLowerCase() === "overpair";
   return {
     made_hand_category: classification?.madeHandCategory || null,
     made_hand_type: classification?.madeHandType || null,
@@ -3492,6 +3503,9 @@ function buildStreetClassification({
     board_pair_kicker_class: classification?.boardPairKickerClass || null,
     kicker_strength: classification?.kickerStrength || null,
     bluff_catcher: Boolean(classification?.bluffCatcher),
+    hand_tier: rangeTier,
+    hand_label: rangeLabel,
+    premium_holding: premiumHolding,
   };
 }
 
@@ -4958,6 +4972,112 @@ function alignStreetNodeWithCbetIntent(node = {}, streetContext = {}) {
   };
 }
 
+function isPremiumStreetHolding(streetContext = {}, node = {}) {
+  const classification =
+    (streetContext?.classification && typeof streetContext.classification === "object"
+      ? streetContext.classification
+      : null) ||
+    (node?.classification && typeof node.classification === "object"
+      ? node.classification
+      : null) ||
+    {};
+  const tier = String(classification?.hand_tier || "").trim().toLowerCase();
+  const premiumFlag = Boolean(classification?.premium_holding);
+  const pairType = String(classification?.pair_type || "").trim().toLowerCase();
+  const madeHandType = String(classification?.made_hand_type || "").trim().toLowerCase();
+  return (
+    premiumFlag ||
+    tier === "premium" ||
+    pairType === "overpair" ||
+    madeHandType === "overpair"
+  );
+}
+
+function choosePremiumContinueAction(legalActions = [], fallbackAction = "call") {
+  const legal = (Array.isArray(legalActions) ? legalActions : [])
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (legal.includes("call")) return "call";
+  if (legal.includes("raise")) return "raise";
+  if (legal.includes("jam")) return "jam";
+  return fallbackAction;
+}
+
+function rewritePremiumMisclassificationLanguage(text = "") {
+  let value = String(text || "");
+  value = value.replace(/\bweak pair\b/gi, "premium pair");
+  value = value.replace(/\bmarginal hand\b/gi, "premium value hand");
+  value = value.replace(/\bmarginal holding\b/gi, "premium holding");
+  value = value.replace(/\bspeculative holding\b/gi, "premium holding");
+  value = value.replace(/\bweak showdown value\b/gi, "strong showdown value");
+  value = value.replace(/\blow showdown value\b/gi, "strong showdown value");
+  value = value.replace(/\bpoor showdown value\b/gi, "strong showdown value");
+  value = value.replace(/\bfolding is preferred\b/gi, "continuing is generally preferred");
+  value = value.replace(/\bfold(?:ing)?(?:\s+here)?\s+to preserve stack\b/gi, "continue and realize premium equity");
+  value = value.replace(/\bpreserve stack\b/gi, "preserve value while continuing");
+  value = value.replace(/\bstack preservation\b/gi, "value-preserving continuation");
+  return value;
+}
+
+function alignStreetNodeWithPremiumHandSemantics(node = {}, streetContext = {}) {
+  if (!isPremiumStreetHolding(streetContext, node)) return node;
+  const legal = (Array.isArray(streetContext?.legal_actions) ? streetContext.legal_actions : [])
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  const analysis = node?.analysis || {};
+  const mergedText = [
+    analysis.insight,
+    analysis.range_context,
+    analysis.board_texture,
+    analysis.sizing_commentary,
+    analysis.plan_commentary,
+    analysis.takeaway,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  const hasExplicitException =
+    hasExplicitExploitDriver(mergedText) ||
+    /\b(icm|bubble|payout|satellite)\b/i.test(mergedText);
+  const rewrittenAnalysis = {
+    insight: rewritePremiumMisclassificationLanguage(analysis.insight),
+    range_context: rewritePremiumMisclassificationLanguage(analysis.range_context),
+    board_texture: analysis.board_texture,
+    sizing_commentary: rewritePremiumMisclassificationLanguage(analysis.sizing_commentary),
+    plan_commentary: rewritePremiumMisclassificationLanguage(analysis.plan_commentary),
+    takeaway: rewritePremiumMisclassificationLanguage(analysis.takeaway),
+  };
+  const preferredAction = canonicalizeActionLabel(node?.preferred_action?.action || "");
+  const takenAction = canonicalizeActionLabel(node?.action_taken?.action || "");
+  const canContinue = legal.includes("call") || legal.includes("raise") || legal.includes("jam");
+  const shouldOverrideFold = !hasExplicitException && canContinue && preferredAction === "fold";
+  const adjustedPreferredAction = shouldOverrideFold
+    ? {
+        ...node.preferred_action,
+        action: choosePremiumContinueAction(legal, takenAction || "call"),
+        sizing:
+          takenAction === "raise" || takenAction === "jam"
+            ? node?.action_taken?.sizing ?? null
+            : node?.preferred_action?.sizing ?? null,
+      }
+    : node.preferred_action;
+  const adjustedScore =
+    shouldOverrideFold && Number.isFinite(Number(node?.score)) && Number(node.score) < 0
+      ? 0
+      : node?.score;
+  const mergedTags = Array.from(
+    new Set([...(Array.isArray(node?.strategic_tags) ? node.strategic_tags : []), "premium_hand"]),
+  );
+  return {
+    ...node,
+    score: adjustedScore,
+    preferred_action: adjustedPreferredAction,
+    analysis: rewrittenAnalysis,
+    strategic_tags: mergedTags,
+    tags: mergedTags,
+  };
+}
+
 function normalizeStreetReviewFromModel(parsed, streetContext = {}) {
   const score = clampStreetScore(parsed?.score) ?? streetContext?.seed_score ?? 0;
   const confidence = ["low", "medium", "high"].includes(
@@ -5071,7 +5191,8 @@ function normalizeStreetReviewFromModel(parsed, streetContext = {}) {
     streetContext,
   );
   const openQualified = alignStreetNodeWithOpenQualification(auditAligned, streetContext);
-  return alignStreetNodeWithCbetIntent(openQualified, streetContext);
+  const cbetAligned = alignStreetNodeWithCbetIntent(openQualified, streetContext);
+  return alignStreetNodeWithPremiumHandSemantics(cbetAligned, streetContext);
 }
 
 function fallbackStreetReview(streetContext = {}) {
@@ -5374,6 +5495,14 @@ function compactStreetContextForPrompt(streetContext = {}) {
         String(classification?.made_hand_type || classification?.made_hand_category || "")
           .trim()
           .toLowerCase() || null,
+      hand_tier:
+        String(classification?.hand_tier || "").trim().toLowerCase() || null,
+      premium_holding:
+        typeof classification?.premium_holding === "boolean"
+          ? classification.premium_holding
+          : undefined,
+      pair_type:
+        String(classification?.pair_type || "").trim().toLowerCase() || null,
       showdown_value:
         String(classification?.showdown_strength || "").trim().toLowerCase() || null,
       bluff_catcher:
@@ -5450,6 +5579,7 @@ Rules:
   - thin_value_cbet/protection_cbet -> vulnerable made-hand incentives and equity denial.
   - value_cbet -> value extraction and stack building.
 - Terminology discipline: reserve "air" for complete misses with negligible showdown value and weak realization; for defendable/speculative holdings prefer terms like "speculative holding" or "weak showdown value".
+- Premium-hand protection: if classification indicates premium_holding=true, hand_tier=premium, or pair_type=overpair, never frame the hand as weak/marginal/speculative or default to fold-preservation language unless explicit exploit/ICM/extreme multiway context is present.
 - Audit alignment: if chart_recommendation is {"defend","likely_continue","mixed_continue"}, avoid "mandatory/standard/obvious fold" unless explicit exploit drivers are present (ICM, stack-depth compression, extreme sizing, population over/under-bluff).
 - Keep language consistent with audit_heuristics.spot_classification and solver_mix_estimate when provided.
 - Compression: avoid repeating the same concept across insight/sizing/plan/takeaway; prefer one clear actionable takeaway with complementary supporting lines.`;

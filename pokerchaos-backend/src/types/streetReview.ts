@@ -38,7 +38,11 @@ export interface StreetAnalysis {
 
 export interface StreetHandClassification {
   made_hand_category: string | null;
+  made_hand_type?: string | null;
   effective_hand_category: string | null;
+  hand_tier?: string | null;
+  hand_label?: string | null;
+  premium_holding?: boolean | null;
   pair_type: string | null;
   trips_type: string | null;
   showdown_strength: string | null;
