@@ -910,6 +910,21 @@ function SignedOutShell() {
           </a>
         </div>
       </div>
+      <section className="auth-community-card" aria-label="Community">
+        <p className="auth-community-kicker">Community</p>
+        <h2 className="auth-community-title">Join the Conversation</h2>
+        <p className="auth-community-copy">
+          Support, updates, bug reports, and feature requests.
+        </p>
+        <a
+          className="auth-community-link"
+          href="https://discord.gg/eFzKXtBgQk"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Enter the Discord
+        </a>
+      </section>
       <div className="auth-gate-pseudo-footer">
         <TrustMethodologyBanner />
       </div>
