@@ -797,7 +797,7 @@ function SignedInShell() {
         ) : null}
 
         {entitlementsStatus === "ready" && canAccessCurrent ? (
-          <SectionComponent />
+          <SectionComponent entitlements={entitlements} />
         ) : null}
 
         {entitlementsStatus === "ready" && !canAccessCurrent ? (

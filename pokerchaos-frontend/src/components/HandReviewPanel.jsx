@@ -14,6 +14,8 @@ import {
   requestTournamentUpload,
   requestTournamentSummaryReview,
 } from "../api/aiService.js";
+import HandReviewV2Modal from "./HandReviewV2Modal.jsx";
+import { resolveHandBbResult } from "../lib/handResult.js";
 
 const CASH_NOTICE_DISMISS_KEY = "pokerchaos_cash_notice_dismissed";
 
@@ -66,6 +68,115 @@ function reviewVerdictLabel(overallScore) {
   if (score >= 1) return "Line appears strong";
   if (score <= -1) return "Adjustment recommended";
   return "Spot appears close";
+}
+
+function normalizeReviewHeadline(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (/street-by-street decision review|street-by-street review/i.test(value)) {
+    return "Full Hand Review";
+  }
+  if (/preflop decision leak/i.test(value)) return "Preflop Pressure Spot";
+  if (/flop decision leak/i.test(value)) return "Flop Decision Spot";
+  if (/turn decision leak/i.test(value)) return "Tough Turn Decision";
+  if (/river decision leak/i.test(value)) return "River Decision Spot";
+  return value;
+}
+
+function normalizeBiggestLeakCopy(raw, mistakesFound = null) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (/no major leak flagged/i.test(value)) {
+    const count = Number(mistakesFound);
+    if (Number.isFinite(count) && count <= 0) return "Solid overall execution.";
+    return "No single dominant issue; review timeline spots.";
+  }
+  return value;
+}
+
+function hasStreetIntelligenceReview(review) {
+  if (!review || typeof review !== "object") return false;
+  const version = String(review?.review_version || "")
+    .trim()
+    .toLowerCase();
+  const hasStreetReviews = Array.isArray(
+    review?.street_intelligence?.street_reviews,
+  );
+  if (version === "v2_street_intelligence" && hasStreetReviews) return true;
+  return hasStreetReviews;
+}
+
+function buildV2TileTeaser(review, hand = null) {
+  const summary =
+    review && typeof review?.street_intelligence?.hand_summary === "object"
+      ? review.street_intelligence.hand_summary
+      : {};
+  const headline =
+    normalizeReviewHeadline(summary?.headline) ||
+    reviewVerdictLabel(review?.overall_score);
+  const biggestLeak =
+    normalizeBiggestLeakCopy(
+      String(summary?.biggest_leak || "").trim() ||
+        String(review?.primary_leak || "").trim(),
+      summary?.mistakes_found,
+    );
+  const handBbResult = resolveHandBbResult(hand || {});
+  const line = Array.isArray(review?.street_intelligence?.street_reviews)
+    ? review.street_intelligence.street_reviews
+        .filter((row) => Number(row?.score) <= -1)
+        .slice(0, 2)
+        .map((row) => {
+          const street = String(row?.street || "").trim().toLowerCase();
+          const action = String(row?.action_taken?.action || "").trim();
+          if (!street || !action) return "";
+          return `${action.charAt(0).toUpperCase()}${action.slice(1)} ${street}`;
+        })
+        .filter(Boolean)
+        .join(", ")
+    : "";
+  return {
+    headline,
+    bbLabel: handBbResult.label,
+    bbTone: handBbResult.tone,
+    line,
+    biggestLeak,
+  };
+}
+
+function isDeveloperQaAccount(entitlements = null) {
+  const features = entitlements?.features || {};
+  if (features?.developer || features?.admin) return true;
+  const emails = Array.isArray(entitlements?.emails) ? entitlements.emails : [];
+  return emails.some(
+    (email) => String(email || "").trim().toLowerCase() === "frosttrev@gmail.com",
+  );
+}
+
+function reviewQaSummary(review = {}) {
+  const evaluation = review && typeof review?.evaluation === "object" ? review.evaluation : null;
+  if (!evaluation) {
+    return {
+      hasEvaluation: false,
+      score: null,
+      warningsCount: 0,
+      label: "",
+    };
+  }
+  const score = Number(evaluation?.overall_score);
+  const warningsFromEvaluation = Array.isArray(evaluation?.warnings)
+    ? evaluation.warnings.length
+    : 0;
+  const warningsFromReport = Array.isArray(review?.evaluation_report?.warnings)
+    ? review.evaluation_report.warnings.length
+    : 0;
+  const warningsCount = Math.max(warningsFromEvaluation, warningsFromReport);
+  const scoreLabel = Number.isFinite(score) ? `QA ${Math.round(score)}` : "QA";
+  return {
+    hasEvaluation: true,
+    score: Number.isFinite(score) ? Math.round(score) : null,
+    warningsCount,
+    label: warningsCount > 0 ? `${scoreLabel} • ⚠ ${warningsCount}` : scoreLabel,
+  };
 }
 
 const INFRASTRUCTURE_COPY_RULES = [
@@ -768,17 +879,15 @@ function buildTableHintParagraph(review) {
   return parts.join(" ");
 }
 
-const AI_SCORE_FILTER_OPTIONS = [
-  { code: "all", label: "All hands" },
-  { code: "unreviewed", label: "Unreviewed only" },
-  { code: "all_reviewed", label: "All reviewed" },
-  { code: "score_gte_0", label: "AI score >= 0" },
-  { code: "score_gt_0", label: "AI score > 0" },
-  { code: "score_lt_0", label: "AI score < 0" },
-  { code: "score_lte_-2", label: "AI score <= -2" },
+const HAND_SORT_OPTIONS = [
+  { code: "most_recent", label: "Most recent (default)" },
+  { code: "biggest_win", label: "Biggest Win" },
+  { code: "biggest_loss", label: "Biggest Loss" },
+  { code: "seat_coming_soon", label: "Seat (coming soon)", disabled: true },
 ];
-const MAX_HANDS_PER_AI_REVIEW = 30;
+const MAX_HANDS_PER_AI_REVIEW = 10;
 const ANALYZE_LIMIT_HINT_MIN_SELECTION = 5;
+const OUTCOME_FILTER_WON_WITHOUT_SHOWDOWN_ANY = "won_without_showdown_any";
 
 function parsePlayedAtEpoch(raw) {
   if (typeof raw !== "string") return null;
@@ -799,6 +908,19 @@ function getHandPlayedAtEpoch(hand) {
   const direct = Number(hand?.playedAtEpoch);
   if (Number.isFinite(direct)) return direct;
   return parsePlayedAtEpoch(String(hand?.playedAt || ""));
+}
+
+function isWonWithoutShowdownOutcome(hand) {
+  const code = String(hand?.heroOutcome?.code || "")
+    .trim()
+    .toLowerCase();
+  const label = String(hand?.heroOutcome?.label || "")
+    .trim()
+    .toLowerCase();
+  return (
+    code.startsWith("won_without_showdown") ||
+    label.includes("won without showdown")
+  );
 }
 
 function stripFileExtension(fileName) {
@@ -1571,6 +1693,7 @@ function buildBlindDefenseAudit(hands) {
   let bbDefenseSpots = 0;
   let unknownCardsSpots = 0;
   let likelyContinueSpots = 0;
+  let nonOpenBlindPressureSpots = 0;
 
   for (const hand of list) {
     const heroName = String(hand?.heroName || "").trim();
@@ -1594,14 +1717,29 @@ function buildBlindDefenseAudit(hands) {
     }
     if (firstHeroDecisionIndex < 0 || !firstHeroDecision) continue;
 
-    const priorAggression = preflopActions
+    const priorAggressiveActions = preflopActions
       .slice(0, firstHeroDecisionIndex)
-      .some(
+      .filter(
         (action) =>
           String(action?.player || "").trim() !== heroName &&
           isPreflopAggressiveAction(action),
       );
-    if (!priorAggression) continue;
+    if (priorAggressiveActions.length === 0) continue;
+
+    const firstAggressiveType = normalizeActionType(priorAggressiveActions[0]);
+    const hasReraiseBeforeHero = priorAggressiveActions.length > 1;
+    const hasJamBeforeHero = priorAggressiveActions.some(
+      (action) => normalizeActionType(action) === "jam",
+    );
+    const facingSingleOpenOnly =
+      firstAggressiveType === "raise" &&
+      !hasReraiseBeforeHero &&
+      !hasJamBeforeHero;
+
+    if (!facingSingleOpenOnly) {
+      nonOpenBlindPressureSpots += 1;
+      continue;
+    }
 
     totalBlindDefenseSpots += 1;
     if (position === "SB") sbDefenseSpots += 1;
@@ -1720,6 +1858,11 @@ function buildBlindDefenseAudit(hands) {
       "Blind-defense sample is small; treat findings as low confidence.",
     );
   }
+  if (nonOpenBlindPressureSpots > 0) {
+    warnings.push(
+      `${nonOpenBlindPressureSpots} blind spots faced 3-bet/jam pressure before hero and were excluded from open-defense chart counts.`,
+    );
+  }
   warnings.push(
     "Baseline uses chart heuristics; exploit adjustments can override specific spots.",
   );
@@ -1730,6 +1873,7 @@ function buildBlindDefenseAudit(hands) {
     bbDefenseSpots,
     likelyContinueSpots,
     unknownCardsSpots,
+    nonOpenBlindPressureSpots,
     confidence,
     issueCounts,
     handClassRows: categoryRows,
@@ -2662,14 +2806,15 @@ function publishTrialTokenUpdate(remainingTokens) {
   );
 }
 
-export default function HandReviewPanel() {
+export default function HandReviewPanel({ entitlements = null }) {
+  const showDeveloperQa = isDeveloperQaAccount(entitlements);
   const [heroName, setHeroName] = useState("Hero");
   const [historyText, setHistoryText] = useState("");
   const [sortOrder, setSortOrder] = useState("newest");
   const [handLimit, setHandLimit] = useState(200);
   const [preflopHandSet, setPreflopHandSet] = useState("all_hands");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
-  const [aiScoreFilter, setAiScoreFilter] = useState("all");
+  const [handSortBy, setHandSortBy] = useState("most_recent");
   const [sourceFileName, setSourceFileName] = useState("");
   const [loadingParse, setLoadingParse] = useState(false);
   const [loadingReview, setLoadingReview] = useState(false);
@@ -2724,6 +2869,7 @@ export default function HandReviewPanel() {
   const [isParserCollapsed, setIsParserCollapsed] = useState(false);
   const [isParserConfigOpen, setIsParserConfigOpen] = useState(false);
   const [uploadHelpModalOpen, setUploadHelpModalOpen] = useState(false);
+  const [activeV2ReviewHandKey, setActiveV2ReviewHandKey] = useState("");
   const [cashNoticeDismissed, setCashNoticeDismissed] = useState(() =>
     readCashNoticeDismissed(),
   );
@@ -2935,6 +3081,7 @@ export default function HandReviewPanel() {
   ]);
   const outcomeOptions = useMemo(() => {
     const byCode = new Map();
+    let hasWonWithoutShowdown = false;
     for (const hand of parsedHands) {
       const code = String(hand?.heroOutcome?.code || "").trim();
       const label = String(hand?.heroOutcome?.label || "").trim();
@@ -2942,40 +3089,69 @@ export default function HandReviewPanel() {
       if (!byCode.has(code)) {
         byCode.set(code, label || code);
       }
+      if (isWonWithoutShowdownOutcome(hand)) {
+        hasWonWithoutShowdown = true;
+      }
     }
-    return Array.from(byCode.entries())
+    const options = Array.from(byCode.entries())
       .map(([code, label]) => ({ code, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
+    if (!hasWonWithoutShowdown) return options;
+
+    const anyWonNoShowdownOption = {
+      code: OUTCOME_FILTER_WON_WITHOUT_SHOWDOWN_ANY,
+      label: "Won without showdown",
+    };
+    const alreadyPresent = options.some(
+      (option) => option.code === OUTCOME_FILTER_WON_WITHOUT_SHOWDOWN_ANY,
+    );
+    if (alreadyPresent) return options;
+
+    const wonAtShowdownIndex = options.findIndex((option) => {
+      const code = String(option?.code || "").trim().toLowerCase();
+      const label = String(option?.label || "").trim().toLowerCase();
+      return code === "won_showdown" || label === "won at showdown";
+    });
+    if (wonAtShowdownIndex === -1) {
+      return [anyWonNoShowdownOption, ...options];
+    }
+    const next = options.slice();
+    next.splice(wonAtShowdownIndex + 1, 0, anyWonNoShowdownOption);
+    return next;
   }, [parsedHands]);
   const filteredParsedHands = useMemo(() => {
-    return parsedHands.filter((hand) => {
-      if (
-        outcomeFilter !== "all" &&
-        String(hand?.heroOutcome?.code || "") !== outcomeFilter
-      ) {
-        return false;
+    const filtered = parsedHands.filter((hand) => {
+      if (outcomeFilter === "all") return true;
+      if (outcomeFilter === OUTCOME_FILTER_WON_WITHOUT_SHOWDOWN_ANY) {
+        return isWonWithoutShowdownOutcome(hand);
       }
-      if (aiScoreFilter === "all") return true;
-
-      const key = handKey(hand);
-      const review = key ? reviewsByHandKey[key] : null;
-      const score = Number(review?.overall_score);
-      const hasScore = Number.isFinite(score);
-
-      if (aiScoreFilter === "unreviewed") {
-        return !review || !hasScore;
-      }
-      if (aiScoreFilter === "all_reviewed") {
-        return Boolean(review) && hasScore;
-      }
-      if (!hasScore) return false;
-      if (aiScoreFilter === "score_gte_0") return score >= 0;
-      if (aiScoreFilter === "score_gt_0") return score > 0;
-      if (aiScoreFilter === "score_lt_0") return score < 0;
-      if (aiScoreFilter === "score_lte_-2") return score <= -2;
-      return true;
+      return String(hand?.heroOutcome?.code || "") === outcomeFilter;
     });
-  }, [parsedHands, outcomeFilter, aiScoreFilter, reviewsByHandKey]);
+
+    const withSortMeta = filtered.map((hand) => {
+      const playedAtEpoch = Number(getHandPlayedAtEpoch(hand));
+      const bbResult = resolveHandBbResult(hand);
+      return {
+        hand,
+        playedAtEpoch: Number.isFinite(playedAtEpoch) ? playedAtEpoch : 0,
+        bbValue: Number.isFinite(bbResult?.bb) ? Number(bbResult.bb) : 0,
+      };
+    });
+
+    withSortMeta.sort((a, b) => {
+      if (handSortBy === "biggest_win") {
+        if (b.bbValue !== a.bbValue) return b.bbValue - a.bbValue;
+      } else if (handSortBy === "biggest_loss") {
+        if (a.bbValue !== b.bbValue) return a.bbValue - b.bbValue;
+      }
+      if (b.playedAtEpoch !== a.playedAtEpoch) {
+        return b.playedAtEpoch - a.playedAtEpoch;
+      }
+      return String(a.hand?.handId || "").localeCompare(String(b.hand?.handId || ""));
+    });
+
+    return withSortMeta.map((entry) => entry.hand);
+  }, [parsedHands, outcomeFilter, handSortBy]);
   const parsedHandByKey = useMemo(() => {
     const map = new Map();
     for (const hand of parsedHands) {
@@ -3948,7 +4124,7 @@ export default function HandReviewPanel() {
     );
     if (!visibleNow) {
       setOutcomeFilter("all");
-      setAiScoreFilter("all");
+      setHandSortBy("most_recent");
       setSelectedHandKeys(new Set());
     }
     setPendingAuditScrollKey(key);
@@ -3975,7 +4151,7 @@ export default function HandReviewPanel() {
     setTableHintReview(null);
     setTableHintReviewError("");
     setOutcomeFilter("all");
-    setAiScoreFilter("all");
+    setHandSortBy("most_recent");
     setSelectedHandKeys(new Set());
     setInsightsTab("tournament");
     setOpponentFilter("current_table");
@@ -3983,6 +4159,7 @@ export default function HandReviewPanel() {
     setSelectedAuditHandKey("");
     setPendingAuditScrollKey("");
     setQuickReviewHandKey("");
+    setActiveV2ReviewHandKey("");
     setPendingTournamentSave(null);
   };
 
@@ -3994,6 +4171,7 @@ export default function HandReviewPanel() {
     setPendingTournamentSave(null);
     setLoadingParse(true);
     setQuickReviewHandKey("");
+    setActiveV2ReviewHandKey("");
     setReviewsByHandKey({});
     setExpandedReviewLogicKeys(new Set());
     setSummaryReview(null);
@@ -4014,7 +4192,7 @@ export default function HandReviewPanel() {
         setIsParserCollapsed(true);
       }
       setOutcomeFilter("all");
-      setAiScoreFilter("all");
+      setHandSortBy("most_recent");
       setSelectedHandKeys(new Set());
       setInsightsTab("tournament");
       setOpponentFilter("current_table");
@@ -4022,6 +4200,7 @@ export default function HandReviewPanel() {
       setSelectedAuditHandKey("");
       setPendingAuditScrollKey("");
       setQuickReviewHandKey("");
+      setActiveV2ReviewHandKey("");
     } catch (err) {
       setError(err?.message || "Failed to parse hand history.");
     } finally {
@@ -4194,7 +4373,7 @@ export default function HandReviewPanel() {
       setExpandedReviewLogicKeys(new Set());
       setSelectedHandKeys(new Set());
       setOutcomeFilter("all");
-      setAiScoreFilter("all");
+      setHandSortBy("most_recent");
       setInsightsTab("tournament");
       setOpponentFilter("current_table");
       setCopiedOpponentKey("");
@@ -4259,7 +4438,7 @@ export default function HandReviewPanel() {
     }
     if (selectedUnreviewedCount > MAX_HANDS_PER_AI_REVIEW) {
       setError(
-        `You selected ${selectedUnreviewedCount} unreviewed hands. Analyze supports up to ${MAX_HANDS_PER_AI_REVIEW} hands at once.`,
+        `You selected ${selectedUnreviewedCount} unreviewed hands. Temporary performance limit: analyze supports up to ${MAX_HANDS_PER_AI_REVIEW} hands at once.`,
       );
       return;
     }
@@ -4634,7 +4813,7 @@ export default function HandReviewPanel() {
                   setTableHintReview(null);
                   setTableHintReviewError("");
                   setOutcomeFilter("all");
-                  setAiScoreFilter("all");
+                  setHandSortBy("most_recent");
                   setSelectedHandKeys(new Set());
                   setInsightsTab("tournament");
                   setOpponentFilter("current_table");
@@ -4782,16 +4961,20 @@ export default function HandReviewPanel() {
               </select>
             </label>
             <label>
-              AI score
+              Sort by
               <select
-                value={aiScoreFilter}
+                value={handSortBy}
                 onChange={(e) => {
-                  setAiScoreFilter(e.target.value);
+                  setHandSortBy(e.target.value);
                   setSelectedHandKeys(new Set());
                 }}
               >
-                {AI_SCORE_FILTER_OPTIONS.map((option) => (
-                  <option key={option.code} value={option.code}>
+                {HAND_SORT_OPTIONS.map((option) => (
+                  <option
+                    key={option.code}
+                    value={option.code}
+                    disabled={Boolean(option.disabled)}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -4851,7 +5034,7 @@ export default function HandReviewPanel() {
         selectedCount >= ANALYZE_LIMIT_HINT_MIN_SELECTION ? (
           <p className="hand-review-empty">
             Analyze limit: up to {MAX_HANDS_PER_AI_REVIEW} unreviewed selected
-            hands per run.
+            hands per run (temporary for performance reasons).
           </p>
         ) : null}
 
@@ -4864,6 +5047,7 @@ export default function HandReviewPanel() {
               const isAuditTarget = selectedAuditHandKey === rowKey;
               const isQuickReviewLoading = quickReviewHandKey === rowKey;
               const attachedReview = reviewsByHandKey[rowKey];
+              const isV2Review = hasStreetIntelligenceReview(attachedReview);
               const isReviewLogicExpanded = expandedReviewLogicKeys.has(rowKey);
               const reviewConfidence = normalizeReviewConfidence(
                 attachedReview?.confidence,
@@ -4871,6 +5055,9 @@ export default function HandReviewPanel() {
               const reviewVerdict = reviewVerdictLabel(
                 attachedReview?.overall_score,
               );
+              const v2Teaser = buildV2TileTeaser(attachedReview || {}, hand);
+              const handBbResult = resolveHandBbResult(hand || {});
+              const qaSummary = reviewQaSummary(attachedReview || {});
               const handPosition = hand.heroPosition || "Unknown position";
               const heroCardsLabel = formatHeroCards(hand.heroCards);
               const preflopLine =
@@ -4918,6 +5105,20 @@ export default function HandReviewPanel() {
                             ? ` (${outcome.wonAmount})`
                             : ""}
                         </span>
+                        {handBbResult.available ? (
+                          <span
+                            className={`outcome-pill hand-row-bb-pill ${
+                              handBbResult.tone === "good"
+                                ? "won"
+                                : handBbResult.tone === "bad"
+                                  ? "lost"
+                                  : "unknown"
+                            }`}
+                            title="Net result in big blinds"
+                          >
+                            {handBbResult.label}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="hand-row-tertiary">
                         <div className="hand-row-metadata">
@@ -4954,21 +5155,73 @@ export default function HandReviewPanel() {
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
+                          if (attachedReview && isV2Review) {
+                            setActiveV2ReviewHandKey(rowKey);
+                            return;
+                          }
                           runQuickReview(hand);
                         }}
                         disabled={loadingReview || Boolean(quickReviewHandKey)}
-                        title="Quick AI review this hand"
-                        aria-label={`Quick AI review ${hand.handId}`}
+                        title={
+                          attachedReview && isV2Review
+                            ? "Open detailed review modal"
+                            : "Quick AI review this hand"
+                        }
+                        aria-label={
+                          attachedReview && isV2Review
+                            ? `Open review for ${hand.handId}`
+                            : `Quick AI review ${hand.handId}`
+                        }
                       >
                         {isQuickReviewLoading
                           ? "Analyzing..."
-                          : attachedReview
-                            ? "AI reviewed"
+                          : attachedReview && isV2Review
+                            ? "Open review"
+                            : attachedReview
+                              ? "AI reviewed"
                             : "AI review"}
                       </button>
                     </div>
                   </div>
-                  {attachedReview ? (
+                  {attachedReview && isV2Review ? (
+                    <div className="hand-row-review-v2-teaser">
+                      <div className="hand-row-review-v2-line">
+                        <span
+                          className={`score-pill review-verdict-pill ${v2Teaser.bbTone || "neutral"}`}
+                        >
+                          {v2Teaser.bbLabel}
+                        </span>
+                        <strong>{v2Teaser.headline}</strong>
+                        {showDeveloperQa && qaSummary.hasEvaluation ? (
+                          <span
+                            className={`review-dev-qa-badge ${qaSummary.warningsCount > 0 ? "warn" : "ok"}`}
+                            title={
+                              qaSummary.warningsCount > 0
+                                ? `${qaSummary.warningsCount} QA warning(s)`
+                                : "No QA warnings"
+                            }
+                          >
+                            {qaSummary.label}
+                          </span>
+                        ) : null}
+                      </div>
+                      {v2Teaser.line ? (
+                        <p className="hand-row-review-v2-sub">{v2Teaser.line}</p>
+                      ) : v2Teaser.biggestLeak ? (
+                        <p className="hand-row-review-v2-sub">
+                          {v2Teaser.biggestLeak}
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="hand-row-open-review"
+                        onClick={() => setActiveV2ReviewHandKey(rowKey)}
+                      >
+                        Open review
+                      </button>
+                    </div>
+                  ) : null}
+                  {attachedReview && !isV2Review ? (
                     <div className="hand-row-review">
                       <div className="hand-review-headline">
                         <span
@@ -4978,12 +5231,6 @@ export default function HandReviewPanel() {
                         >
                           Verdict: {reviewVerdict}
                         </span>
-                      </div>
-                      <div className="hand-review-section">
-                        <p className="hand-review-section-label">Better line</p>
-                        <p className="hand-review-section-copy">
-                          {attachedReview.better_line}
-                        </p>
                       </div>
                       {attachedReview.what_was_good ? (
                         <div className="hand-review-section">
@@ -4995,6 +5242,14 @@ export default function HandReviewPanel() {
                           </p>
                         </div>
                       ) : null}
+                      <div className="hand-review-section">
+                        <p className="hand-review-section-label">
+                          Suggested adjustment
+                        </p>
+                        <p className="hand-review-section-copy">
+                          {attachedReview.better_line}
+                        </p>
+                      </div>
                       <div className="hand-review-section">
                         <p className="hand-review-section-label">Summary</p>
                         <p className="hand-review-section-copy">
@@ -6783,6 +7038,22 @@ export default function HandReviewPanel() {
           </p>
         )}
       </div>
+
+      {activeV2ReviewHandKey ? (
+        <HandReviewV2Modal
+          open={Boolean(activeV2ReviewHandKey)}
+          onClose={() => setActiveV2ReviewHandKey("")}
+          showDeveloperQa={showDeveloperQa}
+          hand={
+            filteredParsedHands.find(
+              (item) => handKey(item) === activeV2ReviewHandKey,
+            ) ||
+            parsedHands.find((item) => handKey(item) === activeV2ReviewHandKey) ||
+            null
+          }
+          review={reviewsByHandKey[activeV2ReviewHandKey] || null}
+        />
+      ) : null}
 
       {pendingTournamentSave ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

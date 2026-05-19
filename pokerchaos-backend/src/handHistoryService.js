@@ -883,6 +883,24 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
       continue;
     }
 
+    const uncalledBetReturnedMatch =
+      /^Uncalled bet\s+\(\$?([\d,.]+)\)\s+returned to\s+(.+)$/i.exec(line);
+    if (uncalledBetReturnedMatch) {
+      const amount = toNumber(uncalledBetReturnedMatch[1]);
+      const player = String(uncalledBetReturnedMatch[2] || "").trim();
+      const streetKey = currentStreet;
+      if (streetKey && actionsByStreet[streetKey]) {
+        actionsByStreet[streetKey].push({
+          player,
+          type: "return_uncalled",
+          amount,
+          raw: line,
+          allIn: false,
+        });
+      }
+      continue;
+    }
+
     const action = parseActionLine(line);
     if (!action) continue;
     if (action.type === "collect") {
