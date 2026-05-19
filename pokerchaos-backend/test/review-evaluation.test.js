@@ -346,6 +346,52 @@ test("review QA allows premium-hand language when framing is strong/value-orient
   );
 });
 
+test("review QA flags premium action misalignment when fold is preferred by default", () => {
+  const review = makeReview([
+    {
+      ...makeStreetNode({
+        street: "preflop",
+        boardTexture: "No board cards yet.",
+        insight:
+          "QQ is a strong pair, but folding is preferred here to preserve stack in pressure spots.",
+        takeaway: "Default fold keeps variance lower.",
+        classification: {
+          hand_tier: "premium",
+          premium_holding: true,
+        },
+      }),
+      preferred_action: { action: "fold", sizing: null, size: null },
+    },
+  ]);
+  const hand = { heroCards: ["Qd", "Qc"] };
+  const out = evaluatePokerReviewQuality({ review, hand }).evaluation;
+  assert.equal(
+    out.failures.some((item) => item.code === "premium_action_misalignment"),
+    true,
+  );
+});
+
+test("review QA flags premium passivity conflict language", () => {
+  const review = makeReview([
+    makeStreetNode({
+      street: "preflop",
+      boardTexture: "No board cards yet.",
+      insight: "Use stack preservation and avoid marginal spots with this premium pair.",
+      takeaway: "Weak showdown value makes passive lines safer.",
+      classification: {
+        hand_tier: "premium",
+        premium_holding: true,
+      },
+    }),
+  ]);
+  const hand = { heroCards: ["Ah", "Ad"] };
+  const out = evaluatePokerReviewQuality({ review, hand }).evaluation;
+  assert.equal(
+    out.failures.some((item) => item.code === "premium_hand_passivity_conflict"),
+    true,
+  );
+});
+
 test("review QA catches coherence contradiction between score and matching actions", () => {
   const review = makeReview([
     {

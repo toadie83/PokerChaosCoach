@@ -5019,6 +5019,42 @@ function rewritePremiumMisclassificationLanguage(text = "") {
   return value;
 }
 
+function hasPremiumOverrideExceptionFromText(text = "") {
+  return /\b(icm|bubble|satellite|payout|ladder|explicit exploit|population (?:read|tendency)|pool tendency|nit(?:ty)? range|underbluff|overbluff|extreme multiway|multiway all-?in)\b/i.test(
+    String(text || ""),
+  );
+}
+
+function hasPremiumOverrideExceptionFromContext(streetContext = {}) {
+  const audit = streetContext?.audit_heuristics || streetContext?.deterministic?.audit_heuristics || {};
+  const tags = Array.isArray(streetContext?.deterministic?.street_tags)
+    ? streetContext.deterministic.street_tags.map((item) => String(item || "").trim().toLowerCase())
+    : [];
+  const actionTime = streetContext?.action_time_state || {};
+  const semanticAction = streetContext?.semantic_action || {};
+  const stackDepthBb = Number(streetContext?.stack_depth_bb);
+  const playersRemaining = Array.isArray(actionTime?.players_remaining)
+    ? actionTime.players_remaining.filter(Boolean).length
+    : 0;
+  const populationAdjustment = String(audit?.population_adjustment || "").trim();
+  const hasIcmTag = tags.some((tag) => tag.includes("icm"));
+  const hasExtremeMultiwayTag = tags.some(
+    (tag) => tag.includes("extreme_multiway") || tag.includes("multiway_all_in"),
+  );
+  const multiwayJamPressure =
+    Boolean(semanticAction?.facing_jam) &&
+    (Boolean(semanticAction?.multiway_all_in) || playersRemaining >= 3);
+  const unusualStackConstraint =
+    Number.isFinite(stackDepthBb) && stackDepthBb <= 5 && Boolean(semanticAction?.facing_jam);
+  return (
+    hasIcmTag ||
+    hasExtremeMultiwayTag ||
+    multiwayJamPressure ||
+    unusualStackConstraint ||
+    Boolean(populationAdjustment)
+  );
+}
+
 function alignStreetNodeWithPremiumHandSemantics(node = {}, streetContext = {}) {
   if (!isPremiumStreetHolding(streetContext, node)) return node;
   const legal = (Array.isArray(streetContext?.legal_actions) ? streetContext.legal_actions : [])
@@ -5037,8 +5073,8 @@ function alignStreetNodeWithPremiumHandSemantics(node = {}, streetContext = {}) 
     .filter(Boolean)
     .join(" ");
   const hasExplicitException =
-    hasExplicitExploitDriver(mergedText) ||
-    /\b(icm|bubble|payout|satellite)\b/i.test(mergedText);
+    hasPremiumOverrideExceptionFromText(mergedText) ||
+    hasPremiumOverrideExceptionFromContext(streetContext);
   const rewrittenAnalysis = {
     insight: rewritePremiumMisclassificationLanguage(analysis.insight),
     range_context: rewritePremiumMisclassificationLanguage(analysis.range_context),
@@ -5065,12 +5101,17 @@ function alignStreetNodeWithPremiumHandSemantics(node = {}, streetContext = {}) 
     shouldOverrideFold && Number.isFinite(Number(node?.score)) && Number(node.score) < 0
       ? 0
       : node?.score;
+  const adjustedConfidence =
+    shouldOverrideFold && String(node?.confidence || "").trim().toLowerCase() === "high"
+      ? "medium"
+      : node?.confidence;
   const mergedTags = Array.from(
     new Set([...(Array.isArray(node?.strategic_tags) ? node.strategic_tags : []), "premium_hand"]),
   );
   return {
     ...node,
     score: adjustedScore,
+    confidence: adjustedConfidence,
     preferred_action: adjustedPreferredAction,
     analysis: rewrittenAnalysis,
     strategic_tags: mergedTags,

@@ -99,6 +99,32 @@ function hasPremiumExceptionLanguage(text = "") {
   );
 }
 
+function hasPremiumExceptionNodeContext(node = {}) {
+  const tags = [
+    ...(Array.isArray(node?.strategic_tags) ? node.strategic_tags : []),
+    ...(Array.isArray(node?.tags) ? node.tags : []),
+  ]
+    .map((tag) => String(tag || "").trim().toLowerCase())
+    .filter(Boolean);
+  const playersRemaining = Array.isArray(node?.action_time_state?.players_remaining)
+    ? node.action_time_state.players_remaining.filter(Boolean).length
+    : 0;
+  const preferredAction = String(node?.preferred_action?.action || "")
+    .trim()
+    .toLowerCase();
+  const hasIcmTag = tags.some((tag) => tag.includes("icm"));
+  const hasExtremeMultiwayTag = tags.some(
+    (tag) => tag.includes("extreme_multiway") || tag.includes("multiway_all_in"),
+  );
+  const spr = Number(node?.metrics?.spr);
+  const unusualStackConstraint =
+    Number.isFinite(spr) &&
+    spr > 0 &&
+    spr <= 0.3 &&
+    preferredAction === "fold";
+  return hasIcmTag || hasExtremeMultiwayTag || playersRemaining >= 3 || unusualStackConstraint;
+}
+
 function boardCardsForStreet(hand = {}, street = "preflop") {
   const safeStreet = String(street || "").toLowerCase();
   if (safeStreet === "preflop") return [];
@@ -362,6 +388,53 @@ function evaluateTerminology(streetNodes = [], hand = {}) {
       );
     }
   });
+  return findings;
+}
+
+function evaluatePremiumStrategicAlignment(streetNodes = [], hand = {}) {
+  const findings = [];
+  const heroHand = Array.isArray(hand?.heroCards) ? hand.heroCards : [];
+  const passivityPattern =
+    /\b(preserve stack|stack preservation|avoid marginal spots|weak showdown value|low showdown value|poor showdown value|marginal hand|marginal holding)\b/i;
+
+  streetNodes.forEach((node) => {
+    const premiumSpot = isPremiumHoldingContext(node, heroHand);
+    if (!premiumSpot) return;
+    const text = textForStreetNode(node);
+    const preferredAction = String(node?.preferred_action?.action || "")
+      .trim()
+      .toLowerCase();
+    const hasException =
+      hasPremiumExceptionLanguage(text) || hasPremiumExceptionNodeContext(node);
+    const foldByDefault =
+      preferredAction === "fold" ||
+      /\b(folding is preferred|fold is preferred|default fold|discipline(?:d)? fold)\b/i.test(text);
+
+    if (foldByDefault && !hasException) {
+      findings.push(
+        makeFinding({
+          severity: "failure",
+          category: "strategic_correctness",
+          code: "premium_action_misalignment",
+          street: String(node?.street || "").toLowerCase() || null,
+          message: "Premium holding was aligned to a default fold baseline without explicit exception context.",
+        }),
+      );
+    }
+
+    if (passivityPattern.test(text) && !hasException) {
+      findings.push(
+        makeFinding({
+          severity: "failure",
+          category: "coherence",
+          code: "premium_hand_passivity_conflict",
+          street: String(node?.street || "").toLowerCase() || null,
+          message: "Premium holding was framed with passive stack-preservation/weak-showdown language.",
+        }),
+      );
+    }
+  });
+
   return findings;
 }
 
@@ -655,6 +728,17 @@ function suggestionsFromFindings(findings = []) {
       "Preserve premium-hand framing (premium pair/overpair/top-tier value) and avoid weak or default fold-preservation language without explicit ICM/exploit context.",
     );
   }
+  if (
+    findings.some(
+      (item) =>
+        item.code === "premium_action_misalignment" ||
+        item.code === "premium_hand_passivity_conflict",
+    )
+  ) {
+    suggestions.push(
+      "For premium holdings, default to continue/value-aggression baselines and treat fold-passive lines as exception-only (ICM/exploit/extreme pressure).",
+    );
+  }
   if (!suggestions.length) {
     suggestions.push("Maintain concise, strategically coherent, population-aware coaching tone.");
   }
@@ -686,6 +770,7 @@ export function evaluatePokerReviewQuality({
   const streetNodes = normalizeStreetNodes(review);
   const findings = [
     ...evaluateTerminology(streetNodes, hand),
+    ...evaluatePremiumStrategicAlignment(streetNodes, hand),
     ...evaluateLanguageRealism(streetNodes),
     ...evaluateBoardTextureLanguage(streetNodes, hand),
     ...evaluateBluffCatcherLogic(streetNodes),
