@@ -1,9 +1,9 @@
 import HandReviewPanel from "./components/HandReviewPanel.jsx";
 
-export default function ReviewApp() {
+export default function ReviewApp({ entitlements = null }) {
   return (
     <div className="wrap review-wrap">
-      <HandReviewPanel />
+      <HandReviewPanel entitlements={entitlements} />
     </div>
   );
 }

@@ -1,5 +1,13 @@
 import OpenAI from "openai";
 import { z } from "zod";
+import {
+  buildStreetReviewAggregate,
+  buildStreetReviewAggregateFromStreetReviews,
+} from "./streetReviewService.js";
+import {
+  buildDeterministicIntelligence,
+  createEmptyDeterministicIntelligence,
+} from "./deterministicIntelligenceService.js";
 
 let openaiClient = null;
 function getClient() {
@@ -141,6 +149,24 @@ const NORMALIZED_REVIEW_SCHEMA = z.object({
     })
     .nullable(),
   guardrail_warnings: z.array(z.string()).optional(),
+});
+
+const STREET_AI_REVIEW_SCHEMA = z.object({
+  score: z.number().min(-2).max(2),
+  preferred_action: z.object({
+    action: z.string().min(1),
+    sizing: z.string().nullable(),
+  }),
+  analysis: z.object({
+    insight: z.string().min(1),
+    range_context: z.string().min(1),
+    board_texture: z.string().min(1),
+    sizing_commentary: z.string().min(1),
+    plan_commentary: z.string().min(1),
+    takeaway: z.string().min(1),
+  }),
+  confidence: z.enum(["low", "medium", "high"]),
+  strategic_tags: z.array(z.string()).max(10),
 });
 
 const VALIDATION_SEVERITY = {
@@ -1330,9 +1356,13 @@ function deriveHandClassification(handState = {}) {
   if (heroCards.length !== 2) {
     return {
       madeHandCategory: "air",
+      madeHandType: "high_card",
       pairType: "none",
+      pairSource: null,
       tripsType: "none",
+      boardPairing: pairedBoard,
       showdownStrength: "none",
+      showdownStrengthTier: "none_showdown",
       showdownRelevance: "none",
       bluffCatcher: false,
       boardMadeHand,
@@ -1366,6 +1396,10 @@ function deriveHandClassification(handState = {}) {
   const topRank = rankEntries[0]?.[0] || null;
   const allValues = cards.map((card) => card.value);
   const heroValues = heroCards.map((card) => card.value);
+  const heroHighKickerRank = heroCards
+    .map((card) => card.rank)
+    .sort((a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0))[0] || null;
+  const heroHighKickerValue = RANK_VALUES[heroHighKickerRank] || 0;
   const straightMade = hasStraight(allValues);
   const hasFlush = Array.from(suitCounts.values()).some((count) => count >= 5);
 
@@ -1379,20 +1413,28 @@ function deriveHandClassification(handState = {}) {
   else if (topCount === 2) madeHandCategory = "pair";
 
   let pairType = "none";
+  let pairRank = null;
+  const heroPocketPair =
+    heroCards[0]?.rank &&
+    heroCards[1]?.rank &&
+    heroCards[0].rank === heroCards[1].rank;
   if (madeHandCategory === "pair" && boardCards.length > 0) {
-    const pairRank = rankEntries.find(([, count]) => count >= 2)?.[0] || null;
+    pairRank = rankEntries.find(([, count]) => count >= 2)?.[0] || null;
     const boardSorted = Array.from(new Set(boardValues)).sort((a, b) => b - a);
     const boardHigh = boardSorted[0] ?? null;
     const boardSecond = boardSorted[1] ?? null;
     const pairValue = pairRank ? RANK_VALUES[pairRank] : null;
-    const heroPocketPair =
-      heroCards[0]?.rank &&
-      heroCards[1]?.rank &&
-      heroCards[0].rank === heroCards[1].rank;
     const pairOnBoard = pairRank
       ? (boardRankCounts.get(pairRank) || 0) > 0
       : false;
-    if (
+    const heroHasPairRank = pairRank
+      ? heroCards.some((card) => card.rank === pairRank)
+      : false;
+    // A paired board alone (without hero matching that rank) is not hero "pair".
+    if (pairOnBoard && !heroHasPairRank && !heroPocketPair) {
+      madeHandCategory = "air";
+      pairType = "none";
+    } else if (
       heroPocketPair &&
       pairRank &&
       heroCards[0].rank === pairRank &&
@@ -1433,6 +1475,9 @@ function deriveHandClassification(handState = {}) {
     madeHandCategory === "quads"
   ) {
     showdownStrength = "strong";
+  } else if (madeHandCategory === "air" && boardCards.length >= 3) {
+    // High-card hands can retain weak showdown value on some runouts.
+    showdownStrength = heroHighKickerValue >= 13 ? "weak" : "none";
   }
 
   const flushDraw = !hasFlush
@@ -1456,10 +1501,6 @@ function deriveHandClassification(handState = {}) {
     .map((card) => card.rank)
     .filter((rank) => rank !== topDescriptor.rank)
     .sort((a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0));
-  const heroHighKickerRank = heroCards
-    .map((card) => card.rank)
-    .sort((a, b) => (RANK_VALUES[b] || 0) - (RANK_VALUES[a] || 0))[0] || null;
-  const heroHighKickerValue = RANK_VALUES[heroHighKickerRank] || 0;
   const boardMainRank = boardTopDescriptor.rank || null;
   const boardTopKickerValue = Math.max(
     0,
@@ -1572,15 +1613,53 @@ function deriveHandClassification(handState = {}) {
     (showdownStrength === "weak" || showdownStrength === "medium") &&
     showdownRelevance !== "none";
 
+  const madeHandType = (() => {
+    if (madeHandCategory === "air") {
+      const highDescriptor = rankCharToDescriptor(heroHighKickerRank || "");
+      const highName = String(highDescriptor?.rankName || "high_card")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "_");
+      return `${highName}_high`;
+    }
+    if (madeHandCategory === "pair") {
+      if (pairType === "overpair") return "overpair";
+      if (pairType === "top") return "top_pair";
+      if (pairType === "middle") return "middle_pair";
+      if (pairType === "bottom") return "bottom_pair";
+      return "pair";
+    }
+    if (madeHandCategory === "trips") {
+      if (tripsType === "set") return "set";
+      if (tripsType === "board_trips") return "board_trips";
+      return "trips";
+    }
+    return madeHandCategory;
+  })();
+  const pairSource = (() => {
+    if (madeHandCategory !== "pair") return null;
+    const pairOnBoard = pairRank ? (boardRankCounts.get(pairRank) || 0) > 0 : false;
+    if (heroPocketPair && !pairOnBoard) return "pocket_pair";
+    if (pairRank && heroCards.some((card) => card.rank === pairRank)) {
+      return "one_hole_one_board";
+    }
+    return null;
+  })();
+  const showdownStrengthTier = `${showdownStrength}_showdown`;
+
   return {
     madeHandCategory,
+    madeHandType,
     pairType,
+    pairSource,
     tripsType,
     boardMadeHand,
+    boardPairing: pairedBoard,
     heroImprovesBoard,
     heroContributionLevel,
     kickerStrength,
     showdownRelevance,
+    showdownStrengthTier,
     boardPairKickerClass,
     effectiveHandCategory,
     showdownStrength,
@@ -2214,6 +2293,7 @@ function applyKickerAwareNarrationDifferentiation(text, field, handClassificatio
 
 function finalizeCoachingPresentation(review = {}, handContext = {}) {
   const out = { ...review };
+  out.review_version = "v2_street_intelligence";
   const handState = handContext?.validatedHandState || {};
   const handClassification = handClassificationForContext(handContext);
   const seed = [
@@ -2277,6 +2357,40 @@ function finalizeCoachingPresentation(review = {}, handContext = {}) {
       ...prior,
       ...presentationWarnings.map((item) => `${item.type}:${item.field}`),
     ];
+  }
+
+  try {
+    // Additive response field: keeps legacy contract intact while enabling timeline-style review consumers.
+    out.street_intelligence = buildStreetReviewAggregate(out, handContext);
+  } catch {
+    // Non-fatal fallback to preserve existing review delivery path.
+    out.street_intelligence = {
+      hand_summary: {
+        overall_score: Number.isFinite(Number(out?.overall_score)) ? Number(out.overall_score) : null,
+        confidence: ["low", "medium", "high"].includes(String(out?.confidence || "").toLowerCase())
+          ? String(out.confidence).toLowerCase()
+          : "medium",
+        headline: "Full Hand Review",
+        biggest_leak: String(out?.primary_leak || "").trim() || "No major leak flagged.",
+        mistakes_found: 0,
+      },
+      street_reviews: [],
+      tags: [],
+      key_mistakes: [],
+    };
+  }
+
+  try {
+    out.deterministic_intelligence =
+      handContext?.deterministicIntelligence && typeof handContext.deterministicIntelligence === "object"
+        ? handContext.deterministicIntelligence
+        : buildDeterministicIntelligence({
+            hand: handContext,
+            validatedHandState: handContext?.validatedHandState || {},
+            handStateValidation: handContext?.handStateValidation || {},
+          });
+  } catch {
+    out.deterministic_intelligence = createEmptyDeterministicIntelligence();
   }
 
   return out;
@@ -2786,12 +2900,23 @@ export const __reviewTrustTestables = {
   classifyReviewValidationFindings,
   applyReviewGuardrails,
   finalizeCoachingPresentation,
+  classifyPreflopAction,
+  classifyPostflopAction,
+  detectJamTree,
+  detectIsolationSpot,
+  detectCommitmentState,
+  detectStreetAgency,
+  collectStreetAiContexts,
+  buildSkippedStreetReviewNode,
+  normalizeStreetReviewFromModel,
+  areActionAndSizingAligned,
   opponentConfidenceTier,
   buildOpponentConfidenceNarrative,
   conceptMentions,
   conceptPrerequisites,
   deriveHandClassification,
   decisionEvaluationForContext,
+  compactStreetContextForPrompt,
 };
 
 function safeFallbackReviewText(validationIssues = [], pipelineIssues = []) {
@@ -3277,6 +3402,2168 @@ function normalizeReviewResponse(parsed, completion, handContext = {}) {
   }
 
   return response;
+}
+
+function normalizeUsageBlock(usage = null) {
+  if (!usage || typeof usage !== "object") return null;
+  const prompt = Number(usage.prompt_tokens);
+  const completion = Number(usage.completion_tokens);
+  const total = Number(usage.total_tokens);
+  return {
+    prompt_tokens: Number.isFinite(prompt) ? Math.max(0, Math.trunc(prompt)) : 0,
+    completion_tokens: Number.isFinite(completion)
+      ? Math.max(0, Math.trunc(completion))
+      : 0,
+    total_tokens: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0,
+  };
+}
+
+function mergeUsageBlocks(baseUsage, addonUsage) {
+  const base = normalizeUsageBlock(baseUsage);
+  const addon = normalizeUsageBlock(addonUsage);
+  if (!base && !addon) return null;
+  if (!base) return addon;
+  if (!addon) return base;
+  return {
+    prompt_tokens: (base.prompt_tokens || 0) + (addon.prompt_tokens || 0),
+    completion_tokens:
+      (base.completion_tokens || 0) + (addon.completion_tokens || 0),
+    total_tokens: (base.total_tokens || 0) + (addon.total_tokens || 0),
+  };
+}
+
+function boardCardsForStreet(board = {}, street = "preflop") {
+  const safeStreet = String(street || "").toLowerCase();
+  if (safeStreet === "preflop") return [];
+  const flop = Array.isArray(board?.flop) ? board.flop : [];
+  const turn = typeof board?.turn === "string" ? board.turn : null;
+  const river = typeof board?.river === "string" ? board.river : null;
+  const cards = [...flop];
+  if (safeStreet === "turn" || safeStreet === "river") {
+    if (turn) cards.push(turn);
+  }
+  if (safeStreet === "river") {
+    if (river) cards.push(river);
+  }
+  return cards.filter(Boolean);
+}
+
+function heroHandForClassification(validatedHandState = {}, hand = {}) {
+  const fromState = Array.isArray(validatedHandState?.heroHand)
+    ? validatedHandState.heroHand
+    : [];
+  if (fromState.length >= 2) return fromState.slice(0, 2);
+  const fromHand = Array.isArray(hand?.heroCards) ? hand.heroCards : [];
+  return fromHand.slice(0, 2);
+}
+
+function buildStreetClassification({
+  validatedHandState = {},
+  hand = {},
+  street = "preflop",
+  fallbackClassification = {},
+} = {}) {
+  const boardCards = boardCardsForStreet(hand?.board, street);
+  const heroHand = heroHandForClassification(validatedHandState, hand);
+  const stateForStreet = {
+    ...validatedHandState,
+    street,
+    heroHand,
+    boardCards,
+  };
+  const derived = deriveHandClassification(stateForStreet);
+  const classification = derived && typeof derived === "object"
+    ? derived
+    : fallbackClassification || {};
+  return {
+    made_hand_category: classification?.madeHandCategory || null,
+    made_hand_type: classification?.madeHandType || null,
+    effective_hand_category: classification?.effectiveHandCategory || null,
+    pair_type: classification?.pairType || null,
+    pair_source: classification?.pairSource || null,
+    trips_type: classification?.tripsType || null,
+    board_pairing:
+      typeof classification?.boardPairing === "boolean" ? classification.boardPairing : null,
+    showdown_strength: classification?.showdownStrength || null,
+    showdown_strength_tier: classification?.showdownStrengthTier || null,
+    showdown_relevance: classification?.showdownRelevance || null,
+    hero_contribution_level: classification?.heroContributionLevel || null,
+    board_made_hand: classification?.boardMadeHand || null,
+    board_pair_kicker_class: classification?.boardPairKickerClass || null,
+    kicker_strength: classification?.kickerStrength || null,
+    bluff_catcher: Boolean(classification?.bluffCatcher),
+  };
+}
+
+function resolvedStreetOrderForHand(hand = {}) {
+  const order = ["preflop", "flop", "turn", "river"];
+  const foldedStreet = String(hand?.heroOutcome?.foldedStreet || "")
+    .trim()
+    .toLowerCase();
+  if (order.includes(foldedStreet)) {
+    return order.slice(0, order.indexOf(foldedStreet) + 1);
+  }
+  const resolvedStreet = String(hand?.heroOutcome?.resolvedStreet || "")
+    .trim()
+    .toLowerCase();
+  if (order.includes(resolvedStreet)) {
+    return order.slice(0, order.indexOf(resolvedStreet) + 1);
+  }
+  if (hand?.board?.river) return order;
+  if (hand?.board?.turn) return order.slice(0, 3);
+  if (Array.isArray(hand?.board?.flop) && hand.board.flop.length >= 3) {
+    return order.slice(0, 2);
+  }
+  return order.slice(0, 1);
+}
+
+function toStreetAction(rawType) {
+  const action = String(rawType || "")
+    .trim()
+    .toLowerCase();
+  if (!action) return "none";
+  if (action === "post_small_blind" || action === "post_big_blind") return "post blind";
+  if (action === "post_ante") return "post ante";
+  return action;
+}
+
+function amountToBb(amount, bb) {
+  const num = Number(amount);
+  const bigBlind = Number(bb);
+  if (!Number.isFinite(num) || !Number.isFinite(bigBlind) || bigBlind <= 0) return null;
+  return Number((num / bigBlind).toFixed(2));
+}
+
+function amountToBbLabel(amount, bb) {
+  const asBb = amountToBb(amount, bb);
+  return asBb === null ? null : `${asBb.toFixed(1)}bb`;
+}
+
+function sizingAmountFromAction(action = {}) {
+  const type = String(action?.type || action?.action || "")
+    .trim()
+    .toLowerCase();
+  const toAmount = Number(action?.toAmount);
+  const amount = Number(action?.amount);
+  const hasPositiveToAmount = Number.isFinite(toAmount) && toAmount > 0;
+  const hasPositiveAmount = Number.isFinite(amount) && amount > 0;
+
+  if (type === "raise" || type === "jam") {
+    if (hasPositiveToAmount) return toAmount;
+    if (hasPositiveAmount) return amount;
+    return null;
+  }
+  if (type === "call" || type === "bet") {
+    if (hasPositiveAmount) return amount;
+    if (hasPositiveToAmount) return toAmount;
+    return null;
+  }
+  if (hasPositiveAmount) return amount;
+  if (hasPositiveToAmount) return toAmount;
+  return null;
+}
+
+function streetScoreFromLegacy(review = {}, street = "preflop") {
+  if (street === "preflop") return clampStreetScore(review?.preflop_score);
+  if (street === "flop") return clampStreetScore(review?.flop_score);
+  if (street === "turn") return clampStreetScore(review?.turn_score);
+  if (street === "river") return clampStreetScore(review?.river_score);
+  return null;
+}
+
+function semanticContribution(action = {}, priorCommitted = 0) {
+  const type = String(action?.type || "").trim().toLowerCase();
+  if (!type) return 0;
+  if (type === "raise" || type === "jam") {
+    const toAmount = Number(action?.toAmount);
+    if (Number.isFinite(toAmount)) {
+      const delta = toAmount - Number(priorCommitted || 0);
+      return Number.isFinite(delta) && delta > 0 ? delta : 0;
+    }
+  }
+  const amount = Number(action?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return amount;
+}
+
+function normalizeStreetActionRows(hand = {}) {
+  const order = ["preflop", "flop", "turn", "river"];
+  const rows = [];
+  for (const street of order) {
+    const actions = Array.isArray(hand?.actionsByStreet?.[street])
+      ? hand.actionsByStreet[street]
+      : [];
+    actions.forEach((action, index) => {
+      rows.push({
+        street,
+        index,
+        player: String(action?.player || "").trim(),
+        type: String(action?.type || "").trim().toLowerCase(),
+        amount: Number(action?.amount),
+        toAmount: Number(action?.toAmount),
+      });
+    });
+  }
+  return rows;
+}
+
+function detectJamTree({ hand = {}, heroName = "" } = {}) {
+  const rows = normalizeStreetActionRows(hand);
+  const byStreet = new Map(["preflop", "flop", "turn", "river"].map((street) => [street, []]));
+  for (const row of rows) {
+    if (!byStreet.has(row.street)) byStreet.set(row.street, []);
+    byStreet.get(row.street).push(row);
+  }
+  const preflopRows = byStreet.get("preflop") || [];
+  const firstJam = rows.find((row) => row.type === "jam");
+  const jamStreet = firstJam?.street || null;
+  const preflopJamCount = preflopRows.filter((row) => row.type === "jam").length;
+  const heroPreflopActions = preflopRows.filter((row) => row.player === heroName);
+  const heroJamPreflop = heroPreflopActions.some((row) => row.type === "jam");
+  const heroFoldedPreflop = heroPreflopActions.some((row) => row.type === "fold");
+  const allInBeforeFlop = jamStreet === "preflop" && preflopJamCount >= 2;
+  const handResolvedPreflop = allInBeforeFlop && !heroFoldedPreflop;
+  const postflopAgencyRemoved =
+    handResolvedPreflop &&
+    ["flop", "turn", "river"].every((street) => {
+      const heroRows = (byStreet.get(street) || []).filter(
+        (row) => row.player === heroName,
+      );
+      return heroRows.length === 0;
+    });
+  return {
+    jam_street: jamStreet,
+    preflop_jam_count: preflopJamCount,
+    all_in_before_flop: allInBeforeFlop,
+    hand_resolved_preflop: handResolvedPreflop,
+    postflop_agency_removed: postflopAgencyRemoved,
+  };
+}
+
+function detectCommitmentState({ hand = {}, heroName = "" } = {}) {
+  const seatRows = Array.isArray(hand?.seats) ? hand.seats : [];
+  const stacks = new Map();
+  const knownPlayers = new Set();
+  for (const seat of seatRows) {
+    const player = String(seat?.player || "").trim();
+    if (player) knownPlayers.add(player);
+    const chips = Number(seat?.chips);
+    if (!player || !Number.isFinite(chips) || chips <= 0) continue;
+    stacks.set(player, chips);
+  }
+
+  const rows = normalizeStreetActionRows(hand);
+  const order = ["preflop", "flop", "turn", "river"];
+  const byStreet = new Map(order.map((street) => [street, []]));
+  for (const row of rows) {
+    if (!byStreet.has(row.street)) byStreet.set(row.street, []);
+    byStreet.get(row.street).push(row);
+    if (row.player) knownPlayers.add(row.player);
+  }
+
+  const foldedPlayers = new Set();
+  const totalContrib = new Map();
+  const committedByStreet = new Map();
+  const allInPlayers = new Set();
+  const streetSnapshots = {};
+  let preflopAggressor = null;
+
+  for (const street of order) {
+    committedByStreet.clear();
+    const streetRows = byStreet.get(street) || [];
+    for (const row of streetRows) {
+      const player = row.player;
+      if (!player) continue;
+      const priorStreetCommitted = committedByStreet.get(player) || 0;
+      const contribution = semanticContribution(row, priorStreetCommitted);
+      if (contribution > 0) {
+        committedByStreet.set(player, priorStreetCommitted + contribution);
+        totalContrib.set(player, (totalContrib.get(player) || 0) + contribution);
+      }
+      if (row.type === "fold") foldedPlayers.add(player);
+      if (row.type === "jam") allInPlayers.add(player);
+      const stack = stacks.get(player);
+      const total = totalContrib.get(player) || 0;
+      if (Number.isFinite(stack) && total >= stack - 0.01) {
+        allInPlayers.add(player);
+      }
+      if (
+        street === "preflop" &&
+        ["raise", "bet", "jam"].includes(row.type)
+      ) {
+        preflopAggressor = row.player;
+      }
+    }
+
+    const livePlayers = Array.from(knownPlayers.values()).filter(
+      (player) => !foldedPlayers.has(player),
+    );
+    if (!livePlayers.length) {
+      streetSnapshots[street] = {
+        live_players: 0,
+        all_in_players: 0,
+        all_players_committed: true,
+      };
+      continue;
+    }
+    const liveAllInCount = livePlayers.filter((player) => allInPlayers.has(player)).length;
+    const allPlayersCommitted =
+      livePlayers.length <= 1 || liveAllInCount === livePlayers.length;
+    streetSnapshots[street] = {
+      live_players: livePlayers.length,
+      all_in_players: liveAllInCount,
+      all_players_committed: allPlayersCommitted,
+    };
+  }
+
+  return {
+    preflop_aggressor: preflopAggressor,
+    street_snapshots: streetSnapshots,
+  };
+}
+
+function detectIsolationSpot({
+  heroEvent = null,
+  streetEvents = [],
+  heroName = "",
+} = {}) {
+  if (!heroEvent) return false;
+  const street = String(heroEvent?.street || "").toLowerCase();
+  if (street !== "preflop") return false;
+  const heroIndex = streetEvents.findIndex(
+    (row) =>
+      row.player === heroName &&
+      row.index === heroEvent.index &&
+      row.type === heroEvent.type,
+  );
+  if (heroIndex <= 0) return false;
+  const prior = streetEvents.slice(0, heroIndex);
+  const priorAggressors = prior.filter((row) =>
+    ["raise", "bet", "jam"].includes(row.type),
+  );
+  const priorCallers = prior.filter((row) => row.type === "call");
+  return priorAggressors.length >= 1 && priorCallers.length >= 1;
+}
+
+function classifyPreflopAction({
+  heroEvent = null,
+  streetEvents = [],
+  heroName = "",
+  effectiveStackBb = null,
+} = {}) {
+  if (!heroEvent) {
+    return {
+      action_type: "none",
+      all_in: false,
+      facing_jam: false,
+      facing_open: false,
+      isolation_spot: false,
+      multiway_all_in: false,
+      effective_stack_bb: effectiveStackBb,
+    };
+  }
+  const heroType = String(heroEvent?.type || "").toLowerCase();
+  const heroIndex = streetEvents.findIndex(
+    (row) =>
+      row.player === heroName &&
+      row.index === heroEvent.index &&
+      row.type === heroEvent.type,
+  );
+  const prior = heroIndex >= 0 ? streetEvents.slice(0, heroIndex) : [];
+  const priorAggressors = prior.filter((row) =>
+    ["raise", "bet", "jam"].includes(row.type),
+  );
+  const priorCalls = prior.filter((row) => row.type === "call");
+  const priorJam = prior.some((row) => row.type === "jam");
+  const isolationSpot = detectIsolationSpot({
+    heroEvent,
+    streetEvents,
+    heroName,
+  });
+  const jamCountStreet = streetEvents.filter((row) => row.type === "jam").length;
+  let actionType = heroType || "none";
+
+  if (heroType === "jam") {
+    if (priorAggressors.length === 0) actionType = "open_jam";
+    else if (isolationSpot) actionType = "isolation_jam";
+    else actionType = "reshove";
+  } else if (heroType === "raise") {
+    if (priorAggressors.length === 0) actionType = "open_raise";
+    else if (priorCalls.length > 0) actionType = "squeeze";
+    else actionType = "3bet_or_4bet";
+  } else if (heroType === "call") {
+    if (priorAggressors.length > 0 && priorCalls.length > 0) actionType = "cold_call";
+    else if (priorAggressors.length > 0) actionType = "flat_call";
+    else actionType = "limp";
+  } else if (heroType === "fold" && priorJam) {
+    actionType = "fold_to_jam";
+  }
+
+  return {
+    action_type: actionType,
+    all_in: heroType === "jam",
+    facing_jam: priorJam,
+    facing_open:
+      priorAggressors.length > 0 && !priorJam,
+    isolation_spot: isolationSpot,
+    multiway_all_in: jamCountStreet >= 2,
+    effective_stack_bb: effectiveStackBb,
+  };
+}
+
+function classifyPostflopAction({
+  street = "",
+  heroEvent = null,
+  streetEvents = [],
+  heroName = "",
+  preflopAggressor = null,
+  deterministicTags = [],
+  showdownReached = false,
+} = {}) {
+  if (!heroEvent) {
+    return {
+      action_type: "none",
+      all_in: false,
+      facing_jam: false,
+      facing_open: false,
+      isolation_spot: false,
+      multiway_all_in: false,
+      effective_stack_bb: null,
+    };
+  }
+  const safeStreet = String(street || "").toLowerCase();
+  const heroType = String(heroEvent?.type || "").toLowerCase();
+  const heroIndex = streetEvents.findIndex(
+    (row) =>
+      row.player === heroName &&
+      row.index === heroEvent.index &&
+      row.type === heroEvent.type,
+  );
+  const prior = heroIndex >= 0 ? streetEvents.slice(0, heroIndex) : [];
+  const priorAggressive = prior.filter((row) =>
+    ["bet", "raise", "jam"].includes(row.type),
+  );
+  const priorJam = prior.some((row) => row.type === "jam");
+  const ratioToPot = Number(heroEvent?.ratio_to_pot);
+  let actionType = heroType || "none";
+
+  if (
+    heroType === "bet" &&
+    safeStreet === "flop" &&
+    preflopAggressor &&
+    preflopAggressor !== heroName &&
+    priorAggressive.length === 0
+  ) {
+    actionType = "probe_bet";
+  } else if (
+    heroType === "bet" &&
+    safeStreet === "turn" &&
+    preflopAggressor === heroName &&
+    !streetEvents.some(
+      (row) =>
+        row.player === heroName &&
+        row.street === "flop" &&
+        ["bet", "raise", "jam"].includes(row.type),
+    )
+  ) {
+    actionType = "delayed_cbet";
+  } else if (heroType === "bet" && safeStreet === "river" && Number.isFinite(ratioToPot)) {
+    if (ratioToPot >= 1) actionType = "river_overbet";
+    else if (ratioToPot <= 0.33) actionType = "blocker_bet";
+  } else if (
+    heroType === "check" &&
+    safeStreet === "river" &&
+    priorAggressive.length === 0 &&
+    showdownReached
+  ) {
+    actionType = "check_back_showdown";
+  } else if (
+    heroType === "call" &&
+    safeStreet === "river" &&
+    (priorJam || deterministicTags.includes("bluff_catcher_node"))
+  ) {
+    actionType = "bluff_catch_call";
+  }
+
+  return {
+    action_type: actionType,
+    all_in: heroType === "jam",
+    facing_jam: priorJam,
+    facing_open: false,
+    isolation_spot: false,
+    multiway_all_in: false,
+    effective_stack_bb: null,
+  };
+}
+
+function isWeakUnpairedCbetCandidate(classification = {}) {
+  const madeHandCategory = String(classification?.made_hand_category || "")
+    .trim()
+    .toLowerCase();
+  const madeHandType = String(classification?.made_hand_type || "")
+    .trim()
+    .toLowerCase();
+  const showdownStrength = String(classification?.showdown_strength || "")
+    .trim()
+    .toLowerCase();
+  const highCardProfile =
+    madeHandCategory === "air" ||
+    madeHandType === "high_card" ||
+    /_high$/.test(madeHandType);
+  return highCardProfile && (showdownStrength === "none" || showdownStrength === "weak");
+}
+
+function deriveFlopCbetStrategicIntent({
+  street = "",
+  decisionNodeType = "",
+  semanticAction = {},
+  classification = {},
+} = {}) {
+  const safeStreet = String(street || "").toLowerCase();
+  if (safeStreet !== "flop") return null;
+  const nodeType = String(decisionNodeType || "").toLowerCase();
+  const actionType = String(semanticAction?.action_type || "").toLowerCase();
+  const isCbetDecision = nodeType === "cbet_decision";
+  const isBettingLine =
+    actionType === "bet" ||
+    actionType === "delayed_cbet" ||
+    actionType === "probe_bet";
+  if (!isCbetDecision && !isBettingLine) return null;
+
+  const madeHandCategory = String(classification?.made_hand_category || "")
+    .trim()
+    .toLowerCase();
+  const showdownStrength = String(classification?.showdown_strength || "")
+    .trim()
+    .toLowerCase();
+
+  if (isWeakUnpairedCbetCandidate(classification)) {
+    return {
+      cbet_intent: "bluff_cbet",
+      cbet_intent_focus: [
+        "fold_equity",
+        "initiative",
+        "equity_denial",
+        "range_pressure",
+        "realization_denial",
+      ],
+    };
+  }
+
+  if (
+    ["straight", "flush", "full_house", "quads", "trips", "two_pair"].includes(
+      madeHandCategory,
+    ) ||
+    showdownStrength === "strong"
+  ) {
+    return {
+      cbet_intent: "value_cbet",
+      cbet_intent_focus: ["value_extraction", "stack_building", "range_advantage"],
+    };
+  }
+
+  if (madeHandCategory === "pair" && showdownStrength === "medium") {
+    return {
+      cbet_intent: "protection_cbet",
+      cbet_intent_focus: ["equity_denial", "protection", "thin_value"],
+    };
+  }
+
+  if (madeHandCategory === "pair" && showdownStrength === "weak") {
+    return {
+      cbet_intent: "thin_value_cbet",
+      cbet_intent_focus: ["thin_value", "equity_denial", "range_pressure"],
+    };
+  }
+
+  return {
+    cbet_intent: "range_cbet",
+    cbet_intent_focus: ["range_pressure", "initiative", "equity_realization"],
+  };
+}
+
+function detectStreetAgency({
+  street = "",
+  decisionStreet = "",
+  heroDecisionStreetSet = new Set(),
+  commitmentState = {},
+  jamTree = {},
+} = {}) {
+  const order = ["preflop", "flop", "turn", "river"];
+  const safeStreet = String(street || "").toLowerCase();
+  const idx = order.indexOf(safeStreet);
+  const prevStreet = idx > 0 ? order[idx - 1] : null;
+  const snapshots = commitmentState?.street_snapshots || {};
+  const prevSnapshot = prevStreet ? snapshots[prevStreet] || {} : {};
+  const currentSnapshot = snapshots[safeStreet] || {};
+  const heroHasAgency = heroDecisionStreetSet.has(safeStreet) || safeStreet === decisionStreet;
+  const allPlayersCommitted = Boolean(currentSnapshot?.all_players_committed);
+  const automaticRunout =
+    safeStreet !== "preflop" &&
+    Boolean(prevSnapshot?.all_players_committed) &&
+    !heroHasAgency;
+  const handResolvedPreflop = Boolean(jamTree?.hand_resolved_preflop);
+  const postflopAgencyRemoved = Boolean(jamTree?.postflop_agency_removed);
+  const postflopNoAgency =
+    safeStreet !== "preflop" && handResolvedPreflop && postflopAgencyRemoved;
+
+  return {
+    is_decision_street: heroHasAgency && !postflopNoAgency,
+    hero_has_agency: heroHasAgency && !postflopNoAgency,
+    all_players_committed: allPlayersCommitted,
+    automatic_runout: automaticRunout || postflopNoAgency,
+    hand_resolved_preflop: handResolvedPreflop,
+    all_in_before_flop: Boolean(jamTree?.all_in_before_flop),
+    postflop_agency_removed: postflopAgencyRemoved,
+  };
+}
+
+function inferHeroPositionStateForStreet({
+  streetEvents = [],
+  heroName = "",
+} = {}) {
+  const firstHeroIndex = streetEvents.findIndex((row) => row.player === heroName);
+  const firstVillainIndex = streetEvents.findIndex((row) => row.player !== heroName);
+  if (firstHeroIndex === -1 || firstVillainIndex === -1) return "unknown";
+  return firstHeroIndex < firstVillainIndex ? "out_of_position" : "in_position";
+}
+
+function deriveNodeSemantics({
+  street = "",
+  streetEvents = [],
+  heroDecisionEvent = null,
+  heroDecisionEvents = [],
+  heroName = "",
+  preflopAggressor = null,
+  semanticAction = {},
+  atDecisionStreet = false,
+  validatedHandState = {},
+  agency = {},
+} = {}) {
+  const safeStreet = String(street || "").toLowerCase();
+  const heroInitialEvent =
+    heroDecisionEvents.length > 0 ? heroDecisionEvents[0] : null;
+  const heroInitialAction = String(heroInitialEvent?.type || "").toLowerCase() || null;
+  const heroFinalAction = String(heroDecisionEvent?.type || "").toLowerCase() || null;
+  const heroFinalIndex = Number.isFinite(Number(heroDecisionEvent?.index))
+    ? Number(heroDecisionEvent.index)
+    : -1;
+  const beforeFinal =
+    heroFinalIndex >= 0
+      ? streetEvents.filter((row) => Number(row?.index) < heroFinalIndex)
+      : streetEvents.slice();
+  const facingAggressiveAtFinal = beforeFinal.some(
+    (row) =>
+      row.player !== heroName && ["bet", "raise", "jam"].includes(String(row?.type || "").toLowerCase()),
+  );
+  const facingBetAfterCheck =
+    heroInitialAction === "check" && facingAggressiveAtFinal;
+  const heroPositionState = inferHeroPositionStateForStreet({
+    streetEvents,
+    heroName,
+  });
+
+  let decisionNodeType = "street_decision";
+  if (facingBetAfterCheck) {
+    if (heroFinalAction === "call") decisionNodeType = "check_call_decision";
+    else if (heroFinalAction === "raise" || heroFinalAction === "jam")
+      decisionNodeType = "check_raise_decision";
+    else if (heroFinalAction === "fold") decisionNodeType = "check_fold_decision";
+    else decisionNodeType = "check_response_decision";
+  } else if (
+    safeStreet === "flop" &&
+    preflopAggressor === heroName &&
+    (heroFinalAction === "bet" || heroFinalAction === "check")
+  ) {
+    decisionNodeType = "cbet_decision";
+  } else if (
+    safeStreet === "turn" &&
+    preflopAggressor === heroName &&
+    (semanticAction?.action_type === "delayed_cbet" || heroFinalAction === "bet")
+  ) {
+    decisionNodeType = "delayed_cbet_decision";
+  } else if (safeStreet === "river" && semanticAction?.action_type === "bluff_catch_call") {
+    decisionNodeType = "river_bluffcatch_decision";
+  } else if (safeStreet === "turn" && facingAggressiveAtFinal && preflopAggressor !== heroName) {
+    decisionNodeType = "turn_probe_response";
+  } else if (semanticAction?.facing_jam && ["call", "fold"].includes(heroFinalAction)) {
+    decisionNodeType = "jam_call_decision";
+  }
+
+  const fromValidated = atDecisionStreet && agency?.is_decision_street
+    ? (Array.isArray(validatedHandState?.legalActions) ? validatedHandState.legalActions : [])
+        .map((action) => String(action || "").trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+  if (fromValidated.length > 0) {
+    return {
+      hero_position_state: heroPositionState,
+      hero_initial_action: heroInitialAction,
+      facing_bet_after_check: facingBetAfterCheck,
+      decision_node_type: decisionNodeType,
+      hero_decision_options: Array.from(new Set(fromValidated)),
+    };
+  }
+
+  let options = [];
+  if (facingAggressiveAtFinal) {
+    options = ["call", "fold"];
+    if (!agency?.all_players_committed) options.push("raise");
+  } else {
+    options = ["check", "bet"];
+  }
+  if (heroFinalAction === "raise" || heroFinalAction === "jam") {
+    options = ["call", "fold", "raise"];
+  }
+  if (heroFinalAction === "call" && !options.includes("call")) options.push("call");
+  if (heroFinalAction === "fold" && !options.includes("fold")) options.push("fold");
+  if (heroFinalAction === "check" && !options.includes("check")) options.push("check");
+  if (heroFinalAction === "bet" && !options.includes("bet")) options.push("bet");
+
+  return {
+    hero_position_state: heroPositionState,
+    hero_initial_action: heroInitialAction,
+    facing_bet_after_check: facingBetAfterCheck,
+    decision_node_type: decisionNodeType,
+    hero_decision_options: Array.from(new Set(options)),
+  };
+}
+
+function safeActionType(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isDecisionType(type = "") {
+  return ["fold", "check", "call", "bet", "raise", "jam"].includes(
+    safeActionType(type),
+  );
+}
+
+function isAggressiveType(type = "") {
+  return ["bet", "raise", "jam"].includes(safeActionType(type));
+}
+
+function buildActionTimeState({
+  hand = {},
+  street = "",
+  streetEvents = [],
+  heroDecisionEvent = null,
+  heroName = "",
+  bigBlind = null,
+} = {}) {
+  const safeStreet = String(street || "").toLowerCase();
+  if (!heroDecisionEvent) {
+    return {
+      hero_action_index: null,
+      hero_position: String(hand?.heroPosition || "").trim().toUpperCase() || null,
+      pot_state_when_hero_acted: {
+        pot_before_action_bb: null,
+        current_bet_bb: null,
+        hero_committed_bb: null,
+        to_call_bb: null,
+      },
+      players_remaining: [],
+      prior_actions: [],
+      facing_action: null,
+      is_first_in: false,
+      open_opportunity: false,
+      facing_open: false,
+      facing_raise: false,
+      decision_type: "street_decision",
+    };
+  }
+
+  const heroIndex = Number.isFinite(Number(heroDecisionEvent?.index))
+    ? Number(heroDecisionEvent.index)
+    : -1;
+  const priorEvents =
+    heroIndex >= 0
+      ? streetEvents.filter((row) => Number(row?.index) < heroIndex)
+      : [];
+
+  const committed = new Map();
+  let potBefore = 0;
+  let currentBet = 0;
+  let facingAction = null;
+  const priorActions = [];
+
+  for (const row of priorEvents) {
+    const player = String(row?.player || "").trim();
+    if (!player) continue;
+    const priorCommitted = committed.get(player) || 0;
+    const contribution = semanticContribution(row, priorCommitted);
+    if (contribution > 0) {
+      committed.set(player, priorCommitted + contribution);
+      potBefore += contribution;
+    }
+    if (row.type === "bet") {
+      currentBet = Math.max(currentBet, contribution);
+    } else if (row.type === "raise" || row.type === "jam") {
+      if (Number.isFinite(Number(row?.toAmount))) {
+        currentBet = Math.max(currentBet, Number(row.toAmount));
+      } else if (contribution > 0) {
+        currentBet = Math.max(currentBet, contribution);
+      }
+    }
+    if (player !== heroName && isAggressiveType(row?.type)) {
+      facingAction = row;
+    }
+
+    priorActions.push({
+      player,
+      action: safeActionType(row?.type),
+      sizing_bb: amountToBb(sizingAmountFromAction(row), bigBlind),
+    });
+  }
+
+  const folded = new Set();
+  for (const row of priorEvents) {
+    if (safeActionType(row?.type) !== "fold") continue;
+    const player = String(row?.player || "").trim();
+    if (player) folded.add(player);
+  }
+  const players = Array.isArray(hand?.seats)
+    ? hand.seats
+        .map((seat) => String(seat?.player || "").trim())
+        .filter(Boolean)
+    : [];
+  const playersRemaining = players.filter((player) => !folded.has(player));
+
+  const heroCommitted = committed.get(heroName) || 0;
+  const toCall = Math.max(0, currentBet - heroCommitted);
+  const potBeforeBb = amountToBb(potBefore, bigBlind);
+  const currentBetBb = amountToBb(currentBet, bigBlind);
+  const heroCommittedBb = amountToBb(heroCommitted, bigBlind);
+  const toCallBb = amountToBb(toCall, bigBlind);
+  const priorVoluntaryEntries = priorEvents.filter((row) => {
+    if (String(row?.player || "").trim() === heroName) return false;
+    const type = safeActionType(row?.type);
+    return ["call", "bet", "raise", "jam"].includes(type);
+  });
+  const priorAggressive = priorEvents.filter((row) => isAggressiveType(row?.type));
+  const facingOpen = priorAggressive.length > 0;
+  const firstInOpportunity =
+    safeStreet === "preflop" && priorVoluntaryEntries.length === 0;
+
+  let decisionType = "street_decision";
+  if (safeStreet === "preflop") {
+    if (firstInOpportunity) decisionType = "open_decision";
+    else if (facingOpen) decisionType = "facing_open_decision";
+  } else if (facingOpen) {
+    decisionType = "response_decision";
+  }
+
+  return {
+    hero_action_index: heroIndex >= 0 ? heroIndex : null,
+    hero_position: String(hand?.heroPosition || "").trim().toUpperCase() || null,
+    pot_state_when_hero_acted: {
+      pot_before_action_bb: potBeforeBb,
+      current_bet_bb: currentBetBb,
+      hero_committed_bb: heroCommittedBb,
+      to_call_bb: toCallBb,
+    },
+    players_remaining: playersRemaining,
+    prior_actions: priorActions,
+    facing_action: facingAction
+      ? {
+          player: String(facingAction?.player || "").trim() || null,
+          action: safeActionType(facingAction?.type),
+          sizing_bb: amountToBb(sizingAmountFromAction(facingAction), bigBlind),
+        }
+      : null,
+    is_first_in: firstInOpportunity,
+    open_opportunity: safeStreet === "preflop" && firstInOpportunity,
+    facing_open: facingOpen,
+    facing_raise: facingOpen,
+    decision_type: decisionType,
+  };
+}
+
+function fallbackAuditHeuristicForStreet({
+  street = "",
+  heroPosition = "",
+  semanticAction = {},
+  stackDepthBb = null,
+} = {}) {
+  const safeStreet = String(street || "").toLowerCase();
+  if (safeStreet !== "preflop") return null;
+  const pos = String(heroPosition || "").toUpperCase();
+  const actionType = String(semanticAction?.action_type || "").toLowerCase();
+  const facingOpen = Boolean(semanticAction?.facing_open);
+  const isBlind = pos === "BB" || pos === "SB";
+  if (!facingOpen || !isBlind) return null;
+  const shortStack = Number.isFinite(Number(stackDepthBb)) && Number(stackDepthBb) <= 12;
+  return {
+    street: "preflop",
+    chart_recommendation: "mixed_continue",
+    chart_confidence: shortStack ? "low" : "medium",
+    spot_classification: pos === "BB" ? "bb_defend_vs_open" : "sb_defend_vs_open",
+    solver_mix_estimate:
+      actionType === "fold_to_jam" || actionType === "fold" ? "mixed_continue" : "likely_continue",
+    population_adjustment: shortStack ? "short_stack_tighter_defend" : null,
+  };
+}
+
+function collectStreetAiContexts(handContext = {}, baseReview = {}) {
+  const hand = handContext?.hand || handContext || {};
+  const deterministic =
+    handContext?.deterministicIntelligence || handContext?.deterministic_intelligence || {};
+  const validatedHandState = handContext?.validatedHandState || {};
+  const decisionStreet = String(validatedHandState?.street || "")
+    .trim()
+    .toLowerCase();
+  const streets = resolvedStreetOrderForHand(hand);
+  const bigBlind = Number(hand?.blinds?.bigBlind);
+  const streetSummaries = Array.isArray(deterministic?.street_summaries)
+    ? deterministic.street_summaries
+    : [];
+  const replayAnnotations = Array.isArray(deterministic?.replay_annotations)
+    ? deterministic.replay_annotations
+    : [];
+  const handTags = Array.isArray(deterministic?.strategic_tags)
+    ? deterministic.strategic_tags
+    : [];
+  const mistakeCandidates = Array.isArray(deterministic?.mistake_candidates)
+    ? deterministic.mistake_candidates
+    : [];
+  const auditByStreet = new Map(
+    (Array.isArray(deterministic?.audit_alignment?.by_street)
+      ? deterministic.audit_alignment.by_street
+      : []
+    )
+      .map((row) => ({
+        street: String(row?.street || "").trim().toLowerCase(),
+        value: row,
+      }))
+      .filter((row) => ["preflop", "flop", "turn", "river"].includes(row.street))
+      .map((row) => [row.street, row.value]),
+  );
+  const actionByStreet = hand?.heroActionsByStreet || {};
+  const fallbackClassification = handContext?.handClassification || {};
+  const heroName = String(hand?.heroName || "Hero").trim() || "Hero";
+  const jamTree = detectJamTree({ hand, heroName });
+  const commitmentState = detectCommitmentState({ hand, heroName });
+  const actionRows = normalizeStreetActionRows(hand);
+  const heroDecisionStreetSet = new Set();
+  for (const row of actionRows) {
+    if (row.player !== heroName) continue;
+    if (["fold", "check", "call", "bet", "raise", "jam"].includes(row.type)) {
+      heroDecisionStreetSet.add(row.street);
+    }
+  }
+
+  return streets.map((street) => {
+    const streetBoardCards = boardCardsForStreet(hand?.board, street);
+    const streetClassification = buildStreetClassification({
+      validatedHandState,
+      hand,
+      street,
+      fallbackClassification,
+    });
+    const heroActions = Array.isArray(actionByStreet?.[street]) ? actionByStreet[street] : [];
+    const heroLast = heroActions[heroActions.length - 1] || {};
+    const streetEvents = actionRows.filter((row) => row.street === street);
+    const heroDecisionEvents = streetEvents.filter(
+      (row) =>
+        row.player === heroName &&
+        ["fold", "check", "call", "bet", "raise", "jam"].includes(row.type),
+    );
+    const heroDecisionEvent =
+      heroDecisionEvents.length > 0
+        ? heroDecisionEvents[heroDecisionEvents.length - 1]
+        : null;
+    const summary = streetSummaries.find((item) => item?.street === street) || {};
+    const annotation = replayAnnotations.find((item) => item?.street === street) || {};
+    const agency = detectStreetAgency({
+      street,
+      decisionStreet,
+      heroDecisionStreetSet,
+      commitmentState,
+      jamTree,
+    });
+    const atDecisionStreet = street === decisionStreet;
+    const actionTimeState = buildActionTimeState({
+      hand,
+      street,
+      streetEvents,
+      heroDecisionEvent,
+      heroName,
+      bigBlind,
+    });
+
+    const ratioToPot =
+      Number.isFinite(Number(summary?.pot_end_bb)) &&
+      Number.isFinite(Number(sizingAmountFromAction(heroDecisionEvent))) &&
+      bigBlind > 0
+        ? (() => {
+            const amtBb = amountToBb(sizingAmountFromAction(heroDecisionEvent), bigBlind);
+            const potBb = Number(summary?.pot_end_bb);
+            if (!Number.isFinite(amtBb) || !Number.isFinite(potBb) || potBb <= 0) return null;
+            return Number((amtBb / potBb).toFixed(2));
+          })()
+        : null;
+    const heroEventForSemantic =
+      heroDecisionEvent && Number.isFinite(ratioToPot)
+        ? { ...heroDecisionEvent, ratio_to_pot: ratioToPot }
+        : heroDecisionEvent;
+    const semanticAction =
+      street === "preflop"
+        ? classifyPreflopAction({
+            heroEvent: heroEventForSemantic,
+            streetEvents,
+            heroName,
+            effectiveStackBb: Number.isFinite(Number(validatedHandState?.effectiveStackBB))
+              ? Number(validatedHandState.effectiveStackBB)
+              : null,
+          })
+        : classifyPostflopAction({
+            street,
+            heroEvent: heroEventForSemantic,
+            streetEvents,
+            heroName,
+            preflopAggressor: commitmentState?.preflop_aggressor || null,
+            deterministicTags: Array.isArray(summary?.strategic_tags)
+              ? summary.strategic_tags
+              : [],
+            showdownReached: Boolean(hand?.hadShowdown),
+          });
+    const auditHeuristic =
+      auditByStreet.get(street) ||
+      fallbackAuditHeuristicForStreet({
+        street,
+        heroPosition: hand?.heroPosition,
+        semanticAction,
+        stackDepthBb: validatedHandState?.effectiveStackBB,
+      });
+    const nodeSemantics = deriveNodeSemantics({
+      street,
+      streetEvents,
+      heroDecisionEvent: heroEventForSemantic,
+      heroDecisionEvents,
+      heroName,
+      preflopAggressor: commitmentState?.preflop_aggressor || null,
+      semanticAction,
+      atDecisionStreet,
+      validatedHandState,
+      agency,
+    });
+    const flopCbetIntent = deriveFlopCbetStrategicIntent({
+      street,
+      decisionNodeType: nodeSemantics?.decision_node_type,
+      semanticAction,
+      classification: streetClassification,
+    });
+    const semanticActionWithIntent =
+      flopCbetIntent && typeof flopCbetIntent === "object"
+        ? {
+            ...semanticAction,
+            ...flopCbetIntent,
+          }
+        : semanticAction;
+    const legalActions = agency.is_decision_street
+      ? (Array.isArray(nodeSemantics?.hero_decision_options)
+          ? nodeSemantics.hero_decision_options
+          : []
+        )
+          .map((action) => String(action || "").trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+
+    return {
+      hand_id: String(hand?.handId || hand?.handKey || "").trim() || null,
+      street,
+      is_decision_street: agency.is_decision_street,
+      hero_has_agency: agency.hero_has_agency,
+      all_players_committed: agency.all_players_committed,
+      automatic_runout: agency.automatic_runout,
+      hand_semantics: {
+        hand_resolved_preflop: agency.hand_resolved_preflop,
+        all_in_before_flop: agency.all_in_before_flop,
+        postflop_agency_removed: agency.postflop_agency_removed,
+      },
+      stack_depth_bb: Number.isFinite(Number(validatedHandState?.effectiveStackBB))
+        ? Number(validatedHandState.effectiveStackBB)
+        : null,
+      board_cards: streetBoardCards,
+      legal_actions: legalActions,
+      hero_position_state: nodeSemantics.hero_position_state,
+      hero_initial_action: nodeSemantics.hero_initial_action,
+      facing_bet_after_check: nodeSemantics.facing_bet_after_check,
+      decision_node_type: nodeSemantics.decision_node_type,
+      hero_decision_options: nodeSemantics.hero_decision_options,
+      action_time_state: actionTimeState,
+      decision_type: actionTimeState.decision_type,
+      facing_open: actionTimeState.facing_open,
+      facing_raise: actionTimeState.facing_raise,
+      first_in_opportunity: actionTimeState.open_opportunity,
+      action_taken: {
+        action: toStreetAction(heroLast?.type),
+        sizing: amountToBbLabel(sizingAmountFromAction(heroLast), bigBlind),
+      },
+      metrics: {
+        pot_size_bb: atDecisionStreet
+          ? amountToBb(validatedHandState?.potSize, bigBlind)
+          : Number.isFinite(Number(summary?.pot_end_bb))
+            ? Number(summary.pot_end_bb)
+            : null,
+        spr: atDecisionStreet
+          ? Number.isFinite(Number(validatedHandState?.math?.spr))
+            ? Number(validatedHandState.math.spr)
+            : null
+          : null,
+        facing_size_bb: atDecisionStreet
+          ? amountToBb(validatedHandState?.facingBet, bigBlind)
+          : null,
+        pot_odds:
+          atDecisionStreet && Number.isFinite(Number(validatedHandState?.math?.callAmount))
+            ? (() => {
+                const callAmount = Number(validatedHandState.math.callAmount);
+                const finalPotIfCall = Number(validatedHandState?.math?.finalPotIfCall);
+                if (!Number.isFinite(callAmount) || !Number.isFinite(finalPotIfCall) || finalPotIfCall <= 0) {
+                  return null;
+                }
+                return `${Math.round((callAmount / finalPotIfCall) * 100)}%`;
+              })()
+            : null,
+      },
+      semantic_action: semanticActionWithIntent,
+      audit_heuristics: auditHeuristic || null,
+      deterministic: {
+        pressure_level: String(annotation?.pressure_level || summary?.pressure_level || "low"),
+        commitment_level: String(
+          annotation?.commitment_level || summary?.commitment_level || "low",
+        ),
+        aggression_shift: Number.isFinite(Number(annotation?.aggression_shift))
+          ? Number(annotation.aggression_shift)
+          : Number.isFinite(Number(summary?.aggression_shift))
+            ? Number(summary.aggression_shift)
+            : 0,
+        spr_tier: String(summary?.spr_tier || "unknown"),
+        street_tags: Array.isArray(summary?.strategic_tags) ? summary.strategic_tags : [],
+        hand_tags: handTags,
+        relevant_mistake_candidates: mistakeCandidates.filter(
+          (item) => String(item?.street || "").toLowerCase() === street,
+        ),
+        audit_heuristics: auditHeuristic || null,
+      },
+      classification: {
+        ...streetClassification,
+      },
+      seed_score: streetScoreFromLegacy(baseReview, street),
+      seed_confidence:
+        ["low", "medium", "high"].includes(String(baseReview?.confidence || "").toLowerCase())
+          ? String(baseReview.confidence).toLowerCase()
+          : "medium",
+      seed_takeaway:
+        Number(streetScoreFromLegacy(baseReview, street)) <= -1
+          ? String(baseReview?.primary_leak || "").trim()
+          : String(baseReview?.what_was_good || "").trim(),
+    };
+  });
+}
+
+function sanitizePreferredAction(preferredAction = {}, legalActions = []) {
+  const actionRaw = String(preferredAction?.action || "")
+    .trim()
+    .toLowerCase();
+  const legal = (Array.isArray(legalActions) ? legalActions : [])
+    .map((action) => String(action || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!legal.length) {
+    return {
+      action: actionRaw || "check",
+      sizing: String(preferredAction?.sizing || "").trim() || null,
+    };
+  }
+  if (legal.includes(actionRaw)) {
+    return {
+      action: actionRaw,
+      sizing: String(preferredAction?.sizing || "").trim() || null,
+    };
+  }
+  const fallbackAction = legal.includes("check")
+    ? "check"
+    : legal.includes("call")
+      ? "call"
+      : legal[0];
+  return {
+    action: fallbackAction || "check",
+    sizing: null,
+  };
+}
+
+function canonicalizeActionLabel(action = "") {
+  const value = String(action || "")
+    .trim()
+    .toLowerCase();
+  if (!value) return "unknown";
+  if (["raise", "open_raise", "squeeze", "3bet_or_4bet", "3-bet", "4-bet"].includes(value)) {
+    return "raise";
+  }
+  if (["jam", "open_jam", "reshove", "isolation_jam"].includes(value)) {
+    return "jam";
+  }
+  if (["call", "flat_call", "cold_call", "bluff_catch_call"].includes(value)) {
+    return "call";
+  }
+  if (["bet", "probe_bet", "delayed_cbet", "river_overbet", "blocker_bet"].includes(value)) {
+    return "bet";
+  }
+  if (["check", "check_back_showdown"].includes(value)) {
+    return "check";
+  }
+  if (["fold", "fold_to_jam"].includes(value)) {
+    return "fold";
+  }
+  return value;
+}
+
+function parseBbSizing(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!text.includes("bb")) return null;
+  const match = text.match(/(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const num = Number(match[1]);
+  return Number.isFinite(num) ? num : null;
+}
+
+function areActionAndSizingAligned({
+  actionTaken = {},
+  preferredAction = {},
+} = {}) {
+  const takenAction = canonicalizeActionLabel(actionTaken?.action);
+  const preferred = canonicalizeActionLabel(preferredAction?.action);
+  if (!takenAction || !preferred || takenAction === "unknown" || preferred === "unknown") {
+    return false;
+  }
+  if (takenAction !== preferred) return false;
+
+  const takenSizing = parseBbSizing(actionTaken?.sizing ?? actionTaken?.size);
+  const preferredSizing = parseBbSizing(preferredAction?.sizing ?? preferredAction?.size);
+  if (takenSizing === null || preferredSizing === null) return true;
+  return Math.abs(takenSizing - preferredSizing) <= 0.25;
+}
+
+function constrainStreetAnalysisText(street, analysis = {}) {
+  const out = {
+    insight: String(analysis?.insight || "").trim(),
+    range_context: String(analysis?.range_context || "").trim(),
+    board_texture: String(analysis?.board_texture || "").trim(),
+    sizing_commentary: String(analysis?.sizing_commentary || "").trim(),
+    plan_commentary: String(analysis?.plan_commentary || "").trim(),
+    takeaway: String(analysis?.takeaway || "").trim(),
+  };
+  const safeStreet = String(street || "").toLowerCase();
+  const trimTo = (value, max) => {
+    if (value.length <= max) return value;
+    return `${value.slice(0, Math.max(0, max - 3)).trim()}...`;
+  };
+  for (const key of Object.keys(out)) {
+    out[key] = trimTo(out[key], 240);
+  }
+  if (safeStreet === "preflop") {
+    for (const key of ["insight", "range_context", "plan_commentary", "takeaway"]) {
+      out[key] = out[key].replace(/\b(flop|turn|river)\b/gi, "postflop");
+    }
+  }
+  return out;
+}
+
+function chartQualifiedContinueSpot(auditHeuristics = {}) {
+  const recommendation = String(auditHeuristics?.chart_recommendation || "")
+    .trim()
+    .toLowerCase();
+  return ["defend", "likely_continue", "mixed_continue"].includes(recommendation);
+}
+
+function hasExplicitExploitDriver(text = "") {
+  return /\b(exploit|population|icm|stack depth|effective stack|short stack|payout|extreme sizing|overbluff|underbluff|pool|field tendency)\b/i.test(
+    String(text || ""),
+  );
+}
+
+function softenMandatoryFoldLanguage(text = "") {
+  let value = String(text || "");
+  value = value.replace(/\bmandatory fold\b/gi, "mixed-frequency continue can be reasonable");
+  value = value.replace(/\bobvious fold\b/gi, "often a close continue/fold mix");
+  value = value.replace(/\bstandard fold\b/gi, "population-dependent continue/fold mix");
+  value = value.replace(/\bmust fold\b/gi, "can fold, but continuing can be defensible");
+  value = value.replace(/\balways fold\b/gi, "often folds in tighter pools");
+  return value;
+}
+
+function alignStreetNodeWithActionTimeState(node = {}, streetContext = {}) {
+  const state = streetContext?.action_time_state || null;
+  if (!state || !state.open_opportunity) return node;
+  const fix = (value) =>
+    String(value || "")
+      .replace(/\bfacing (?:a )?(?:raise|open|3-?bet|jam)\b/gi, "in an unopened pot")
+      .replace(/\bversus (?:a )?(?:raise|open|3-?bet|jam)\b/gi, "in an unopened pot")
+      .replace(/\bafter facing pressure\b/gi, "from first-in opportunity");
+  return {
+    ...node,
+    analysis: {
+      insight: fix(node?.analysis?.insight),
+      range_context: fix(node?.analysis?.range_context),
+      board_texture: node?.analysis?.board_texture,
+      sizing_commentary: fix(node?.analysis?.sizing_commentary),
+      plan_commentary: fix(node?.analysis?.plan_commentary),
+      takeaway: fix(node?.analysis?.takeaway),
+    },
+  };
+}
+
+function alignStreetNodeWithAuditHeuristics(node = {}, streetContext = {}) {
+  const auditHeuristics =
+    streetContext?.audit_heuristics ||
+    streetContext?.deterministic?.audit_heuristics ||
+    null;
+  if (!auditHeuristics || !chartQualifiedContinueSpot(auditHeuristics)) return node;
+
+  const legal = (Array.isArray(streetContext?.legal_actions) ? streetContext.legal_actions : [])
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  const analysis = node?.analysis || {};
+  const combined = [
+    analysis.insight,
+    analysis.range_context,
+    analysis.board_texture,
+    analysis.sizing_commentary,
+    analysis.plan_commentary,
+    analysis.takeaway,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (hasExplicitExploitDriver(combined)) {
+    return {
+      ...node,
+      audit_heuristics: auditHeuristics,
+    };
+  }
+
+  const takenAction = canonicalizeActionLabel(node?.action_taken?.action || "");
+  const preferredAction = canonicalizeActionLabel(node?.preferred_action?.action || "");
+  const canContinue = legal.includes("call") || legal.includes("raise");
+  const shouldBlockFoldRecommendation =
+    canContinue &&
+    preferredAction === "fold" &&
+    takenAction !== "fold";
+  const adjustedPreferredAction = shouldBlockFoldRecommendation
+    ? {
+        ...node.preferred_action,
+        action:
+          legal.includes("call") && takenAction !== "raise" && takenAction !== "jam"
+            ? "call"
+            : takenAction === "call" || takenAction === "raise" || takenAction === "jam"
+              ? takenAction
+              : legal.includes("call")
+                ? "call"
+                : legal.includes("raise")
+                  ? "raise"
+                  : node.preferred_action?.action || "call",
+        sizing:
+          shouldBlockFoldRecommendation &&
+          (takenAction === "raise" || takenAction === "jam")
+            ? node?.action_taken?.sizing ?? null
+            : node?.preferred_action?.sizing ?? null,
+      }
+    : node.preferred_action;
+  const adjustedScore =
+    Number.isFinite(Number(node?.score)) &&
+    Number(node.score) <= -1 &&
+    shouldBlockFoldRecommendation
+      ? 0
+      : node?.score;
+
+  const adjustedAnalysis = {
+    insight: softenMandatoryFoldLanguage(analysis.insight),
+    range_context: softenMandatoryFoldLanguage(analysis.range_context),
+    board_texture: analysis.board_texture,
+    sizing_commentary: softenMandatoryFoldLanguage(analysis.sizing_commentary),
+    plan_commentary: softenMandatoryFoldLanguage(analysis.plan_commentary),
+    takeaway: softenMandatoryFoldLanguage(analysis.takeaway),
+  };
+
+  const mergedTags = Array.from(
+    new Set([
+      ...(Array.isArray(node?.strategic_tags) ? node.strategic_tags : []),
+      "chart_aligned_continue",
+    ]),
+  );
+
+  return {
+    ...node,
+    score: adjustedScore,
+    preferred_action: adjustedPreferredAction,
+    analysis: adjustedAnalysis,
+    strategic_tags: mergedTags,
+    tags: mergedTags,
+    audit_heuristics: auditHeuristics,
+  };
+}
+
+function alignStreetNodeWithOpenQualification(node = {}, streetContext = {}) {
+  const safeStreet = String(streetContext?.street || node?.street || "")
+    .trim()
+    .toLowerCase();
+  if (safeStreet !== "preflop") return node;
+
+  const decisionType = String(
+    streetContext?.decision_type || streetContext?.action_time_state?.decision_type || "",
+  )
+    .trim()
+    .toLowerCase();
+  const openOpportunity = Boolean(
+    streetContext?.first_in_opportunity ||
+      streetContext?.action_time_state?.open_opportunity ||
+      decisionType === "open_decision",
+  );
+  if (!openOpportunity) return node;
+
+  const auditHeuristics =
+    streetContext?.audit_heuristics ||
+    streetContext?.deterministic?.audit_heuristics ||
+    null;
+  const chartRecommendation = String(auditHeuristics?.chart_recommendation || "")
+    .trim()
+    .toLowerCase();
+  const solverMix = String(auditHeuristics?.solver_mix_estimate || "")
+    .trim()
+    .toLowerCase();
+  const takenAction = canonicalizeActionLabel(streetContext?.action_taken?.action || "");
+  const preferredAction = canonicalizeActionLabel(node?.preferred_action?.action || "");
+  const noOpenSupport =
+    chartRecommendation === "fold" ||
+    (chartRecommendation !== "open" &&
+      !solverMix.includes("likely_open") &&
+      !solverMix.includes("mixed_open"));
+  const shouldNormalizeFold =
+    takenAction === "fold" &&
+    ["raise", "jam", "bet", "open_raise", "open_jam"].includes(preferredAction) &&
+    noOpenSupport;
+  if (!shouldNormalizeFold) return node;
+
+  const soften = (text = "") =>
+    String(text || "")
+      .replace(/\bopening is generally preferred\b/gi, "Folding is standard from this position with this hand class")
+      .replace(/\bavoid folding too frequently in first-?in spots\b/gi, "Keep early-position opening ranges disciplined")
+      .replace(/\btoo tight\b/gi, "appropriately disciplined")
+      .replace(/\bmiss(?:ed|es)\s+aggression\b/gi, "disciplined fold")
+      .replace(/\bmust open\b/gi, "can usually fold")
+      .replace(/\bmandatory open\b/gi, "often a fold")
+      .replace(/\bclear open\b/gi, "close spot")
+      .replace(/\buse a standard\s+\d+(?:\.\d+)?bb open\b/gi, "No opening size is required when folding is preferred")
+      .replace(/\btake the initiative with a wider opening range\b/gi, "Preserve chips and keep early-position opens disciplined")
+      .trim();
+
+  const defaultInsight =
+    "Folding weak offsuit holdings from early or middle position is standard.";
+  const defaultRangeContext =
+    "This hand lacks the playability and blocker profile typically needed for a first-in open from tighter seats.";
+  const defaultTakeaway =
+    "Disciplined preflop folds in early-position open spots are often correct.";
+
+  const adjustedConfidence =
+    chartRecommendation === "fold"
+      ? "medium"
+      : ["low", "medium", "high"].includes(String(node?.confidence || "").toLowerCase())
+        ? "low"
+        : "low";
+
+  return {
+    ...node,
+    score:
+      Number.isFinite(Number(node?.score)) && Number(node.score) < 0
+        ? 0
+        : node?.score,
+    preferred_action: {
+      ...node?.preferred_action,
+      action: "fold",
+      sizing: null,
+      size: null,
+    },
+    confidence: adjustedConfidence,
+    analysis: {
+      insight: soften(node?.analysis?.insight) || defaultInsight,
+      range_context: soften(node?.analysis?.range_context) || defaultRangeContext,
+      board_texture: node?.analysis?.board_texture,
+      sizing_commentary:
+        soften(node?.analysis?.sizing_commentary) ||
+        "No opening size is required when the disciplined action is to fold.",
+      plan_commentary:
+        soften(node?.analysis?.plan_commentary) ||
+        "Preserve chips and focus opens on stronger early-position candidates.",
+      takeaway: soften(node?.analysis?.takeaway) || defaultTakeaway,
+    },
+    strategic_tags: Array.from(
+      new Set([...(Array.isArray(node?.strategic_tags) ? node.strategic_tags : []), "disciplined_preflop_fold"]),
+    ),
+    tags: Array.from(
+      new Set([...(Array.isArray(node?.tags) ? node.tags : []), "disciplined_preflop_fold"]),
+    ),
+  };
+}
+
+function rewriteBluffCbetLanguage(text = "") {
+  let value = String(text || "");
+  value = value.replace(/\bfold(?:ing)? out better hands?\b/gi, "folding out weaker unpaired hands");
+  value = value.replace(/\bvalue[-\s]?protection\b/gi, "equity denial");
+  value = value.replace(/\bprotection bet(?:ting)?\b/gi, "equity-denial betting");
+  value = value.replace(/\bbet(?:ting)? for value\b/gi, "betting to leverage initiative and fold equity");
+  value = value.replace(/\bvalue bet(?:ting)?\b/gi, "pressure betting");
+  value = value.replace(/\bvalue extraction\b/gi, "fold equity and realization denial");
+  value = value.replace(/\bextract value from worse(?: hands?)?\b/gi, "pressure weaker continuing ranges");
+  value = value.replace(/\bfolding better hands\b/gi, "folding out weaker hands");
+  return value;
+}
+
+function alignStreetNodeWithCbetIntent(node = {}, streetContext = {}) {
+  const safeStreet = String(streetContext?.street || node?.street || "")
+    .trim()
+    .toLowerCase();
+  if (safeStreet !== "flop") return node;
+  const intent = String(streetContext?.semantic_action?.cbet_intent || "")
+    .trim()
+    .toLowerCase();
+  if (!intent) return node;
+
+  const analysis = node?.analysis || {};
+  const genericFix = (value) =>
+    String(value || "").replace(
+      /\bfold(?:ing)? out better hands?\b/gi,
+      "folding out weaker unpaired hands",
+    );
+
+  const fix =
+    intent === "bluff_cbet"
+      ? rewriteBluffCbetLanguage
+      : genericFix;
+
+  const adjustedAnalysis = {
+    insight: fix(analysis.insight),
+    range_context: fix(analysis.range_context),
+    board_texture: analysis.board_texture,
+    sizing_commentary: fix(analysis.sizing_commentary),
+    plan_commentary: fix(analysis.plan_commentary),
+    takeaway: fix(analysis.takeaway),
+  };
+
+  return {
+    ...node,
+    analysis: adjustedAnalysis,
+    cbet_intent: intent,
+  };
+}
+
+function normalizeStreetReviewFromModel(parsed, streetContext = {}) {
+  const score = clampStreetScore(parsed?.score) ?? streetContext?.seed_score ?? 0;
+  const confidence = ["low", "medium", "high"].includes(
+    String(parsed?.confidence || "").toLowerCase(),
+  )
+    ? String(parsed.confidence).toLowerCase()
+    : streetContext?.seed_confidence || "medium";
+  const legalActions = Array.isArray(streetContext?.legal_actions)
+    ? streetContext.legal_actions
+    : [];
+  const preferredAction = sanitizePreferredAction(parsed?.preferred_action, legalActions);
+  const tags = Array.isArray(parsed?.strategic_tags)
+    ? parsed.strategic_tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 8)
+    : [];
+  const mergedTags = Array.from(
+    new Set([
+      ...tags,
+      ...(Array.isArray(streetContext?.deterministic?.street_tags)
+        ? streetContext.deterministic.street_tags
+        : []),
+    ]),
+  ).slice(0, 10);
+  const actionSizingAligned = areActionAndSizingAligned({
+    actionTaken: streetContext?.action_taken || {},
+    preferredAction,
+  });
+  const normalizedScore =
+    actionSizingAligned && Number.isFinite(Number(score)) && Number(score) < 0 ? 0 : score;
+  const baseNode = {
+    street: streetContext?.street,
+    skipped: false,
+    skipped_reason: null,
+    summary: null,
+    score: normalizedScore,
+    decision_type:
+      String(
+        streetContext?.decision_type || streetContext?.action_time_state?.decision_type || "",
+      ).trim() || null,
+    first_in_opportunity: Boolean(
+      streetContext?.first_in_opportunity ||
+        streetContext?.action_time_state?.open_opportunity,
+    ),
+    facing_open: Boolean(
+      streetContext?.facing_open || streetContext?.action_time_state?.facing_open,
+    ),
+    facing_raise: Boolean(
+      streetContext?.facing_raise || streetContext?.action_time_state?.facing_raise,
+    ),
+    action_time_state:
+      streetContext?.action_time_state && typeof streetContext.action_time_state === "object"
+        ? streetContext.action_time_state
+        : null,
+    action_taken: {
+      action: String(streetContext?.action_taken?.action || "none").trim() || "none",
+      sizing:
+        streetContext?.action_taken?.sizing ??
+        null,
+      size:
+        streetContext?.action_taken?.sizing ??
+        null,
+    },
+    preferred_action: {
+      action: preferredAction.action,
+      sizing: preferredAction.sizing,
+      size: preferredAction.sizing,
+    },
+    metrics: {
+      pot_size_bb: Number.isFinite(Number(streetContext?.metrics?.pot_size_bb))
+        ? Number(streetContext.metrics.pot_size_bb)
+        : null,
+      spr: Number.isFinite(Number(streetContext?.metrics?.spr))
+        ? Number(streetContext.metrics.spr)
+        : null,
+      facing_size_bb: Number.isFinite(Number(streetContext?.metrics?.facing_size_bb))
+        ? Number(streetContext.metrics.facing_size_bb)
+        : null,
+      pot_odds:
+        typeof streetContext?.metrics?.pot_odds === "string"
+          ? streetContext.metrics.pot_odds
+          : null,
+    },
+    analysis: constrainStreetAnalysisText(
+      streetContext?.street,
+      parsed?.analysis || {
+        insight: streetContext?.seed_takeaway || "No major finding for this street.",
+        range_context: "Range interaction remains close in this node.",
+        board_texture:
+          streetContext?.board_cards && streetContext.board_cards.length
+            ? streetContext.board_cards.join(" ")
+            : "No board cards.",
+        sizing_commentary: "Sizing should align with pressure and commitment context.",
+        plan_commentary: "Favor the line that preserves flexibility against pressure shifts.",
+        takeaway: streetContext?.seed_takeaway || "Use a disciplined default line.",
+      },
+    ),
+    confidence,
+    strategic_tags: mergedTags,
+    tags: mergedTags,
+    classification:
+      streetContext?.classification && typeof streetContext.classification === "object"
+        ? streetContext.classification
+        : null,
+    audit_heuristics:
+      streetContext?.audit_heuristics ||
+      streetContext?.deterministic?.audit_heuristics ||
+      null,
+  };
+  const actionTimeAligned = alignStreetNodeWithActionTimeState(baseNode, streetContext);
+  const auditAligned = alignStreetNodeWithAuditHeuristics(
+    actionTimeAligned,
+    streetContext,
+  );
+  const openQualified = alignStreetNodeWithOpenQualification(auditAligned, streetContext);
+  return alignStreetNodeWithCbetIntent(openQualified, streetContext);
+}
+
+function fallbackStreetReview(streetContext = {}) {
+  return normalizeStreetReviewFromModel(
+    {
+      score: streetContext?.seed_score ?? 0,
+      preferred_action: {
+        action:
+          streetContext?.action_taken?.action === "none"
+            ? "check"
+            : streetContext?.action_taken?.action || "check",
+        sizing: streetContext?.action_taken?.sizing || null,
+      },
+      analysis: {
+        insight: streetContext?.seed_takeaway || "No major finding for this street.",
+        range_context: "Range context remains balanced without stronger signals.",
+        board_texture:
+          Array.isArray(streetContext?.board_cards) && streetContext.board_cards.length
+            ? streetContext.board_cards.join(" ")
+            : "No board cards.",
+        sizing_commentary: "Use practical sizing tied to pressure and stack depth.",
+        plan_commentary: "Keep a flexible line against future aggression shifts.",
+        takeaway: streetContext?.seed_takeaway || "Stay disciplined in this node.",
+      },
+      confidence: streetContext?.seed_confidence || "medium",
+      strategic_tags: Array.isArray(streetContext?.deterministic?.street_tags)
+        ? streetContext.deterministic.street_tags
+        : [],
+    },
+    streetContext,
+  );
+}
+
+function skippedReasonForStreetContext(streetContext = {}) {
+  if (streetContext?.automatic_runout) return "all_in_runout";
+  if (streetContext?.all_players_committed) return "all_players_committed";
+  if (!streetContext?.hero_has_agency) return "no_hero_agency";
+  return "not_decision_street";
+}
+
+function skippedStreetSummary(streetContext = {}) {
+  const reason = skippedReasonForStreetContext(streetContext);
+  if (reason === "all_in_runout") {
+    if (streetContext?.hand_semantics?.all_in_before_flop) {
+      return "All players were all-in preflop; board runout had no further decisions.";
+    }
+    return "All players were already committed; this street is a runout-only node.";
+  }
+  if (reason === "all_players_committed") {
+    return "No legal strategic actions remained because stacks were committed.";
+  }
+  if (reason === "no_hero_agency") {
+    return "Hero had no legal decision on this street.";
+  }
+  return "No strategic decision node for hero on this street.";
+}
+
+function buildSkippedStreetReviewNode(streetContext = {}) {
+  const reason = skippedReasonForStreetContext(streetContext);
+  const summary = skippedStreetSummary(streetContext);
+  const tags = Array.from(
+    new Set([
+      "runout_only",
+      ...(Array.isArray(streetContext?.deterministic?.street_tags)
+        ? streetContext.deterministic.street_tags
+        : []),
+    ]),
+  ).slice(0, 10);
+
+  return {
+    street: streetContext?.street,
+    skipped: true,
+    skipped_reason: reason,
+    summary,
+    score: null,
+    decision_type:
+      String(
+        streetContext?.decision_type || streetContext?.action_time_state?.decision_type || "",
+      ).trim() || null,
+    first_in_opportunity: Boolean(
+      streetContext?.first_in_opportunity ||
+        streetContext?.action_time_state?.open_opportunity,
+    ),
+    facing_open: Boolean(
+      streetContext?.facing_open || streetContext?.action_time_state?.facing_open,
+    ),
+    facing_raise: Boolean(
+      streetContext?.facing_raise || streetContext?.action_time_state?.facing_raise,
+    ),
+    action_time_state:
+      streetContext?.action_time_state && typeof streetContext.action_time_state === "object"
+        ? streetContext.action_time_state
+        : null,
+    action_taken: {
+      action: String(streetContext?.action_taken?.action || "none").trim() || "none",
+      sizing: streetContext?.action_taken?.sizing ?? null,
+      size: streetContext?.action_taken?.sizing ?? null,
+    },
+    preferred_action: {
+      action: "n/a",
+      sizing: null,
+      size: null,
+    },
+    metrics: {
+      pot_size_bb: Number.isFinite(Number(streetContext?.metrics?.pot_size_bb))
+        ? Number(streetContext.metrics.pot_size_bb)
+        : null,
+      spr: Number.isFinite(Number(streetContext?.metrics?.spr))
+        ? Number(streetContext.metrics.spr)
+        : null,
+      facing_size_bb: Number.isFinite(Number(streetContext?.metrics?.facing_size_bb))
+        ? Number(streetContext.metrics.facing_size_bb)
+        : null,
+      pot_odds:
+        typeof streetContext?.metrics?.pot_odds === "string"
+          ? streetContext.metrics.pot_odds
+          : null,
+    },
+    analysis: {
+      insight: summary,
+      range_context: "Street skipped: no hero agency remained.",
+      board_texture:
+        Array.isArray(streetContext?.board_cards) && streetContext.board_cards.length
+          ? streetContext.board_cards.join(" ")
+          : "No board cards.",
+      sizing_commentary: "No sizing decision occurred on this street.",
+      plan_commentary: "Preserve timeline continuity; strategy resolved earlier.",
+      takeaway: summary,
+    },
+    confidence: "high",
+    strategic_tags: tags,
+    tags,
+    classification:
+      streetContext?.classification && typeof streetContext.classification === "object"
+        ? streetContext.classification
+        : null,
+  };
+}
+
+function summarizePriorActionsForPrompt(streetContext = {}) {
+  const state = streetContext?.action_time_state || {};
+  const prior = Array.isArray(state?.prior_actions) ? state.prior_actions : [];
+  if (!prior.length) return [];
+  const keepAction = (action = "") => {
+    const value = String(action || "").trim().toLowerCase();
+    if (!value) return false;
+    if (["post_ante", "post_small_blind", "post_big_blind"].includes(value)) return false;
+    return ["raise", "jam", "bet", "call", "fold", "check"].includes(value);
+  };
+  const rows = prior
+    .filter((row) => keepAction(row?.action))
+    .filter((row) => {
+      const action = String(row?.action || "").toLowerCase();
+      const player = String(row?.player || "").trim();
+      const heroName = String(
+        streetContext?.action_time_state?.players_remaining?.find((item) => String(item || "").trim() === "Hero") || "",
+      ).trim();
+      const isHero = heroName ? player === heroName : player === "Hero";
+      return isHero || ["raise", "jam", "bet"].includes(action);
+    })
+    .slice(-5);
+
+  const lineFor = (row = {}) => {
+    const player = String(row?.player || "Player").trim();
+    const action = String(row?.action || "").trim().toLowerCase();
+    const sizing = Number(row?.sizing_bb);
+    const sizingLabel = Number.isFinite(sizing) && sizing > 0 ? ` ${sizing}bb` : "";
+    if (!action) return "";
+    if (action === "raise") return `${player} opens${sizingLabel}`.trim();
+    if (action === "jam") return `${player} jams${sizingLabel}`.trim();
+    if (action === "bet") return `${player} bets${sizingLabel}`.trim();
+    if (action === "call") return `${player} calls${sizingLabel}`.trim();
+    if (action === "fold") return `${player} folds`;
+    if (action === "check") return `${player} checks`;
+    return `${player} ${action}${sizingLabel}`.trim();
+  };
+
+  const lines = rows.map((row) => lineFor(row)).filter(Boolean);
+  if (state?.facing_action?.player && state?.facing_action?.action) {
+    const facingPlayer = String(state.facing_action.player).trim();
+    const facingAction = String(state.facing_action.action).trim().toLowerCase();
+    const facingSizing = Number(state?.facing_action?.sizing_bb);
+    const facingSizingLabel =
+      Number.isFinite(facingSizing) && facingSizing > 0 ? ` ${facingSizing}bb` : "";
+    lines.push(
+      `${facingPlayer} ${facingAction}${facingSizingLabel}`.trim(),
+      "action back on Hero",
+    );
+  }
+  return Array.from(new Set(lines)).slice(-6);
+}
+
+function compactStreetContextForPrompt(streetContext = {}) {
+  const metrics = streetContext?.metrics || {};
+  const semanticAction = streetContext?.semantic_action || {};
+  const deterministic = streetContext?.deterministic || {};
+  const classification = streetContext?.classification || {};
+  const actionTime = streetContext?.action_time_state || {};
+  const audit =
+    streetContext?.audit_heuristics ||
+    deterministic?.audit_heuristics ||
+    null;
+
+  const compact = {
+    hand_id: String(streetContext?.hand_id || "").trim() || null,
+    street: String(streetContext?.street || "").trim().toLowerCase() || null,
+    stack_depth_bb: Number.isFinite(Number(streetContext?.stack_depth_bb))
+      ? Number(streetContext.stack_depth_bb)
+      : null,
+    board_cards: Array.isArray(streetContext?.board_cards)
+      ? streetContext.board_cards
+          .map((card) => String(card || "").trim())
+          .filter(Boolean)
+      : [],
+    legal_actions: Array.isArray(streetContext?.legal_actions)
+      ? streetContext.legal_actions
+      : [],
+    decision: {
+      decision_type:
+        String(streetContext?.decision_type || actionTime?.decision_type || "")
+          .trim()
+          .toLowerCase() || null,
+      node_type:
+        String(streetContext?.decision_node_type || "")
+          .trim()
+          .toLowerCase() || null,
+      hero_position_state:
+        String(streetContext?.hero_position_state || "")
+          .trim()
+          .toLowerCase() || null,
+      hero_initial_action:
+        String(streetContext?.hero_initial_action || "")
+          .trim()
+          .toLowerCase() || null,
+      hero_decision_options: Array.isArray(streetContext?.hero_decision_options)
+        ? streetContext.hero_decision_options
+        : [],
+    },
+    action_time: {
+      hero_position: String(actionTime?.hero_position || "").trim() || null,
+      pot_before_action_bb: Number.isFinite(Number(actionTime?.pot_state_when_hero_acted?.pot_before_action_bb))
+        ? Number(actionTime.pot_state_when_hero_acted.pot_before_action_bb)
+        : null,
+      to_call_bb: Number.isFinite(Number(actionTime?.pot_state_when_hero_acted?.to_call_bb))
+        ? Number(actionTime.pot_state_when_hero_acted.to_call_bb)
+        : null,
+      history: summarizePriorActionsForPrompt(streetContext),
+    },
+    action_taken: {
+      action: String(streetContext?.action_taken?.action || "").trim().toLowerCase() || null,
+      sizing: String(streetContext?.action_taken?.sizing || "").trim() || null,
+    },
+    metrics: {
+      pot_size_bb: Number.isFinite(Number(metrics?.pot_size_bb))
+        ? Number(metrics.pot_size_bb)
+        : null,
+      spr: Number.isFinite(Number(metrics?.spr)) ? Number(metrics.spr) : null,
+      facing_size_bb: Number.isFinite(Number(metrics?.facing_size_bb))
+        ? Number(metrics.facing_size_bb)
+        : null,
+      pot_odds: typeof metrics?.pot_odds === "string" ? metrics.pot_odds : null,
+    },
+    semantic_action: {
+      action_type: String(semanticAction?.action_type || "").trim().toLowerCase() || null,
+      facing_jam: Boolean(semanticAction?.facing_jam) || undefined,
+      cbet_intent: String(semanticAction?.cbet_intent || "").trim().toLowerCase() || null,
+      cbet_intent_focus: Array.isArray(semanticAction?.cbet_intent_focus)
+        ? semanticAction.cbet_intent_focus
+        : [],
+    },
+    audit_heuristics: audit
+      ? {
+          chart_recommendation:
+            String(audit?.chart_recommendation || "").trim().toLowerCase() || null,
+          chart_confidence:
+            String(audit?.chart_confidence || "").trim().toLowerCase() || null,
+          spot_classification:
+            String(audit?.spot_classification || "").trim().toLowerCase() || null,
+          solver_mix_estimate:
+            String(audit?.solver_mix_estimate || "").trim().toLowerCase() || null,
+          population_adjustment:
+            String(audit?.population_adjustment || "").trim() || null,
+        }
+      : null,
+    deterministic: {
+      pressure_level: String(deterministic?.pressure_level || "").trim().toLowerCase() || null,
+      commitment_level:
+        String(deterministic?.commitment_level || "").trim().toLowerCase() || null,
+      spr_tier: String(deterministic?.spr_tier || "").trim().toLowerCase() || null,
+      street_tags: Array.isArray(deterministic?.street_tags) ? deterministic.street_tags : [],
+      mistake_signals: Array.isArray(deterministic?.relevant_mistake_candidates)
+        ? deterministic.relevant_mistake_candidates
+            .map((item) => String(item?.code || "").trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 4)
+        : [],
+    },
+    classification: {
+      hand_strength:
+        String(classification?.made_hand_type || classification?.made_hand_category || "")
+          .trim()
+          .toLowerCase() || null,
+      showdown_value:
+        String(classification?.showdown_strength || "").trim().toLowerCase() || null,
+      bluff_catcher:
+        typeof classification?.bluff_catcher === "boolean"
+          ? classification.bluff_catcher
+          : undefined,
+    },
+  };
+
+  const prune = (value) => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed || trimmed === "none" || trimmed === "n/a") return undefined;
+      return trimmed;
+    }
+    if (Array.isArray(value)) {
+      const items = value.map((item) => prune(item)).filter((item) => item !== undefined);
+      return items.length ? items : undefined;
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, item] of Object.entries(value)) {
+        if (item === false) continue;
+        const next = prune(item);
+        if (next !== undefined) out[key] = next;
+      }
+      return Object.keys(out).length ? out : undefined;
+    }
+    return value;
+  };
+
+  return prune(compact) || {};
+}
+
+async function generateStreetReview(streetContext = {}, instruction, model) {
+  const promptStreetContext = compactStreetContextForPrompt(streetContext);
+  const system = `You are a tournament poker street coach.
+Return concise, replay-ready coaching for one street only.
+Do not discuss future streets beyond the provided context.
+Use deterministic tags and pressure metadata as hard constraints.
+Respond with strict JSON only.
+
+Output JSON:
+{
+  "score": -2,
+  "preferred_action": {
+    "action": "string",
+    "sizing": "string|null"
+  },
+  "analysis": {
+    "insight": "string",
+    "range_context": "string",
+    "board_texture": "string",
+    "sizing_commentary": "string",
+    "plan_commentary": "string",
+    "takeaway": "string"
+  },
+  "confidence": "low|medium|high",
+  "strategic_tags": ["string"]
+}
+
+Rules:
+- Keep each analysis field tight and specific (1-2 sentences max).
+- preferred_action.action must respect legal_actions if provided.
+- Treat semantic_action and decision_node_type as canonical node semantics.
+- Decision integrity: use action_time_state as frozen truth; never use actions after hero_action_index; if open_opportunity/open_decision, do not frame as facing raise/open/3-bet.
+- Response integrity: if hero checked then faced a bet, evaluate CALL/FOLD/RAISE only (do not re-grade whether the initial check was preferred).
+- Respect legal_actions, commitment/agency flags, and avoid postflop betting advice in committed/runout states.
+- Strategic realism: be concrete and mechanism-based (showdown value, equity realization, fold equity, pot control, range interaction, blockers); avoid vague filler, unsupported hidden-card assumptions, and solver certainty claims.
+- Board texture: tie directly to visible cards (pairing/connectivity/suits). Use "dry" only for truly low interaction; otherwise prefer "semi-dynamic", "moderately connected", "coordinated", "draw-heavy", "static paired board", or "high-card runout".
+- C-bet intent mapping:
+  - bluff_cbet -> fold equity, initiative, equity/realization denial, range pressure; avoid value/protection framing and never say "fold out better hands".
+  - thin_value_cbet/protection_cbet -> vulnerable made-hand incentives and equity denial.
+  - value_cbet -> value extraction and stack building.
+- Terminology discipline: reserve "air" for complete misses with negligible showdown value and weak realization; for defendable/speculative holdings prefer terms like "speculative holding" or "weak showdown value".
+- Audit alignment: if chart_recommendation is {"defend","likely_continue","mixed_continue"}, avoid "mandatory/standard/obvious fold" unless explicit exploit drivers are present (ICM, stack-depth compression, extreme sizing, population over/under-bluff).
+- Keep language consistent with audit_heuristics.spot_classification and solver_mix_estimate when provided.
+- Compression: avoid repeating the same concept across insight/sizing/plan/takeaway; prefer one clear actionable takeaway with complementary supporting lines.`;
+
+  const user = `Street context:
+${JSON.stringify(promptStreetContext, null, 2)}
+
+Instruction: ${
+    instruction ||
+    "Coach this street decision with concise strategic clarity and replay-friendly structure."
+  }`;
+
+  const { parsed, completion } = await completePrompt({
+    system,
+    user,
+    temperature: 0.2,
+    top_p: 0.75,
+    max_tokens: 320,
+    model,
+  });
+
+  const schemaResult = STREET_AI_REVIEW_SCHEMA.safeParse(parsed || {});
+  if (!schemaResult.success) {
+    return {
+      review: fallbackStreetReview(streetContext),
+      usage: completion?.usage || null,
+      repaired: true,
+    };
+  }
+
+  const normalized = normalizeStreetReviewFromModel(schemaResult.data, streetContext);
+  return {
+    review: normalized,
+    usage: completion?.usage || null,
+    repaired: false,
+  };
+}
+
+async function generateStreetReviewsForHand(
+  handContext = {},
+  baseReview = {},
+  instruction,
+  model,
+) {
+  const contexts = collectStreetAiContexts(handContext, baseReview);
+  const streetReviews = [];
+  let usage = null;
+  for (const context of contexts) {
+    if (!context?.is_decision_street) {
+      streetReviews.push(buildSkippedStreetReviewNode(context));
+      continue;
+    }
+    try {
+      const result = await generateStreetReview(context, instruction, model);
+      streetReviews.push(result.review);
+      usage = mergeUsageBlocks(usage, result.usage);
+    } catch {
+      streetReviews.push(fallbackStreetReview(context));
+    }
+  }
+  return { streetReviews, usage };
+}
+
+async function enrichReviewWithStreetAi(review = {}, handContext = {}, instruction, model) {
+  const enableStreetAi =
+    String(process.env.STREET_AI_REVIEW_ENABLED || "true")
+      .trim()
+      .toLowerCase() !== "false";
+  if (!enableStreetAi || !process.env.OPENAI_API_KEY) return review;
+
+  const validation = handContext?.handStateValidation || {};
+  if (validation?.isValid === false) return review;
+
+  try {
+    const { streetReviews, usage } = await generateStreetReviewsForHand(
+      handContext,
+      review,
+      instruction,
+      model,
+    );
+    if (!Array.isArray(streetReviews) || !streetReviews.length) return review;
+    const aggregate = buildStreetReviewAggregateFromStreetReviews({
+      legacyReview: review,
+      streetReviews,
+    });
+    const sourceOfTruthSummary =
+      aggregate?.source_of_truth_summary &&
+      typeof aggregate.source_of_truth_summary === "object"
+        ? aggregate.source_of_truth_summary
+        : null;
+    const next = {
+      ...review,
+      street_intelligence: aggregate,
+    };
+    if (sourceOfTruthSummary) {
+      next.what_was_good =
+        String(sourceOfTruthSummary.what_was_good || "").trim() ||
+        next.what_was_good;
+      next.better_line =
+        String(sourceOfTruthSummary.better_line || "").trim() || next.better_line;
+      next.primary_leak =
+        String(sourceOfTruthSummary.primary_leak || "").trim() || next.primary_leak;
+      next.reasoning =
+        String(sourceOfTruthSummary.reasoning || "").trim() || next.reasoning;
+    }
+    next.usage = mergeUsageBlocks(next?.usage, usage);
+    // TODO(replay-sync): align street node ids with future timeline animation checkpoints.
+    // TODO(solver-overlays): attach solver delta fields beside preferred_action when solver service is available.
+    // TODO(population-overlays): enrich strategic_tags with pool exploit patterns by stake/field size.
+    // TODO(chat-tab): expose this per-street artifact to future conversational coaching tab.
+    return next;
+  } catch {
+    return review;
+  }
 }
 
 function attachValidationSummary(review, summary) {
@@ -4304,10 +6591,20 @@ export async function reviewTournamentHand(
     handContext,
     handClassification,
   );
+  const deterministicIntelligence =
+    handContext?.deterministicIntelligence &&
+    typeof handContext.deterministicIntelligence === "object"
+      ? handContext.deterministicIntelligence
+      : buildDeterministicIntelligence({
+          hand: handContext,
+          validatedHandState: handState,
+          handStateValidation,
+        });
   const enrichedHandContext = {
     ...handContext,
     handClassification,
     decisionEvaluation,
+    deterministicIntelligence,
   };
   const aiHandContext = {
     handState,
@@ -4342,7 +6639,13 @@ export async function reviewTournamentHand(
       null,
       enrichedHandContext,
     );
-    return finalizeCoachingPresentation(base, enrichedHandContext);
+    const presented = finalizeCoachingPresentation(base, enrichedHandContext);
+    return await enrichReviewWithStreetAi(
+      presented,
+      enrichedHandContext,
+      instruction,
+      model,
+    );
   }
 
   const system = `You are a tournament poker hand reviewer.
@@ -4477,7 +6780,12 @@ Instruction: ${
         enrichedHandContext,
       );
       const withSummary = attachValidationSummary(presented, summaryWithRewrites);
-      return withSummary;
+      return await enrichReviewWithStreetAi(
+        withSummary,
+        enrichedHandContext,
+        instruction,
+        model,
+      );
     }
 
     const confidenceAdjusted = {
@@ -4493,7 +6801,12 @@ Instruction: ${
       enrichedHandContext,
     );
     const withSummary = attachValidationSummary(presented, postValidation.summary);
-    return withSummary;
+    return await enrichReviewWithStreetAi(
+      withSummary,
+      enrichedHandContext,
+      instruction,
+      model,
+    );
   }
 
   const safe = safeFallbackReviewText(
@@ -4526,9 +6839,15 @@ Instruction: ${
     fallbackWithConfidence,
     enrichedHandContext,
   );
-  return attachValidationSummary(
+  const withSummary = attachValidationSummary(
     presentedFallback,
     summarizeFindings(lastFindings),
+  );
+  return await enrichReviewWithStreetAi(
+    withSummary,
+    enrichedHandContext,
+    instruction,
+    model,
   );
 }
 
@@ -5381,3 +7700,4 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
 
   return buildResponse(parsed, completion, "Balance range discipline.", "fold");
 }
+

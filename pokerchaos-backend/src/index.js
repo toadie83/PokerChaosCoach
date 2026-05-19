@@ -19,6 +19,8 @@ import {
   sortHands,
 } from "./handHistoryService.js";
 import { buildValidatedHandState } from "./handStateValidationService.js";
+import { buildDeterministicIntelligence } from "./deterministicIntelligenceService.js";
+import { attachReviewEvaluation } from "./reviewEvaluationService.js";
 import {
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
@@ -139,6 +141,20 @@ const aiEstimatedTableHintTokens =
     ? Math.floor(aiEstimatedTableHintTokensRaw)
     : 10_000;
 const maxHandsPerAiReviewRequest = 30;
+const reviewQaEnabled =
+  String(process.env.REVIEW_QA_ENABLED || "true")
+    .trim()
+    .toLowerCase() !== "false";
+const reviewQaDevReportDefault =
+  String(process.env.REVIEW_QA_DEV_REPORT || "false")
+    .trim()
+    .toLowerCase() === "true";
+const reviewQaMinCoherenceScore = Number(
+  process.env.REVIEW_QA_MIN_COHERENCE_SCORE,
+);
+const reviewQaMaxHallucinationRisk = Number(
+  process.env.REVIEW_QA_MAX_HALLUCINATION_RISK,
+);
 const clerkClient = clerkSecretKey
   ? createClerkClient({ secretKey: clerkSecretKey })
   : null;
@@ -266,11 +282,16 @@ const reviewAiAllowedEmails = parseEmailSet(
 );
 const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
+const developerQaAllowedEmails = new Set([
+  "frosttrev@gmail.com",
+  ...parseEmailSet(process.env.DEVELOPER_QA_ALLOWED_EMAILS),
+]);
 const shouldLookupUserEmails =
   reviewAllowedEmails.size > 0 ||
   reviewAiAllowedEmails.size > 0 ||
   coachAllowedEmails.size > 0 ||
-  adminAllowedEmails.size > 0;
+  adminAllowedEmails.size > 0 ||
+  developerQaAllowedEmails.size > 0;
 
 function normalizeEmail(value) {
   if (typeof value !== "string") return "";
@@ -303,11 +324,38 @@ function hasAnyMatchingEmail(candidateEmails, allowedEmailSet) {
   return emails.some((email) => allowedEmailSet.has(normalizeEmail(email)));
 }
 
-function buildEntitlements(userId, userEmails = []) {
+function normalizeRole(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveSessionRole(session = {}) {
+  const candidates = [
+    session?.role,
+    session?.publicMetadata?.role,
+    session?.public_metadata?.role,
+    session?.unsafeMetadata?.role,
+    session?.unsafe_metadata?.role,
+    session?.metadata?.role,
+  ];
+  for (const candidate of candidates) {
+    const role = normalizeRole(candidate);
+    if (role) return role;
+  }
+  return "";
+}
+
+function buildEntitlements(userId, userEmails = [], options = {}) {
   const uid = String(userId || "").trim();
+  const userRole = normalizeRole(options?.userRole);
   const isAdmin =
     adminUserIds.has(uid) ||
     hasAnyMatchingEmail(userEmails, adminAllowedEmails);
+  const isDeveloper =
+    userRole === "developer" ||
+    isAdmin ||
+    hasAnyMatchingEmail(userEmails, developerQaAllowedEmails);
   const review =
     isAdmin ||
     reviewAllowAll ||
@@ -328,6 +376,8 @@ function buildEntitlements(userId, userEmails = []) {
     reviewAi,
     coach,
     admin: isAdmin,
+    developer: isDeveloper,
+    role: userRole || null,
     emails: Array.isArray(userEmails) ? userEmails : [],
   };
 }
@@ -526,8 +576,11 @@ async function requireAuth(req, res, next) {
         );
       }
     }
-    req.auth = { userId };
-    const baseEntitlements = buildEntitlements(userId, userEmails);
+    const userRole = resolveSessionRole(session);
+    req.auth = { userId, role: userRole || null };
+    const baseEntitlements = buildEntitlements(userId, userEmails, {
+      userRole,
+    });
     const billingAiAccess = await resolveBillingAiAccessForUser(userId);
     req.entitlements = mergeEntitlementsWithBilling(
       baseEntitlements,
@@ -573,6 +626,13 @@ const handReviewSchema = z.object({
   opponentSnapshot: z.record(z.any()).optional(),
   instruction: z.string().trim().max(700).optional(),
   model: z.string().trim().optional(),
+  includeEvaluationReport: z.boolean().optional().default(false),
+  evaluationThresholds: z
+    .object({
+      minimum_coherence_score: z.number().min(0).max(100).optional(),
+      maximum_hallucination_risk: z.number().min(0).max(100).optional(),
+    })
+    .optional(),
 });
 
 const summaryReviewSchema = z.object({
@@ -870,6 +930,7 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
       reviewAi: Boolean(req.entitlements?.reviewAi),
       coach: Boolean(req.entitlements?.coach),
       admin: Boolean(req.entitlements?.admin),
+      developer: Boolean(req.entitlements?.developer),
     },
     billing: {
       hasActiveSubscription: Boolean(
@@ -1742,6 +1803,7 @@ app.post(
 
     try {
       const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
+      const isDeveloperQaObserver = Boolean(req.entitlements?.developer);
       const reviews = [];
       const usageEntries = [];
       for (const hand of parsed.data.selectedHands) {
@@ -1753,23 +1815,53 @@ app.post(
         const { handState, validation } = buildValidatedHandState(
           reviewHandWithOpponents,
         );
+        const deterministicIntelligence = buildDeterministicIntelligence({
+          hand: reviewHandWithOpponents,
+          validatedHandState: handState,
+          handStateValidation: validation,
+        });
         const reviewHand = {
           ...reviewHandWithOpponents,
           validatedHandState: handState,
           handStateValidation: validation,
+          deterministicIntelligence,
         };
         const review = await reviewTournamentHand(
           reviewHand,
           parsed.data.instruction,
           reviewAiModel,
         );
-        usageEntries.push(review?.usage || null);
+        const shouldAttachEvaluation =
+          reviewQaEnabled ||
+          Boolean(parsed.data.includeEvaluationReport) ||
+          isDeveloperQaObserver;
+        const reviewWithEvaluation = shouldAttachEvaluation
+          ? attachReviewEvaluation({
+              review,
+              hand: reviewHandWithOpponents,
+              thresholds: {
+                minimum_coherence_score: Number.isFinite(reviewQaMinCoherenceScore)
+                  ? reviewQaMinCoherenceScore
+                  : parsed.data?.evaluationThresholds?.minimum_coherence_score,
+                maximum_hallucination_risk: Number.isFinite(
+                  reviewQaMaxHallucinationRisk,
+                )
+                  ? reviewQaMaxHallucinationRisk
+                  : parsed.data?.evaluationThresholds?.maximum_hallucination_risk,
+              },
+              includeDetailedReport:
+                reviewQaDevReportDefault ||
+                Boolean(parsed.data.includeEvaluationReport) ||
+                isDeveloperQaObserver,
+            })
+          : review;
+        usageEntries.push(reviewWithEvaluation?.usage || null);
         reviews.push({
           handKey: String(compactHand?.handKey || "").trim() || null,
           hand: compactHand,
           validatedHandState: handState,
           handStateValidation: validation,
-          review,
+          review: reviewWithEvaluation,
         });
       }
 

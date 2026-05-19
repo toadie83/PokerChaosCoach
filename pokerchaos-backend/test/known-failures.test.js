@@ -13,10 +13,20 @@ const {
   classifyReviewValidationFindings,
   applyReviewGuardrails,
   finalizeCoachingPresentation,
+  classifyPreflopAction,
+  detectJamTree,
+  detectIsolationSpot,
+  detectCommitmentState,
+  detectStreetAgency,
+  collectStreetAiContexts,
+  buildSkippedStreetReviewNode,
+  normalizeStreetReviewFromModel,
+  areActionAndSizingAligned,
   opponentConfidenceTier,
   buildOpponentConfidenceNarrative,
   deriveHandClassification,
   decisionEvaluationForContext,
+  compactStreetContextForPrompt,
 } = __reviewTrustTestables;
 
 function baseHandContext(overrides = {}) {
@@ -237,12 +247,915 @@ test("invalid hand-state path returns low-confidence safe fallback without OpenA
     "gpt-4.1-mini",
   );
   assert.equal(review.confidence, "low");
+  assert.ok(
+    review.deterministic_intelligence &&
+      typeof review.deterministic_intelligence === "object",
+  );
   assert.equal(
     /validation|system|deterministic|checks failed|guardrails/i.test(
       `${review.primary_leak} ${review.reasoning} ${review.better_line}`,
     ),
     false,
   );
+});
+
+test("decision-node filtering marks postflop as automatic runout after preflop all-ins", () => {
+  const hand = {
+    heroName: "Hero",
+    heroStack: 1600,
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 0 },
+    seats: [
+      { seat: 1, player: "Hero", chips: 1600, position: "BTN" },
+      { seat: 2, player: "SB", chips: 1400, position: "SB" },
+      { seat: 3, player: "BB", chips: 1800, position: "BB" },
+    ],
+    heroOutcome: { resolvedStreet: "river", code: "lost_showdown" },
+    board: { flop: ["Ah", "7d", "2c"], turn: "9s", river: "Kd" },
+    actionsByStreet: {
+      preflop: [
+        { player: "SB", type: "post_small_blind", amount: 50 },
+        { player: "BB", type: "post_big_blind", amount: 100 },
+        { player: "Hero", type: "jam", amount: 1600, toAmount: 1600 },
+        { player: "SB", type: "jam", amount: 1400, toAmount: 1400 },
+        { player: "BB", type: "call", amount: 1500 },
+      ],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "jam", amount: 1600, toAmount: 1600 }],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+  };
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "preflop",
+        effectiveStackBB: 16,
+        legalActions: ["call", "fold", "raise"],
+        heroCanRaise: true,
+        math: { spr: 1.1, callAmount: 1500, finalPotIfCall: 4650 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "high", strategic_tags: [] },
+          { street: "flop", pressure_level: "high", strategic_tags: [] },
+          { street: "turn", pressure_level: "high", strategic_tags: [] },
+          { street: "river", pressure_level: "high", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", preflop_score: -1 },
+  );
+  const flop = contexts.find((item) => item.street === "flop");
+  assert.equal(Boolean(flop?.is_decision_street), false);
+  assert.equal(Boolean(flop?.automatic_runout), true);
+  assert.equal(Boolean(flop?.hand_semantics?.all_in_before_flop), true);
+});
+
+test("street AI contexts derive hand classification per street board progression", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["Ah", "Kh"],
+    heroPosition: "BTN",
+    heroStack: 2000,
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 0 },
+    seats: [
+      { seat: 1, player: "Hero", chips: 2000, position: "BTN" },
+      { seat: 2, player: "SB", chips: 1900, position: "SB" },
+      { seat: 3, player: "BB", chips: 2100, position: "BB" },
+    ],
+    heroOutcome: { resolvedStreet: "river", code: "won_showdown" },
+    board: { flop: ["Ad", "7c", "2s"], turn: "Kc", river: "9d" },
+    actionsByStreet: {
+      preflop: [
+        { player: "SB", type: "post_small_blind", amount: 50 },
+        { player: "BB", type: "post_big_blind", amount: 100 },
+        { player: "Hero", type: "raise", amount: 300, toAmount: 300 },
+        { player: "BB", type: "call", amount: 200 },
+      ],
+      flop: [
+        { player: "BB", type: "check" },
+        { player: "Hero", type: "bet", amount: 250 },
+        { player: "BB", type: "call", amount: 250 },
+      ],
+      turn: [
+        { player: "BB", type: "check" },
+        { player: "Hero", type: "check" },
+      ],
+      river: [
+        { player: "BB", type: "check" },
+        { player: "Hero", type: "check" },
+      ],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "raise", amount: 300, toAmount: 300 }],
+      flop: [{ type: "bet", amount: 250 }],
+      turn: [{ type: "check" }],
+      river: [{ type: "check" }],
+    },
+  };
+
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "flop",
+        heroHand: ["Ah", "Kh"],
+        effectiveStackBB: 20,
+        legalActions: ["check", "bet"],
+        heroCanRaise: true,
+        potSize: 700,
+        facingBet: 0,
+        math: { spr: 2.2 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "low", strategic_tags: [] },
+          { street: "flop", pressure_level: "medium", strategic_tags: [] },
+          { street: "turn", pressure_level: "low", strategic_tags: [] },
+          { street: "river", pressure_level: "low", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", preflop_score: 0, flop_score: 1, turn_score: 0, river_score: 0 },
+  );
+
+  const preflop = contexts.find((item) => item.street === "preflop");
+  const flop = contexts.find((item) => item.street === "flop");
+  const turn = contexts.find((item) => item.street === "turn");
+  const river = contexts.find((item) => item.street === "river");
+
+  assert.equal(preflop?.classification?.made_hand_category, "air");
+  assert.equal(preflop?.classification?.made_hand_type, "ace_high");
+  assert.equal(flop?.classification?.made_hand_category, "pair");
+  assert.equal(flop?.classification?.made_hand_type, "top_pair");
+  assert.equal(flop?.classification?.pair_type, "top");
+  assert.equal(flop?.classification?.pair_source, "one_hole_one_board");
+  assert.equal(flop?.classification?.board_pairing, false);
+  assert.equal(flop?.classification?.showdown_strength_tier, "medium_showdown");
+  assert.equal(turn?.classification?.made_hand_category, "two_pair");
+  assert.equal(river?.classification?.made_hand_category, "two_pair");
+});
+
+test("street AI context preserves check-call decision node semantics", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["Jh", "9h"],
+    heroPosition: "SB",
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 0 },
+    heroOutcome: { resolvedStreet: "river", code: "folded_river" },
+    board: { flop: ["Ks", "8c", "3h"], turn: "2d", river: "Qd" },
+    actionsByStreet: {
+      preflop: [
+        { player: "Hero", type: "call", amount: 100 },
+        { player: "Villain", type: "check" },
+      ],
+      flop: [
+        { player: "Hero", type: "check" },
+        { player: "Villain", type: "bet", amount: 220 },
+        { player: "Hero", type: "call", amount: 220 },
+      ],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "call", amount: 100 }],
+      flop: [
+        { type: "check" },
+        { type: "call", amount: 220 },
+      ],
+      turn: [],
+      river: [],
+    },
+  };
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "river",
+        heroHand: ["Jh", "9h"],
+        effectiveStackBB: 24,
+        legalActions: ["call", "fold"],
+        heroCanRaise: false,
+        potSize: 1440,
+        facingBet: 360,
+        math: { spr: 1.4, callAmount: 360, finalPotIfCall: 1800 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "low", strategic_tags: [] },
+          { street: "flop", pressure_level: "medium", strategic_tags: [] },
+          { street: "turn", pressure_level: "low", strategic_tags: [] },
+          { street: "river", pressure_level: "medium", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", preflop_score: 0, flop_score: 0, turn_score: 0, river_score: 0 },
+  );
+
+  const flop = contexts.find((item) => item.street === "flop");
+  assert.equal(flop?.action_taken?.action, "call");
+  assert.equal(Boolean(flop?.facing_bet_after_check), true);
+  assert.equal(flop?.hero_initial_action, "check");
+  assert.equal(flop?.decision_node_type, "check_call_decision");
+  assert.equal(Array.isArray(flop?.hero_decision_options), true);
+  assert.equal(flop.hero_decision_options.includes("call"), true);
+  assert.equal(flop.hero_decision_options.includes("fold"), true);
+  assert.equal(flop.hero_decision_options.includes("check"), false);
+});
+
+test("street AI contexts include audit-to-coaching heuristic fields", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["Jh", "9h"],
+    heroPosition: "BB",
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 0 },
+    heroOutcome: { resolvedStreet: "preflop", code: "folded_preflop" },
+    board: { flop: [], turn: null, river: null },
+    actionsByStreet: {
+      preflop: [
+        { player: "SB", type: "post_small_blind", amount: 50 },
+        { player: "Hero", type: "post_big_blind", amount: 100 },
+        { player: "BTN", type: "raise", amount: 250, toAmount: 300 },
+        { player: "Hero", type: "fold" },
+      ],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "fold" }],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+  };
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "preflop",
+        heroHand: ["Jh", "9h"],
+        effectiveStackBB: 24,
+        legalActions: ["call", "fold", "raise"],
+        heroCanRaise: true,
+        potSize: 450,
+        facingBet: 200,
+        math: { spr: 6.2, callAmount: 200, finalPotIfCall: 650 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "medium", strategic_tags: [] },
+        ],
+        audit_alignment: {
+          by_street: [
+            {
+              street: "preflop",
+              chart_recommendation: "mixed_continue",
+              chart_confidence: "medium",
+              spot_classification: "bb_defend_vs_open",
+              solver_mix_estimate: "mixed_continue",
+              population_adjustment: null,
+            },
+          ],
+        },
+      },
+    },
+    { confidence: "medium", preflop_score: -1 },
+  );
+  const preflop = contexts.find((item) => item.street === "preflop");
+  assert.equal(preflop?.audit_heuristics?.chart_recommendation, "mixed_continue");
+  assert.equal(preflop?.audit_heuristics?.spot_classification, "bb_defend_vs_open");
+});
+
+test("flop c-bet context classifies weak unpaired betting lines as bluff_cbet intent", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["Qh", "Jd"],
+    heroPosition: "BTN",
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 0 },
+    heroOutcome: { resolvedStreet: "flop", code: "won_without_showdown" },
+    board: { flop: ["Kd", "7c", "2s"], turn: null, river: null },
+    actionsByStreet: {
+      preflop: [
+        { player: "Hero", type: "raise", amount: 250, toAmount: 250 },
+        { player: "BB", type: "call", amount: 250 },
+      ],
+      flop: [
+        { player: "BB", type: "check" },
+        { player: "Hero", type: "bet", amount: 220 },
+        { player: "BB", type: "fold" },
+      ],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "raise", amount: 250, toAmount: 250 }],
+      flop: [{ type: "bet", amount: 220 }],
+      turn: [],
+      river: [],
+    },
+  };
+
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "flop",
+        heroHand: ["Qh", "Jd"],
+        effectiveStackBB: 24,
+        legalActions: ["check", "bet"],
+        heroCanRaise: true,
+        potSize: 620,
+        facingBet: 0,
+        math: { spr: 3.1, callAmount: 0, finalPotIfCall: 620 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "low", strategic_tags: [] },
+          { street: "flop", pressure_level: "medium", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", preflop_score: 0, flop_score: 0 },
+  );
+  const flop = contexts.find((item) => item.street === "flop");
+  assert.equal(flop?.decision_node_type, "cbet_decision");
+  assert.equal(flop?.classification?.made_hand_category, "air");
+  assert.equal(flop?.semantic_action?.cbet_intent, "bluff_cbet");
+  assert.equal(Array.isArray(flop?.semantic_action?.cbet_intent_focus), true);
+});
+
+test("stage 1 context compaction removes duplicate/low-signal payload while preserving decision signal", () => {
+  const compact = compactStreetContextForPrompt({
+    hand_id: "TM5937036811",
+    street: "preflop",
+    is_decision_street: true,
+    hero_has_agency: true,
+    all_players_committed: false,
+    automatic_runout: false,
+    stack_depth_bb: 16.72,
+    legal_actions: ["call", "fold"],
+    hero_position_state: "in_position",
+    hero_initial_action: "raise",
+    decision_node_type: "jam_call_decision",
+    hero_decision_options: ["call", "fold"],
+    action_time_state: {
+      hero_position: "UTG+1",
+      decision_type: "facing_open_decision",
+      pot_state_when_hero_acted: {
+        pot_before_action_bb: 20.97,
+        current_bet_bb: 16.57,
+        hero_committed_bb: 2,
+        to_call_bb: 14.57,
+      },
+      prior_actions: [
+        { player: "VillainA", action: "post_ante", sizing_bb: null },
+        { player: "Hero", action: "raise", sizing_bb: 2 },
+        { player: "VillainB", action: "jam", sizing_bb: 16.57 },
+        { player: "VillainC", action: "fold", sizing_bb: null },
+      ],
+      facing_action: { player: "VillainB", action: "jam", sizing_bb: 16.57 },
+    },
+    action_taken: { action: "call", sizing: "0.0bb" },
+    metrics: { pot_size_bb: 20.97, spr: 0.8, facing_size_bb: 14.57, pot_odds: "41%" },
+    semantic_action: {
+      action_type: "flat_call",
+      all_in: false,
+      facing_jam: true,
+      facing_open: false,
+      isolation_spot: false,
+      multiway_all_in: false,
+      effective_stack_bb: 16.72,
+    },
+    audit_heuristics: {
+      street: "preflop",
+      chart_recommendation: "open",
+      chart_confidence: "medium",
+      spot_classification: "first_in_open_spot",
+      solver_mix_estimate: "mixed_open",
+      population_adjustment: null,
+    },
+    deterministic: {
+      pressure_level: "extreme",
+      commitment_level: "low",
+      spr_tier: "all_in",
+      street_tags: ["high_pressure_node"],
+      relevant_mistake_candidates: [
+        {
+          code: "stack_off_threshold",
+          label: "Questionable stack-off threshold",
+          reason: "Calling heavy preflop pressure likely over-committed stack depth.",
+        },
+      ],
+      audit_heuristics: {
+        street: "preflop",
+        chart_recommendation: "open",
+      },
+    },
+    classification: {
+      made_hand_category: "air",
+      made_hand_type: "king_high",
+      pair_source: null,
+      trips_type: "none",
+      board_pairing: false,
+      showdown_strength: "none",
+      bluff_catcher: false,
+    },
+    seed_takeaway: "Long seed text that should not be included in compact context.",
+  });
+
+  assert.equal(compact?.decision?.decision_type, "facing_open_decision");
+  assert.equal(Array.isArray(compact?.action_time?.history), true);
+  assert.equal(
+    compact.action_time.history.some((line) => /post_ante/i.test(String(line))),
+    false,
+  );
+  assert.equal(
+    compact.action_time.history.some((line) => /action back on hero/i.test(String(line))),
+    true,
+  );
+  assert.equal(compact?.audit_heuristics?.chart_recommendation, "open");
+  assert.equal(compact?.deterministic?.audit_heuristics, undefined);
+  assert.equal(compact?.classification?.hand_strength, "king_high");
+  assert.equal(compact?.classification?.showdown_value, undefined);
+  assert.equal(compact?.classification?.pair_source, undefined);
+  assert.equal(compact?.seed_takeaway, undefined);
+});
+
+test("stage 1 context compaction preserves postflop board cards for street awareness", () => {
+  const compact = compactStreetContextForPrompt({
+    hand_id: "TMX",
+    street: "turn",
+    board_cards: ["Ah", "Kd", "9s", "2c"],
+    legal_actions: ["check", "bet"],
+    action_taken: { action: "check", sizing: null },
+    metrics: { pot_size_bb: 11.2, spr: 2.4, facing_size_bb: 0, pot_odds: null },
+    semantic_action: { action_type: "check" },
+    classification: {
+      made_hand_type: "ace_high",
+      showdown_strength: "weak",
+      bluff_catcher: false,
+    },
+  });
+  assert.deepEqual(compact?.board_cards, ["Ah", "Kd", "9s", "2c"]);
+});
+
+test("street context sizing prefers positive amount over zero toAmount for call/bet actions", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["As", "Qh"],
+    heroPosition: "CO",
+    heroStack: 4200,
+    blinds: { smallBlind: 70, bigBlind: 140, ante: 20 },
+    seats: [
+      { seat: 1, player: "Hero", chips: 4200, position: "CO" },
+      { seat: 2, player: "V1", chips: 5400, position: "BTN" },
+      { seat: 3, player: "V2", chips: 6300, position: "BB" },
+    ],
+    board: { flop: ["6d", "2c", "2d"], turn: "Ac", river: "5s" },
+    actionsByStreet: {
+      preflop: [
+        { player: "Hero", type: "raise", amount: 325, toAmount: 465 },
+        { player: "V1", type: "call", amount: 325 },
+      ],
+      flop: [
+        { player: "V1", type: "bet", amount: 537 },
+        { player: "Hero", type: "call", amount: 537, toAmount: 0 },
+      ],
+      turn: [
+        { player: "V1", type: "bet", amount: 518 },
+        { player: "Hero", type: "raise", amount: 1868, toAmount: 2386 },
+      ],
+      river: [
+        { player: "V1", type: "check" },
+        { player: "Hero", type: "bet", amount: 2466, toAmount: 0 },
+      ],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "raise", amount: 325, toAmount: 465 }],
+      flop: [{ type: "call", amount: 537, toAmount: 0 }],
+      turn: [{ type: "raise", amount: 1868, toAmount: 2386 }],
+      river: [{ type: "bet", amount: 2466, toAmount: 0 }],
+    },
+  };
+
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "river",
+        heroHand: ["As", "Qh"],
+        effectiveStackBB: 30,
+        legalActions: ["bet", "check"],
+        heroCanRaise: true,
+        potSize: 7466,
+        facingBet: 0,
+        math: { spr: 2.52, callAmount: 0, finalPotIfCall: 7466 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "flop", pot_end_bb: 19.14, pressure_level: "medium", strategic_tags: [] },
+          { street: "turn", pot_end_bb: 53.22, pressure_level: "medium", strategic_tags: [] },
+          { street: "river", pot_end_bb: 53.22, pressure_level: "low", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", flop_score: 0, turn_score: 0, river_score: 0 },
+  );
+
+  const flop = contexts.find((item) => item.street === "flop");
+  const turn = contexts.find((item) => item.street === "turn");
+  const river = contexts.find((item) => item.street === "river");
+  assert.equal(flop?.action_taken?.sizing, "3.8bb");
+  assert.equal(turn?.action_taken?.sizing, "17.0bb");
+  assert.equal(river?.action_taken?.sizing, "17.6bb");
+
+  const compactFlop = compactStreetContextForPrompt(flop || {});
+  const compactRiver = compactStreetContextForPrompt(river || {});
+  assert.equal(compactFlop?.action_taken?.sizing, "3.8bb");
+  assert.equal(compactRiver?.action_taken?.sizing, "17.6bb");
+});
+
+test("street normalization aligns fold recommendation with chart-qualified continue spots", () => {
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: -2,
+      preferred_action: { action: "fold", sizing: null },
+      analysis: {
+        insight: "Mandatory fold preflop with this holding.",
+        range_context: "This is air and should always fold.",
+        board_texture: "No board cards yet.",
+        sizing_commentary: "Standard fold.",
+        plan_commentary: "Must fold and wait for better.",
+        takeaway: "Obvious fold preflop.",
+      },
+      confidence: "high",
+      strategic_tags: [],
+    },
+    {
+      street: "preflop",
+      action_taken: { action: "call", sizing: "2.0bb" },
+      deterministic: { street_tags: [] },
+      metrics: {},
+      legal_actions: ["call", "fold", "raise"],
+      seed_confidence: "medium",
+      audit_heuristics: {
+        street: "preflop",
+        chart_recommendation: "mixed_continue",
+        chart_confidence: "medium",
+        spot_classification: "bb_defend_vs_open",
+        solver_mix_estimate: "mixed_continue",
+        population_adjustment: null,
+      },
+    },
+  );
+  assert.equal(normalized.preferred_action.action, "call");
+  assert.equal(normalized.score, 0);
+  assert.equal(/mandatory fold|obvious fold|must fold|standard fold/i.test(normalized.analysis.takeaway), false);
+  assert.equal(Array.isArray(normalized.strategic_tags), true);
+  assert.equal(normalized.strategic_tags.includes("chart_aligned_continue"), true);
+});
+
+test("preflop action-time state freezes first-in fold context before later actions", () => {
+  const hand = {
+    heroName: "Hero",
+    heroCards: ["3c", "3d"],
+    heroPosition: "BTN",
+    blinds: { smallBlind: 60, bigBlind: 120, ante: 18 },
+    seats: [
+      { seat: 1, player: "Hero", chips: 12000, position: "BTN" },
+      { seat: 2, player: "SB", chips: 9000, position: "SB" },
+      { seat: 3, player: "BB", chips: 10000, position: "BB" },
+      { seat: 4, player: "UTG", chips: 8000, position: "UTG" },
+    ],
+    heroOutcome: { resolvedStreet: "preflop", code: "folded_preflop" },
+    board: { flop: [], turn: null, river: null },
+    actionsByStreet: {
+      preflop: [
+        { player: "UTG", type: "fold" },
+        { player: "Hero", type: "fold" },
+        { player: "SB", type: "raise", amount: 300, toAmount: 300 },
+        { player: "BB", type: "fold" },
+      ],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "fold" }],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+  };
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "preflop",
+        heroHand: ["3c", "3d"],
+        effectiveStackBB: 100,
+        legalActions: ["fold", "call", "raise"],
+        heroCanRaise: true,
+        potSize: 324,
+        facingBet: 0,
+        math: { spr: 12.5, callAmount: 0, finalPotIfCall: 324 },
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "low", strategic_tags: [] },
+        ],
+      },
+    },
+    { confidence: "medium", preflop_score: -1 },
+  );
+  const preflop = contexts.find((item) => item.street === "preflop");
+  assert.equal(preflop?.decision_type, "open_decision");
+  assert.equal(Boolean(preflop?.first_in_opportunity), true);
+  assert.equal(Boolean(preflop?.facing_open), false);
+  assert.equal(Boolean(preflop?.facing_raise), false);
+  assert.equal(preflop?.action_time_state?.facing_action, null);
+  assert.equal(preflop?.action_time_state?.hero_action_index, 1);
+});
+
+test("street normalization removes facing-raise phrasing in open-decision nodes", () => {
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: -1,
+      preferred_action: { action: "fold", sizing: null },
+      analysis: {
+        insight: "Hero folded facing a raise from the blinds.",
+        range_context: "This fold versus a raise is prudent.",
+        board_texture: "No board cards yet.",
+        sizing_commentary: "Facing a raise, folding is fine.",
+        plan_commentary: "After facing pressure, preserve stack.",
+        takeaway: "Standard fold facing a raise.",
+      },
+      confidence: "medium",
+      strategic_tags: [],
+    },
+    {
+      street: "preflop",
+      action_taken: { action: "fold", sizing: null },
+      deterministic: { street_tags: [] },
+      metrics: {},
+      legal_actions: ["fold", "call", "raise"],
+      action_time_state: {
+        open_opportunity: true,
+      },
+      seed_confidence: "medium",
+    },
+  );
+  const merged = [
+    normalized.analysis.insight,
+    normalized.analysis.range_context,
+    normalized.analysis.sizing_commentary,
+    normalized.analysis.plan_commentary,
+    normalized.analysis.takeaway,
+  ]
+    .join(" ")
+    .toLowerCase();
+  assert.equal(/\bfacing (?:a )?(?:raise|open|3-?bet|jam)\b/.test(merged), false);
+});
+
+test("street normalization avoids negative score when preferred action matches taken action and sizing", () => {
+  const aligned = areActionAndSizingAligned({
+    actionTaken: { action: "raise", sizing: "2.1bb" },
+    preferredAction: { action: "open_raise", sizing: "2.1bb" },
+  });
+  assert.equal(aligned, true);
+
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: -2,
+      preferred_action: { action: "open_raise", sizing: "2.1bb" },
+      analysis: {
+        insight: "Open raise is standard.",
+        range_context: "Reasonable UTG+1 open range.",
+        board_texture: "No board cards yet.",
+        sizing_commentary: "2.1bb is standard.",
+        plan_commentary: "Proceed with initiative.",
+        takeaway: "Open raise is fine.",
+      },
+      confidence: "medium",
+      strategic_tags: [],
+    },
+    {
+      street: "preflop",
+      action_taken: { action: "raise", sizing: "2.1bb" },
+      deterministic: { street_tags: [] },
+      metrics: {},
+      legal_actions: [],
+      seed_confidence: "medium",
+    },
+  );
+
+  assert.equal(normalized.score, 0);
+});
+
+test("preflop open qualification normalizes weak early-position first-in fold as disciplined", () => {
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: -2,
+      preferred_action: { action: "raise", sizing: "2.2bb" },
+      analysis: {
+        insight: "Opening is generally preferred from this first-in spot.",
+        range_context: "Avoid folding too frequently in first-in spots.",
+        board_texture: "No board cards yet.",
+        sizing_commentary: "Use a standard 2.2bb open.",
+        plan_commentary: "Take the initiative with a wider opening range.",
+        takeaway: "This fold is too tight and misses aggression.",
+      },
+      confidence: "high",
+      strategic_tags: ["missed_aggression"],
+    },
+    {
+      street: "preflop",
+      action_taken: { action: "fold", sizing: null },
+      deterministic: { street_tags: [] },
+      metrics: {},
+      legal_actions: ["fold", "call", "raise"],
+      decision_type: "open_decision",
+      first_in_opportunity: true,
+      action_time_state: {
+        decision_type: "open_decision",
+        open_opportunity: true,
+      },
+      seed_confidence: "medium",
+      audit_heuristics: {
+        street: "preflop",
+        chart_recommendation: "fold",
+        chart_confidence: "high",
+        spot_classification: "first_in_open_spot",
+        solver_mix_estimate: "likely_fold",
+        population_adjustment: null,
+      },
+      classification: {
+        made_hand_category: "air",
+        made_hand_type: "jack_high",
+        showdown_strength: "none",
+      },
+    },
+  );
+
+  assert.equal(normalized.preferred_action.action, "fold");
+  assert.equal(Number(normalized.score) >= 0, true);
+  const merged = [
+    normalized.analysis.insight,
+    normalized.analysis.range_context,
+    normalized.analysis.plan_commentary,
+    normalized.analysis.takeaway,
+  ]
+    .join(" ")
+    .toLowerCase();
+  assert.equal(/opening is generally preferred|avoid folding too frequently|too tight|misses aggression/.test(merged), false);
+  assert.equal(/disciplined|standard/.test(merged), true);
+  assert.equal(String(normalized.confidence || "").toLowerCase(), "medium");
+});
+
+test("street normalization rewrites incoherent bluff c-bet value/protection language", () => {
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: 0,
+      preferred_action: { action: "bet", sizing: "33%" },
+      analysis: {
+        insight: "This bet can fold out better hands and create value protection with queen-high.",
+        range_context: "Bet for value with Q-high and pressure better hands.",
+        board_texture: "K72 rainbow is semi-dynamic.",
+        sizing_commentary: "Small c-bet extracts value from worse and folds better hands.",
+        plan_commentary: "Use a protection bet here for value extraction.",
+        takeaway: "This is mostly a value bet with protection upside.",
+      },
+      confidence: "medium",
+      strategic_tags: [],
+    },
+    {
+      street: "flop",
+      action_taken: { action: "bet", sizing: "33%" },
+      deterministic: { street_tags: [] },
+      metrics: {},
+      legal_actions: ["check", "bet"],
+      seed_confidence: "medium",
+      semantic_action: {
+        action_type: "bet",
+        cbet_intent: "bluff_cbet",
+      },
+      classification: {
+        made_hand_category: "air",
+        made_hand_type: "queen_high",
+        showdown_strength: "weak",
+      },
+    },
+  );
+  const merged = [
+    normalized.analysis.insight,
+    normalized.analysis.range_context,
+    normalized.analysis.sizing_commentary,
+    normalized.analysis.plan_commentary,
+    normalized.analysis.takeaway,
+  ]
+    .join(" ")
+    .toLowerCase();
+  assert.equal(/\bfold(?:ing)? out better hands?\b/.test(merged), false);
+  assert.equal(/\bvalue[-\s]?protection\b/.test(merged), false);
+  assert.equal(/\bextract value from worse\b/.test(merged), false);
+  assert.equal(/\bprotection bet(?:ting)?\b/.test(merged), false);
+  assert.equal(/\bweaker unpaired hands\b/.test(merged), true);
+});
+
+test("preflop semantic classifier identifies isolation jams and reshoves", () => {
+  const isolationEvents = [
+    { street: "preflop", index: 0, player: "UTG", type: "raise" },
+    { street: "preflop", index: 1, player: "CO", type: "call" },
+    { street: "preflop", index: 2, player: "Hero", type: "jam" },
+  ];
+  const isoHero = isolationEvents[2];
+  const iso = classifyPreflopAction({
+    heroEvent: isoHero,
+    streetEvents: isolationEvents,
+    heroName: "Hero",
+    effectiveStackBb: 14,
+  });
+  assert.equal(iso.action_type, "isolation_jam");
+  assert.equal(iso.all_in, true);
+  assert.equal(iso.facing_open, true);
+  assert.equal(detectIsolationSpot({ heroEvent: isoHero, streetEvents: isolationEvents, heroName: "Hero" }), true);
+
+  const reshoveEvents = [
+    { street: "preflop", index: 0, player: "UTG", type: "raise" },
+    { street: "preflop", index: 1, player: "Hero", type: "jam" },
+  ];
+  const reshove = classifyPreflopAction({
+    heroEvent: reshoveEvents[1],
+    streetEvents: reshoveEvents,
+    heroName: "Hero",
+    effectiveStackBb: 12,
+  });
+  assert.equal(reshove.action_type, "reshove");
+  assert.equal(reshove.facing_open, true);
+});
+
+test("street skip placeholders encode runout reasons for timeline compatibility", () => {
+  const skipped = buildSkippedStreetReviewNode({
+    street: "turn",
+    automatic_runout: true,
+    all_players_committed: true,
+    hero_has_agency: false,
+    hand_semantics: { all_in_before_flop: true },
+    board_cards: ["Ah", "7d", "2c", "9s"],
+    metrics: { pot_size_bb: 44.5, spr: 0, facing_size_bb: null, pot_odds: null },
+    deterministic: { street_tags: ["high_pressure_node"] },
+    action_taken: { action: "none", sizing: null },
+  });
+  assert.equal(skipped.skipped, true);
+  assert.equal(skipped.skipped_reason, "all_in_runout");
+  assert.match(skipped.summary, /all-?in|runout/i);
+});
+
+test("commitment and agency helpers detect preflop-resolved hands", () => {
+  const hand = {
+    heroName: "Hero",
+    seats: [
+      { player: "Hero", chips: 1000 },
+      { player: "V1", chips: 900 },
+      { player: "V2", chips: 1100 },
+    ],
+    actionsByStreet: {
+      preflop: [
+        { player: "V1", type: "raise", amount: 200, toAmount: 300 },
+        { player: "Hero", type: "jam", amount: 1000, toAmount: 1000 },
+        { player: "V2", type: "jam", amount: 1100, toAmount: 1100 },
+        { player: "V1", type: "call", amount: 700 },
+      ],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "jam", amount: 1000, toAmount: 1000 }],
+      flop: [],
+      turn: [],
+      river: [],
+    },
+  };
+  const jamTree = detectJamTree({ hand, heroName: "Hero" });
+  assert.equal(jamTree.all_in_before_flop, true);
+  const commitment = detectCommitmentState({ hand, heroName: "Hero" });
+  const agency = detectStreetAgency({
+    street: "flop",
+    decisionStreet: "preflop",
+    heroDecisionStreetSet: new Set(["preflop"]),
+    commitmentState: commitment,
+    jamTree,
+  });
+  assert.equal(agency.is_decision_street, false);
+  assert.equal(agency.automatic_runout, true);
 });
 
 test("reddit_failure_fixture_001 is permanently guarded", () => {
@@ -938,7 +1851,7 @@ test("strategic contradiction: none showdown value plus passive river check is r
     validatedHandState: {
       ...base.validatedHandState,
       street: "river",
-      heroHand: ["Ac", "5d"],
+      heroHand: ["8c", "5d"],
       boardCards: ["Kh", "Qd", "9s", "3c", "2d"],
       effectiveStackBB: 22,
       facingBet: 1400,
@@ -1036,8 +1949,12 @@ test("board-relative fixture: J9 on QQ532 is not top-pair or bluff-catcher", () 
   const classification = deriveHandClassification(handState);
   assert.equal(classification.boardMadeHand, "pair");
   assert.equal(classification.heroImprovesBoard, false);
-  assert.equal(classification.effectiveHandCategory, "board_pair_j_high");
-  assert.equal(classification.showdownStrength === "none" || classification.showdownStrength === "weak", true);
+  assert.equal(classification.effectiveHandCategory, "air");
+  assert.equal(classification.madeHandType, "jack_high");
+  assert.equal(classification.pairSource, null);
+  assert.equal(classification.boardPairing, true);
+  assert.equal(classification.showdownStrength, "none");
+  assert.equal(classification.showdownStrengthTier, "none_showdown");
   assert.equal(classification.kickerStrength, "weak");
   assert.equal(classification.showdownRelevance, "none");
   assert.equal(classification.boardPairKickerClass, "weak_kicker");
@@ -1106,7 +2023,87 @@ test("board-relative fixture: AQ on QQ532 is strong showdown and improved board"
   assert.equal(classification.showdownStrength, "strong");
 });
 
-test("board-relative fixture: KJ on QQ532 allows weak bluff-catcher framing", () => {
+test("paired-board made-hand classification: TT9 distinguishes king-high, trips, and full house correctly", () => {
+  const scenarios = [
+    {
+      id: "kj_king_high",
+      handState: {
+        street: "flop",
+        heroHand: ["Ks", "Jc"],
+        boardCards: ["Ts", "Td", "9s"],
+      },
+      expected: {
+        madeHandCategory: "air",
+        madeHandType: "king_high",
+        pairSource: null,
+        boardPairing: true,
+        showdownStrengthTier: "weak_showdown",
+      },
+    },
+    {
+      id: "at_trips",
+      handState: {
+        street: "flop",
+        heroHand: ["As", "Th"],
+        boardCards: ["Ts", "Td", "9s"],
+      },
+      expected: {
+        madeHandCategory: "trips",
+        madeHandType: "trips",
+        boardPairing: true,
+      },
+    },
+    {
+      id: "99_full_house",
+      handState: {
+        street: "flop",
+        heroHand: ["9c", "9d"],
+        boardCards: ["Ts", "Td", "9s"],
+      },
+      expected: {
+        madeHandCategory: "full_house",
+        madeHandType: "full_house",
+        boardPairing: true,
+      },
+    },
+    {
+      id: "kt_trips",
+      handState: {
+        street: "flop",
+        heroHand: ["Kh", "Tc"],
+        boardCards: ["Ts", "Td", "9s"],
+      },
+      expected: {
+        madeHandCategory: "trips",
+        madeHandType: "trips",
+        boardPairing: true,
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const classification = deriveHandClassification(scenario.handState);
+    assert.equal(
+      classification.madeHandCategory,
+      scenario.expected.madeHandCategory,
+      scenario.id,
+    );
+    assert.equal(classification.madeHandType, scenario.expected.madeHandType, scenario.id);
+    if ("pairSource" in scenario.expected) {
+      assert.equal(classification.pairSource, scenario.expected.pairSource, scenario.id);
+    }
+    assert.equal(classification.boardPairing, scenario.expected.boardPairing, scenario.id);
+    if (scenario.expected.showdownStrengthTier) {
+      assert.equal(
+        classification.showdownStrengthTier,
+        scenario.expected.showdownStrengthTier,
+        scenario.id,
+      );
+    }
+  }
+});
+
+test("board-relative fixture: KJ on QQ532 remains king-high with marginal showdown value", () => {
   const handState = {
     street: "river",
     heroHand: ["Kh", "Jd"],
@@ -1120,12 +2117,16 @@ test("board-relative fixture: KJ on QQ532 allows weak bluff-catcher framing", ()
   const classification = deriveHandClassification(handState);
   assert.equal(classification.boardMadeHand, "pair");
   assert.equal(classification.heroImprovesBoard, false);
-  assert.equal(classification.heroContributionLevel, "weak");
+  assert.equal(classification.heroContributionLevel, "none");
+  assert.equal(classification.madeHandType, "king_high");
+  assert.equal(classification.pairSource, null);
+  assert.equal(classification.boardPairing, true);
   assert.equal(classification.kickerStrength, "medium");
   assert.equal(classification.showdownRelevance, "marginal");
   assert.equal(classification.boardPairKickerClass, "strong_kicker");
   assert.equal(classification.showdownStrength, "weak");
-  assert.equal(classification.bluffCatcher, true);
+  assert.equal(classification.showdownStrengthTier, "weak_showdown");
+  assert.equal(classification.bluffCatcher, false);
 });
 
 test("board-only full-house fixture does not overstate hero improvement", () => {
