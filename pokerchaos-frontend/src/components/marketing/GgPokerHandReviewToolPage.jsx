@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/ggpoker-hand-review-tool";
 const PAGE_TITLE = "GGPoker Hand Review Tool | Playback Poker";
@@ -100,35 +100,44 @@ export default function GgPokerHandReviewToolPage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">GGPoker Hand Review Tool</p>
-        <h1 className="marketing-title">Review GGPoker Hands With AI</h1>
-        <p className="marketing-subtitle">
-          Upload hand histories and run tactical AI review across preflop and
-          postflop decisions. Import GGPoker exports from PokerCraft or
-          PokerStars hand history logs to find recurring leaks and build a
-          sharper post-session study loop.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">GGPoker tournament support</span>
-          <span className="marketing-pill">GG + PokerStars cash support</span>
-          <span className="marketing-pill">Leak-focused analysis</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">GGPoker Hand Review Tool</p>
+          <h1 className="marketing-title">Review GGPoker hands with AI.</h1>
+          <p className="marketing-subtitle">
+            Upload hand histories and run tactical AI review across preflop and
+            postflop decisions. Import GGPoker exports from PokerCraft or
+            PokerStars hand history logs to find recurring leaks and build a
+            sharper post-session study loop.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">GGPoker tournament support</span>
+            <span className="marketing-pill">GG + PokerStars cash support</span>
+            <span className="marketing-pill">Leak-focused analysis</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Supported source</span>
+            <strong>GGPoker PokerCraft</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            A cleaner entry point for players who already export GGPoker hands
+            and want practical post-session review.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>How It Works</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -156,7 +165,7 @@ export default function GgPokerHandReviewToolPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -180,6 +189,6 @@ export default function GgPokerHandReviewToolPage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 import { LANDING_PAGE_LABELS } from "./articleCatalog.js";
 import { getTrustPageByPath } from "./trustCatalog.js";
 
@@ -104,36 +104,21 @@ export default function TrustPageDraft({ path }) {
 
   if (!page) {
     return (
-      <main className="marketing-shell">
-        <section className="panel marketing-header-panel">
-          <img
-            src={mobileNavWordmark}
-            alt="Playback Poker"
-            className="marketing-wordmark"
-          />
-        </section>
-        <section className="panel marketing-hero-panel">
+      <MarketingSiteShell currentPath="/">
+        <section className="home-section learning-story-section">
           <p className="marketing-kicker">Trust Page</p>
           <h1 className="marketing-title">Page Not Found</h1>
-          <a className="auth-button marketing-cta-button" href="/">
+          <a className="home-button home-button-primary" href="/">
             Return Home
           </a>
         </section>
-      </main>
+      </MarketingSiteShell>
     );
   }
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
+    <MarketingSiteShell currentPath={page.path}>
+      <section className="home-section learning-story-section">
         <div
           className={
             page.heroMedia
@@ -147,13 +132,23 @@ export default function TrustPageDraft({ path }) {
             </p>
             <h1 className="marketing-title">{page.title}</h1>
             <p className="marketing-subtitle">{page.description}</p>
-            {!page.publishReady ? (
-              <div className="marketing-proof-row">
+            <div className="marketing-proof-row">
+              {!page.publishReady ? (
                 <span className="marketing-pill">Status: Draft Framework</span>
-                <span className="marketing-pill">Robots: noindex,follow</span>
-                <span className="marketing-pill">Updated: {page.updatedAt}</span>
-              </div>
-            ) : null}
+              ) : null}
+              <span className="marketing-pill">
+                Robots: {page.publishReady ? "index,follow" : "noindex,follow"}
+              </span>
+              <span className="marketing-pill">Updated: {page.updatedAt}</span>
+            </div>
+            <div className="learning-story-actions">
+              <a className="home-button home-button-primary" href="/review">
+                Review a Hand
+              </a>
+              <a className="home-button home-button-secondary" href="/articles">
+                Back to Articles
+              </a>
+            </div>
           </div>
           {page.heroMedia ? (
             <figure className="trust-hero-media">
@@ -237,7 +232,7 @@ export default function TrustPageDraft({ path }) {
       </section>
 
       {hasWalkthrough ? (
-        <section className="panel">
+        <section className="home-section learning-story-section">
           <h2>{page.walkthroughTitle || "How-To Walkthrough"}</h2>
           {page.walkthroughIntro ? (
             <p className="trust-walkthrough-intro">{page.walkthroughIntro}</p>
@@ -346,7 +341,7 @@ export default function TrustPageDraft({ path }) {
         </section>
       ) : null}
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>
           {page.publishReady
             ? "Content"
@@ -377,7 +372,7 @@ export default function TrustPageDraft({ path }) {
         )}
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>Internal Links For This Page</h2>
         <div className="article-link-stack">
           <a className="article-link article-link-strong" href={page.primaryLandingPath}>
@@ -391,6 +386,6 @@ export default function TrustPageDraft({ path }) {
           </a>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

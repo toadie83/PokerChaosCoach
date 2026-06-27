@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/ai-poker-hand-analyzer";
 const PAGE_TITLE = "AI Poker Hand Analyzer | Playback Poker";
@@ -100,37 +100,46 @@ export default function AiPokerHandAnalyzerPage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">AI Poker Hand Analyzer</p>
-        <h1 className="marketing-title">
-          Analyze tournament hands with focused AI feedback in minutes.
-        </h1>
-        <p className="marketing-subtitle">
-          Playback Poker helps you review MTT decisions, surface recurring
-          leaks, and run cleaner post-session study with a tactical workflow.
-          Tournament and cash uploads support both GGPoker and PokerStars.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">MTT hand review workflow</span>
-          <span className="marketing-pill">Leak-focused analysis</span>
-          <span className="marketing-pill">Tournaments: GG + PokerStars</span>
-          <span className="marketing-pill">Cash: GG + PokerStars</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">AI Poker Hand Analyzer</p>
+          <h1 className="marketing-title">
+            Analyze tournament hands with focused AI feedback in minutes.
+          </h1>
+          <p className="marketing-subtitle">
+            Playback Poker helps you review MTT decisions, surface recurring
+            leaks, and run cleaner post-session study with a tactical workflow.
+            Tournament and cash uploads support both GGPoker and PokerStars.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">MTT hand review workflow</span>
+            <span className="marketing-pill">Leak-focused analysis</span>
+            <span className="marketing-pill">Tournaments: GG + PokerStars</span>
+            <span className="marketing-pill">Cash: GG + PokerStars</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Workflow</span>
+            <strong>Street-by-street AI review</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            Built to explain decisions clearly while staying honest about AI
+            limits and practical review context.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>How It Works</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -157,7 +166,7 @@ export default function AiPokerHandAnalyzerPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>Built For Real Search Intent</h2>
         <ul className="marketing-intent-list">
           <li>AI Poker Hand Analyzer</li>
@@ -168,7 +177,7 @@ export default function AiPokerHandAnalyzerPage() {
         </ul>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -202,6 +211,6 @@ export default function AiPokerHandAnalyzerPage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

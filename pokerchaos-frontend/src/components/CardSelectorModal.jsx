@@ -28,7 +28,8 @@ export default function CardSelectorModal({
   initialCards,
   onClose,
   onSave,
-  requireAll = true
+  requireAll = true,
+  autoSaveOnComplete = false
 }) {
   const effectiveSlots =
     Array.isArray(slots) && slots.length > 0
@@ -194,22 +195,8 @@ export default function CardSelectorModal({
   }, [stopVoiceCapture]);
 
   const cardStrings = useMemo(() => {
-    return effectiveSlots.reduce((acc, slot) => {
-      acc[slot.key] = formatCard(draft[slot.key]);
-      return acc;
-    }, {});
+    return draftToCardStrings(draft, effectiveSlots);
   }, [draft, effectiveSlots]);
-
-  const duplicate = useMemo(() => {
-    const seen = new Set();
-    for (const slot of effectiveSlots) {
-      const card = cardStrings[slot.key];
-      if (!card) continue;
-      if (seen.has(card)) return true;
-      seen.add(card);
-    }
-    return false;
-  }, [cardStrings, effectiveSlots]);
 
   const activeSlot = effectiveSlots[activeIndex] || effectiveSlots[0];
   const activeCard = activeSlot ? draft[activeSlot.key] : null;
@@ -225,6 +212,26 @@ export default function CardSelectorModal({
     }
   }, [draft, effectiveSlots.length]);
 
+  const saveSelection = useCallback(
+    (candidateCardStrings) => {
+      if (
+        requireAll &&
+        effectiveSlots.some((slot) => !candidateCardStrings?.[slot.key])
+      ) {
+        setError("Pick a rank and suit for each card.");
+        return false;
+      }
+      if (hasDuplicateCardStrings(candidateCardStrings, effectiveSlots)) {
+        setError("Cannot select the same card twice.");
+        return false;
+      }
+      setError("");
+      onSave(candidateCardStrings);
+      return true;
+    },
+    [effectiveSlots, onSave, requireAll]
+  );
+
   const handleSuitSelect = (value) => {
     if (!activeSlot) return;
     if (!activeCard?.rank) {
@@ -233,26 +240,28 @@ export default function CardSelectorModal({
     }
     const slotIndex = activeIndex;
     const slotKey = activeSlot.key;
-    let blocked = false;
-    setDraft((prev) => {
-      const prevCard = prev[slotKey] || {};
-      const next = {
-        ...prev,
-        [slotKey]: {
-          ...prevCard,
-          suit: value
-        }
-      };
-      if (isCardDuplicate(next, slotKey)) {
-        pendingAdvanceRef.current = null;
-        blocked = true;
-        return prev;
+    const next = {
+      ...draft,
+      [slotKey]: {
+        ...(draft[slotKey] || {}),
+        suit: value
       }
-      const nextIndex = findNextIncomplete(next, effectiveSlots, slotIndex + 1);
-      pendingAdvanceRef.current = nextIndex;
-      return next;
-    });
-    setError(blocked ? "Cannot select the same card twice." : "");
+    };
+    if (isCardDuplicate(next, slotKey)) {
+      pendingAdvanceRef.current = null;
+      setError("Cannot select the same card twice.");
+      return;
+    }
+    const nextIndex = findNextIncomplete(next, effectiveSlots, slotIndex + 1);
+    pendingAdvanceRef.current = nextIndex;
+    setDraft(next);
+    setError("");
+    if (autoSaveOnComplete) {
+      const nextCardStrings = draftToCardStrings(next, effectiveSlots);
+      if (areAllSlotsComplete(nextCardStrings, effectiveSlots)) {
+        saveSelection(nextCardStrings);
+      }
+    }
   };
 
   const handleRankSelect = (value) => {
@@ -317,18 +326,7 @@ export default function CardSelectorModal({
   };
 
   const handleSave = () => {
-    if (
-      requireAll &&
-      effectiveSlots.some((slot) => !cardStrings[slot.key])
-    ) {
-      setError("Pick a rank and suit for each card.");
-      return;
-    }
-    if (duplicate) {
-      setError("Cannot select the same card twice.");
-      return;
-    }
-    onSave(cardStrings);
+    saveSelection(cardStrings);
   };
 
   if (!open) return null;
@@ -585,4 +583,26 @@ function isCardDuplicate(draft, slotKey) {
     if (key === slotKey) return false;
     return card?.rank === target.rank && card?.suit === target.suit;
   });
+}
+
+function draftToCardStrings(draft, slots) {
+  return slots.reduce((acc, slot) => {
+    acc[slot.key] = formatCard(draft[slot.key]);
+    return acc;
+  }, {});
+}
+
+function hasDuplicateCardStrings(cardStrings = {}, slots = []) {
+  const seen = new Set();
+  for (const slot of slots) {
+    const card = cardStrings[slot.key];
+    if (!card) continue;
+    if (seen.has(card)) return true;
+    seen.add(card);
+  }
+  return false;
+}
+
+function areAllSlotsComplete(cardStrings = {}, slots = []) {
+  return slots.every((slot) => Boolean(cardStrings[slot.key]));
 }

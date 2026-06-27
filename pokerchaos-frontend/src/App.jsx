@@ -42,6 +42,15 @@ export default function App() {
       return false;
     }
   });
+  const [autoSaveHands, setAutoSaveHands] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const saved = window.localStorage?.getItem("pcc_auto_save_hands");
+      return saved !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [previewSizing, setPreviewSizing] = useState(null);
   const [stackModalOpen, setStackModalOpen] = useState(false);
   const [playHandOpen, setPlayHandOpen] = useState(false);
@@ -89,6 +98,17 @@ export default function App() {
       document.body.classList.toggle("compact-mode", compactMode);
     }
   }, [compactMode]);
+
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(
+          "pcc_auto_save_hands",
+          autoSaveHands ? "true" : "false",
+        );
+      }
+    } catch {}
+  }, [autoSaveHands]);
 
   const handleReset = useCallback(() => {
     setCoach(null);
@@ -985,7 +1005,7 @@ export default function App() {
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <h1 className="title">Chaos Coach</h1>
+              <h1 className="title"></h1>
             </div>
             <div className="panel-heading-actions">
               {/* 
@@ -1000,7 +1020,9 @@ export default function App() {
               </button> */}
               <button
                 type="button"
-                className={`pill-toggle ${compactMode ? "active" : ""}`}
+                className={`pill-toggle header-action-btn ${
+                  compactMode ? "active" : ""
+                }`}
                 onClick={() => setCompactMode((value) => !value)}
                 title="Toggle compact density"
               >
@@ -1008,62 +1030,62 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className="pill-toggle"
+                className="pill-toggle header-action-btn"
                 onClick={() => setSetupOpen((value) => !value)}
               >
                 {setupOpen ? "Hide setup" : "Game setup"}
               </button>
+              <div className="panel-heading-selectors">
+                <label
+                  className="header-select-control"
+                  title={personaMeta?.description || "Persona guidance"}
+                >
+                  <span className="header-select-label">Persona</span>
+                  <span className="persona-avatar" aria-hidden>
+                    {personaAvatar}
+                  </span>
+                  <select
+                    aria-label="Persona"
+                    value={persona}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setCoach(null);
+                      setField("persona", next);
+                      if (
+                        (next === "range_professor" ||
+                          next === "short_stack_ninja" ||
+                          next === "cash_game_crusher") &&
+                        !heroCardsReady
+                      ) {
+                        openHeroCardSelector();
+                      }
+                    }}
+                  >
+                    {personaOptions.map((p) => (
+                      <option key={p.code} value={p.code}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="header-select-control">
+                  <span className="header-select-label">Villain</span>
+                  <select
+                    aria-label="Villain type"
+                    value={villainType}
+                    onChange={(e) => setField("villainType", e.target.value)}
+                  >
+                    {villainTypeOptions.map((v) => (
+                      <option key={v.code} value={v.code}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
           <ChaosHud mood={mood} />
-          <div className="quick-pills">
-            <div
-              className="pill-field persona-field"
-              title={personaMeta?.description || "Persona guidance"}
-            >
-              <span className="pill-label">Persona</span>
-              <div className="pill-control persona-control">
-                <span className="persona-avatar">{personaAvatar}</span>
-                <select
-                  value={persona}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setCoach(null);
-                    setField("persona", next);
-                    if (
-                      (next === "range_professor" ||
-                        next === "short_stack_ninja" ||
-                        next === "cash_game_crusher") &&
-                      !heroCardsReady
-                    ) {
-                      openHeroCardSelector();
-                    }
-                  }}
-                >
-                  {personaOptions.map((p) => (
-                    <option key={p.code} value={p.code}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="pill-field villain-field">
-              <span className="pill-label">Villain type</span>
-              <div className="pill-control">
-                <select
-                  value={villainType}
-                  onChange={(e) => setField("villainType", e.target.value)}
-                >
-                  {villainTypeOptions.map((v) => (
-                    <option key={v.code} value={v.code}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
 
           <div className="table-context">
             <div className="table-context-row">
@@ -1331,6 +1353,21 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Hands</span>
+                  <button
+                    type="button"
+                    className={`pill-toggle ${autoSaveHands ? "active" : ""}`}
+                    onClick={() => setAutoSaveHands((value) => !value)}
+                    title="Auto save card selections when all required cards are set"
+                  >
+                    Auto save hands {autoSaveHands ? "on" : "off"}
+                  </button>
+                  <span className="drawer-hint">
+                    Saves and closes the card picker after the final required
+                    rank+suit is selected.
+                  </span>
+                </div>
               </div>
 
               {/* {personaNeedsCards ? (
@@ -1441,6 +1478,7 @@ export default function App() {
             ? cardSelectorConfig.requireAll
             : true
         }
+        autoSaveOnComplete={autoSaveHands}
         onClose={closeCardSelector}
         onSave={handleCardSelectorSave}
       />

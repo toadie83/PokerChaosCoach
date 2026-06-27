@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/poker-session-review";
 const PAGE_TITLE = "Poker Session Review | Playback Poker";
@@ -100,36 +100,45 @@ export default function PokerSessionReviewPage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">Poker Session Review</p>
-        <h1 className="marketing-title">
-          Turn Every Session Into A Clear Improvement Plan
-        </h1>
-        <p className="marketing-subtitle">
-          Playback Poker gives you a structured review flow: parse your upload,
-          rank hands by impact, and identify repeat leak themes before your next
-          session starts.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">Session parsing workflow</span>
-          <span className="marketing-pill">Ranked review queue</span>
-          <span className="marketing-pill">Recurring leak themes</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">Poker Session Review</p>
+          <h1 className="marketing-title">
+            Turn every session into a clear improvement plan.
+          </h1>
+          <p className="marketing-subtitle">
+            Playback Poker gives you a structured review flow: parse your upload,
+            rank hands by impact, and identify repeat leak themes before your next
+            session starts.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">Session parsing workflow</span>
+            <span className="marketing-pill">Ranked review queue</span>
+            <span className="marketing-pill">Recurring leak themes</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Best for</span>
+            <strong>Repeatable study routines</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            Designed to help players leave a session with one or two specific
+            corrections instead of a messy list of hands.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>Session Review Framework</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -156,7 +165,7 @@ export default function PokerSessionReviewPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -181,6 +190,6 @@ export default function PokerSessionReviewPage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }
