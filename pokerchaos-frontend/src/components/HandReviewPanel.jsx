@@ -489,6 +489,33 @@ function formatRateWithConfidence(numerator, denominator) {
   )}`;
 }
 
+function buildCoachLineItem(text, { auditTarget = "", tone = "watch" } = {}) {
+  const value = String(text || "").trim();
+  if (!value) return null;
+  return {
+    text: value,
+    auditTarget: String(auditTarget || "").trim(),
+    tone: tone === "good" ? "good" : "watch",
+  };
+}
+
+function normalizeCoachLineItem(
+  item,
+  { fallbackTone = "watch", fallbackAuditTarget = "" } = {},
+) {
+  if (typeof item === "string") {
+    return buildCoachLineItem(item, {
+      tone: fallbackTone,
+      auditTarget: fallbackAuditTarget,
+    });
+  }
+  if (!item || typeof item !== "object") return null;
+  return buildCoachLineItem(item.text, {
+    tone: item.tone || fallbackTone,
+    auditTarget: item.auditTarget || fallbackAuditTarget,
+  });
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -636,6 +663,11 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
   const pre = summary.preflopBreakdown;
   const rating = buildTournamentRating(summary, postflopDigest);
   const candidates = [];
+  const addCandidate = (candidate) => {
+    if (!candidate || !Number.isFinite(Number(candidate.severity))) return;
+    if (Number(candidate.severity) <= 0) return;
+    candidates.push(candidate);
+  };
   const openRate = safePercent(
     pre.openedWhenNoRaiseBeforeHero,
     pre.noRaiseBeforeHeroSpots,
@@ -649,70 +681,178 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
     pre.foldedAfterFacingReraise,
     pre.facedReraiseAfterAggressionSpots,
   );
+  const post = postflopDigest?.findings || {};
+  const missedIpCbetRate = Number(post?.missedIpCbetFavorable?.ratePct) || 0;
+  const missedIpStabRate = Number(post?.missedIpStabFavorable?.ratePct) || 0;
+  const lightIpTurnFoldRate = Number(post?.lightIpFoldTurn?.ratePct) || 0;
+  const lightIpRiverFoldRate = Number(post?.lightIpFoldRiver?.ratePct) || 0;
+  const missedIpValueRaiseRate = Number(post?.missedIpValueRaise?.ratePct) || 0;
 
   if (pre.noRaiseBeforeHeroSpots >= 12 && openRate < 28) {
-    candidates.push({
+    addCandidate({
       key: "opening_low",
       severity: 28 - openRate,
-      label: "Under-opening in first-in spots",
+      family: "preflop_passive",
+      label: "Passive first-in aggression",
       evidence: `Open rate in no-raise spots is ${rateCountLabel(
         pre.openedWhenNoRaiseBeforeHero,
         pre.noRaiseBeforeHeroSpots,
       )}.`,
       action:
-        "Increase opens first from late and mid positions before changing marginal defend spots.",
+        "Open more first-in hands from CO/BTN/SB to create steal and c-bet opportunities instead of waiting only for premiums.",
       confidence: confidenceFromSample(pre.noRaiseBeforeHeroSpots),
+      auditTarget: "preflop_opportunity",
     });
   }
 
   if (pre.facingOpenSpots >= 12 && defendRate < 32) {
-    candidates.push({
+    addCandidate({
       key: "defending_low",
       severity: 32 - defendRate,
-      label: "Overfolding when facing opens",
+      family: "preflop_passive",
+      label: "Passive responses versus opens",
       evidence: `Defend rate facing opens is ${rateCountLabel(
         pre.defendedFacingOpen,
         pre.facingOpenSpots,
       )}.`,
       action:
-        "Add more calls and 3-bets in facing-open spots, starting with BB and BTN defenses.",
+        "Defend wider with calls and 3-bets in BTN/BB so medium-strength holdings are not auto-folded preflop.",
       confidence: confidenceFromSample(pre.facingOpenSpots),
+      auditTarget: "blind_defense",
     });
   }
 
   if (pre.blindFacingOpenSpots >= 12 && blindFoldRate > 66) {
-    candidates.push({
+    addCandidate({
       key: "blind_overfold",
       severity: blindFoldRate - 66,
+      family: "preflop_passive",
       label: "Blinds are folding too often versus opens",
       evidence: `Blind fold vs open is ${rateCountLabel(
         pre.blindFoldFacingOpen,
         pre.blindFacingOpenSpots,
       )}.`,
       action:
-        "Widen BB defend first, then selectively add SB 3-bet/call continues versus late opens.",
+        "Widen BB defend first, then add SB call and 3-bet continues versus late opens with connected and blocker-heavy hands.",
       confidence: confidenceFromSample(pre.blindFacingOpenSpots),
+      auditTarget: "blind_defense",
     });
   }
 
   if (pre.facedReraiseAfterAggressionSpots >= 8 && reraiseFoldRate > 78) {
-    candidates.push({
+    addCandidate({
       key: "fold_to_reraise_high",
       severity: reraiseFoldRate - 78,
-      label: "Likely overfolding after facing reraises",
+      family: "preflop_resilience",
+      label: "Aggressive lines are too fold-heavy versus 3-bets",
       evidence: `Fold after reraises is ${rateCountLabel(
         pre.foldedAfterFacingReraise,
         pre.facedReraiseAfterAggressionSpots,
       )}.`,
       action:
-        "Review open and 3-bet ranges so your aggressive lines do not auto-fold too often to pressure.",
+        "Protect open and 3-bet ranges with clearer continue plans so pressure does not force immediate folds.",
       confidence: confidenceFromSample(pre.facedReraiseAfterAggressionSpots),
+      auditTarget: "preflop_opportunity",
     });
   }
 
-  candidates.sort((a, b) => b.severity - a.severity);
-  const primary = candidates[0] || null;
-  const secondary = candidates[1] || null;
+  const cbetOpp = Number(post?.missedIpCbetFavorable?.opportunities) || 0;
+  const stabOpp = Number(post?.missedIpStabFavorable?.opportunities) || 0;
+  const turnFoldOpp = Number(post?.lightIpFoldTurn?.opportunities) || 0;
+  const riverFoldOpp = Number(post?.lightIpFoldRiver?.opportunities) || 0;
+  const valueRaiseOpp = Number(post?.missedIpValueRaise?.opportunities) || 0;
+
+  if (
+    (cbetOpp >= 8 && missedIpCbetRate > 30) ||
+    (stabOpp >= 8 && missedIpStabRate > 30)
+  ) {
+    addCandidate({
+      key: "underbluff_ip",
+      severity: Math.max(missedIpCbetRate - 30, missedIpStabRate - 30),
+      family: "postflop_aggression",
+      label: "Underbluffing in favorable in-position flops",
+      evidence: `Missed IP c-bet/stab rates are ${rateCountLabel(
+        Number(post?.missedIpCbetFavorable?.count) || 0,
+        cbetOpp,
+      )} and ${rateCountLabel(
+        Number(post?.missedIpStabFavorable?.count) || 0,
+        stabOpp,
+      )}.`,
+      action:
+        "When checked to on favorable flops, add more one-third-pot c-bets and stabs with backdoors and overcards.",
+      confidence: confidenceFromSample(Math.max(cbetOpp, stabOpp)),
+      auditTarget: "postflop_ip",
+    });
+  }
+
+  if (
+    (turnFoldOpp >= 8 && lightIpTurnFoldRate > 18) ||
+    (riverFoldOpp >= 8 && lightIpRiverFoldRate > 16)
+  ) {
+    addCandidate({
+      key: "bluffcatch_overfold",
+      severity: Math.max(lightIpTurnFoldRate - 18, lightIpRiverFoldRate - 16),
+      family: "postflop_bluffcatch",
+      label: "Overfolding bluff-catchers on later streets",
+      evidence: `Likely light folds in position are ${rateCountLabel(
+        Number(post?.lightIpFoldTurn?.count) || 0,
+        turnFoldOpp,
+      )} on turn and ${rateCountLabel(
+        Number(post?.lightIpFoldRiver?.count) || 0,
+        riverFoldOpp,
+      )} on river.`,
+      action:
+        "Keep more bluff-catch calls by prioritizing blocker effects and missed-draw runouts instead of default-folding late streets.",
+      confidence: confidenceFromSample(Math.max(turnFoldOpp, riverFoldOpp)),
+      auditTarget: "postflop_ip",
+    });
+  }
+
+  if (valueRaiseOpp >= 6 && missedIpValueRaiseRate > 25) {
+    addCandidate({
+      key: "value_raise_missed",
+      severity: missedIpValueRaiseRate - 25,
+      family: "postflop_value",
+      label: "Passive value extraction on turn/river",
+      evidence: `Missed in-position value-raises are ${rateCountLabel(
+        Number(post?.missedIpValueRaise?.count) || 0,
+        valueRaiseOpp,
+      )}.`,
+      action:
+        "Raise more strong top-pair-plus hands versus turn/river bets when ranges are capped or draw-heavy.",
+      confidence: confidenceFromSample(valueRaiseOpp),
+      auditTarget: "postflop_ip",
+    });
+  }
+
+  if (
+    Number(summary?.enteredHands) >= 15 &&
+    Number(summary?.postflopNoShowdownPct) <= 8
+  ) {
+    addCandidate({
+      key: "passive_no_showdown",
+      severity: 8 - Number(summary?.postflopNoShowdownPct),
+      family: "postflop_aggression",
+      label: "Too few pots won without showdown",
+      evidence: `Postflop no-showdown win rate is ${percentLabel(
+        Number(summary?.postflopNoShowdownPct) || 0,
+      )}.`,
+      action:
+        "Find extra pressure lines in position on favorable boards so opponents fold more before showdown.",
+      confidence: confidenceFromSample(Number(summary?.enteredHands)),
+      auditTarget: "postflop_ip",
+    });
+  }
+
+  const sortedCandidates = [...candidates].sort((a, b) => b.severity - a.severity);
+  const primary = sortedCandidates[0] || null;
+  const secondary =
+    sortedCandidates.find(
+      (candidate, idx) =>
+        idx > 0 && String(candidate.family) !== String(primary?.family),
+    ) ||
+    sortedCandidates[1] ||
+    null;
 
   const openSignal =
     pre.noRaiseBeforeHeroSpots < 8
@@ -733,37 +873,155 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
       ? "low sample"
       : reraiseFoldRate > 78
         ? "too high"
-        : "ok";
+      : "ok";
 
-  const evidence = [
-    `Open first-in: ${rateCountLabel(
-      pre.openedWhenNoRaiseBeforeHero,
-      pre.noRaiseBeforeHeroSpots,
-    )} - ${openSignal}`,
-    `Defend vs open: ${rateCountLabel(
-      pre.defendedFacingOpen,
-      pre.facingOpenSpots,
-    )} - ${defendSignal}`,
-    `Blind fold vs open: ${rateCountLabel(
-      pre.blindFoldFacingOpen,
-      pre.blindFacingOpenSpots,
-    )} - ${blindFoldSignal}`,
-  ];
-  if (pre.facedReraiseAfterAggressionSpots > 0) {
-    evidence.push(
-      `Fold after reraise: ${rateCountLabel(
-        pre.foldedAfterFacingReraise,
-        pre.facedReraiseAfterAggressionSpots,
-      )} - ${reraiseSignal}`,
+  const metricRows = [
+    {
+      key: "open_first_in",
+      label: "Open first-in",
+      count: Number(pre.openedWhenNoRaiseBeforeHero) || 0,
+      sample: Number(pre.noRaiseBeforeHeroSpots) || 0,
+      signal: openSignal,
+      severity:
+        pre.noRaiseBeforeHeroSpots < 8 ? 0.2 : Math.max(0, 28 - openRate),
+      auditTarget: "preflop_opportunity",
+    },
+    {
+      key: "defend_vs_open",
+      label: "Defend vs open",
+      count: Number(pre.defendedFacingOpen) || 0,
+      sample: Number(pre.facingOpenSpots) || 0,
+      signal: defendSignal,
+      severity: pre.facingOpenSpots < 8 ? 0.2 : Math.max(0, 32 - defendRate),
+      auditTarget: "blind_defense",
+    },
+    {
+      key: "blind_fold_vs_open",
+      label: "Blind fold vs open",
+      count: Number(pre.blindFoldFacingOpen) || 0,
+      sample: Number(pre.blindFacingOpenSpots) || 0,
+      signal: blindFoldSignal,
+      severity:
+        pre.blindFacingOpenSpots < 8 ? 0.2 : Math.max(0, blindFoldRate - 66),
+      auditTarget: "blind_defense",
+    },
+    {
+      key: "fold_after_reraise",
+      label: "Fold after reraise",
+      count: Number(pre.foldedAfterFacingReraise) || 0,
+      sample: Number(pre.facedReraiseAfterAggressionSpots) || 0,
+      signal: reraiseSignal,
+      severity:
+        pre.facedReraiseAfterAggressionSpots < 8
+          ? 0.2
+          : Math.max(0, reraiseFoldRate - 78),
+      auditTarget: "preflop_opportunity",
+    },
+    {
+      key: "missed_ip_cbet",
+      label: "Missed IP c-bet (favorable flop)",
+      count: Number(post?.missedIpCbetFavorable?.count) || 0,
+      sample: cbetOpp,
+      signal:
+        cbetOpp < 8 ? "low sample" : missedIpCbetRate > 30 ? "too high" : "ok",
+      severity: cbetOpp < 8 ? 0.1 : Math.max(0, missedIpCbetRate - 30),
+      auditTarget: "postflop_ip",
+    },
+    {
+      key: "missed_ip_stab",
+      label: "Missed IP stab (favorable flop)",
+      count: Number(post?.missedIpStabFavorable?.count) || 0,
+      sample: stabOpp,
+      signal:
+        stabOpp < 8 ? "low sample" : missedIpStabRate > 30 ? "too high" : "ok",
+      severity: stabOpp < 8 ? 0.1 : Math.max(0, missedIpStabRate - 30),
+      auditTarget: "postflop_ip",
+    },
+    {
+      key: "light_fold_turn",
+      label: "Likely light IP turn folds",
+      count: Number(post?.lightIpFoldTurn?.count) || 0,
+      sample: turnFoldOpp,
+      signal:
+        turnFoldOpp < 8
+          ? "low sample"
+          : lightIpTurnFoldRate > 18
+            ? "too high"
+            : "ok",
+      severity: turnFoldOpp < 8 ? 0.1 : Math.max(0, lightIpTurnFoldRate - 18),
+      auditTarget: "postflop_ip",
+    },
+    {
+      key: "light_fold_river",
+      label: "Likely light IP river folds",
+      count: Number(post?.lightIpFoldRiver?.count) || 0,
+      sample: riverFoldOpp,
+      signal:
+        riverFoldOpp < 8
+          ? "low sample"
+          : lightIpRiverFoldRate > 16
+            ? "too high"
+            : "ok",
+      severity: riverFoldOpp < 8 ? 0.1 : Math.max(0, lightIpRiverFoldRate - 16),
+      auditTarget: "postflop_ip",
+    },
+  ].filter((row) => row.sample > 0);
+
+  const evidenceItems = metricRows
+    .sort((a, b) => b.severity - a.severity || b.sample - a.sample)
+    .slice(0, 5)
+    .map((row) =>
+      buildCoachLineItem(
+        `${row.label}: ${rateCountLabel(row.count, row.sample)} - ${row.signal}`,
+        {
+          auditTarget: row.auditTarget,
+          tone: row.signal === "ok" ? "good" : "watch",
+        },
+      ),
+    )
+    .filter(Boolean);
+
+  const actionItems = [];
+  if (primary?.action) {
+    actionItems.push(
+      buildCoachLineItem(primary.action, {
+        auditTarget: primary.auditTarget,
+        tone: "good",
+      }),
     );
   }
-
-  const actions = [];
-  if (primary?.action) actions.push(primary.action);
-  if (secondary?.action) actions.push(secondary.action);
-  if (actions.length === 0) {
-    actions.push(
-      "No dominant leak signal yet. Keep collecting hands and focus on the largest preflop opportunity buckets.",
+  if (secondary?.action) {
+    actionItems.push(
+      buildCoachLineItem(secondary.action, {
+        auditTarget: secondary.auditTarget,
+        tone: "good",
+      }),
+    );
+  }
+  const supportingAction = sortedCandidates.find(
+    (candidate) =>
+      candidate &&
+      candidate.key !== primary?.key &&
+      candidate.key !== secondary?.key &&
+      candidate.action,
+  );
+  if (supportingAction) {
+    actionItems.push(
+      buildCoachLineItem(supportingAction.action, {
+        auditTarget: supportingAction.auditTarget,
+        tone: "good",
+      }),
+    );
+  }
+  if (actionItems.length === 0) {
+    actionItems.push(
+      buildCoachLineItem(
+        "No dominant leak signal yet. Keep collecting hands and focus on your largest opportunity buckets.",
+        {
+          auditTarget: "preflop_opportunity",
+          tone: "good",
+        },
+      ),
     );
   }
 
@@ -790,10 +1048,25 @@ function buildTournamentCoachSummary(summary, postflopDigest) {
     primaryLeak:
       primary?.label || "No single dominant leak identified in current sample",
     secondaryLeak: secondary?.label || null,
+    primaryLeakItem: buildCoachLineItem(
+      primary?.label || "No single dominant leak identified in current sample",
+      {
+        auditTarget: primary?.auditTarget || "",
+        tone: "watch",
+      },
+    ),
+    secondaryLeakItem: secondary?.label
+      ? buildCoachLineItem(secondary.label, {
+          auditTarget: secondary.auditTarget || "",
+          tone: "watch",
+        })
+      : null,
     strongestArea:
       strongestCandidates[0] || "No clear strength signal yet in this sample",
-    evidence: evidence.slice(0, 4),
-    actions,
+    evidence: evidenceItems.map((item) => item.text),
+    evidenceItems,
+    actions: actionItems.map((item) => item.text),
+    actionItems,
   };
 }
 
@@ -2863,6 +3136,7 @@ export default function HandReviewPanel({ entitlements = null }) {
   const [selectedHandKeys, setSelectedHandKeys] = useState(() => new Set());
   const [selectedAuditHandKey, setSelectedAuditHandKey] = useState("");
   const [pendingAuditScrollKey, setPendingAuditScrollKey] = useState("");
+  const [pendingAuditSectionKey, setPendingAuditSectionKey] = useState("");
   const [insightsTab, setInsightsTab] = useState("tournament");
   const [opponentFilter, setOpponentFilter] = useState("current_table");
   const [copiedOpponentKey, setCopiedOpponentKey] = useState("");
@@ -2876,6 +3150,7 @@ export default function HandReviewPanel({ entitlements = null }) {
   const copyTimeoutRef = useRef(null);
   const reviewProgressIntervalRef = useRef(null);
   const handRowRefs = useRef(new Map());
+  const auditSectionRefs = useRef(new Map());
 
   const stopReviewProgress = () => {
     if (reviewProgressIntervalRef.current) {
@@ -3634,7 +3909,7 @@ export default function HandReviewPanel({ entitlements = null }) {
         : [],
     };
   }, [postflopInPositionAudit]);
-  const postflopIpHighlights = useMemo(() => {
+  const postflopIpHighlightItems = useMemo(() => {
     const f = postflopIpAuditDigest?.findings || {};
     const candidates = [
       {
@@ -3676,8 +3951,14 @@ export default function HandReviewPanel({ entitlements = null }) {
       )
       .slice(0, 3);
 
-    return candidates.map(
-      (row) => `${row.label}: ${rateCountLabel(row.count, row.opportunities)}.`,
+    return candidates.map((row) =>
+      buildCoachLineItem(
+        `${row.label}: ${rateCountLabel(row.count, row.opportunities)}.`,
+        {
+          auditTarget: "postflop_ip",
+          tone: "watch",
+        },
+      ),
     );
   }, [postflopIpAuditDigest]);
   const aiSummaryActions = useMemo(
@@ -3727,17 +4008,49 @@ export default function HandReviewPanel({ entitlements = null }) {
     () => buildTournamentCoachSummary(tournamentSummary, postflopIpAuditDigest),
     [tournamentSummary, postflopIpAuditDigest],
   );
-  const coachPrimaryAdjustment = useMemo(() => {
-    if (!Array.isArray(tournamentCoachSummary?.actions)) return "";
-    return tournamentCoachSummary.actions.find(Boolean) || "";
+  const coachPrimaryLeakItem = useMemo(() => {
+    return normalizeCoachLineItem(tournamentCoachSummary?.primaryLeakItem, {
+      fallbackTone: "watch",
+    });
+  }, [tournamentCoachSummary]);
+  const coachSecondaryLeakItem = useMemo(() => {
+    return normalizeCoachLineItem(tournamentCoachSummary?.secondaryLeakItem, {
+      fallbackTone: "watch",
+    });
+  }, [tournamentCoachSummary]);
+  const coachPrimaryAdjustmentItem = useMemo(() => {
+    if (!Array.isArray(tournamentCoachSummary?.actionItems)) return null;
+    return (
+      tournamentCoachSummary.actionItems
+        .map((item) =>
+          normalizeCoachLineItem(item, {
+            fallbackTone: "good",
+          }),
+        )
+        .find(Boolean) || null
+    );
   }, [tournamentCoachSummary]);
   const coachSecondaryAdjustments = useMemo(() => {
-    if (!Array.isArray(tournamentCoachSummary?.actions)) return [];
-    return tournamentCoachSummary.actions.filter(Boolean).slice(1, 4);
+    if (!Array.isArray(tournamentCoachSummary?.actionItems)) return [];
+    return tournamentCoachSummary.actionItems
+      .slice(1, 4)
+      .map((item) =>
+        normalizeCoachLineItem(item, {
+          fallbackTone: "good",
+        }),
+      )
+      .filter(Boolean);
   }, [tournamentCoachSummary]);
   const coachSupportingEvidence = useMemo(() => {
-    if (!Array.isArray(tournamentCoachSummary?.evidence)) return [];
-    return tournamentCoachSummary.evidence.filter(Boolean).slice(0, 5);
+    if (!Array.isArray(tournamentCoachSummary?.evidenceItems)) return [];
+    return tournamentCoachSummary.evidenceItems
+      .slice(0, 5)
+      .map((item) =>
+        normalizeCoachLineItem(item, {
+          fallbackTone: "watch",
+        }),
+      )
+      .filter(Boolean);
   }, [tournamentCoachSummary]);
   const coachStrongestArea = useMemo(() => {
     return String(tournamentCoachSummary?.strongestArea || "").trim();
@@ -4037,6 +4350,18 @@ export default function HandReviewPanel({ entitlements = null }) {
     setPendingAuditScrollKey("");
   }, [pendingAuditScrollKey, filteredParsedHands]);
 
+  useEffect(() => {
+    if (!pendingAuditSectionKey) return;
+    if (insightsTab !== "audit") return;
+    const section = auditSectionRefs.current.get(pendingAuditSectionKey);
+    if (!section) return;
+    if (section.tagName === "DETAILS") {
+      section.open = true;
+    }
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    setPendingAuditSectionKey("");
+  }, [pendingAuditSectionKey, insightsTab, hasHandAudit]);
+
   const copyOpponentTendencies = async (
     playerKey,
     tendencyLabels,
@@ -4107,6 +4432,23 @@ export default function HandReviewPanel({ entitlements = null }) {
       return;
     }
     handRowRefs.current.delete(rowKey);
+  };
+
+  const setAuditSectionRef = (sectionKey, node) => {
+    const key = String(sectionKey || "").trim();
+    if (!key) return;
+    if (node) {
+      auditSectionRefs.current.set(key, node);
+      return;
+    }
+    auditSectionRefs.current.delete(key);
+  };
+
+  const openAuditSection = (sectionKey) => {
+    const key = String(sectionKey || "").trim();
+    if (!key) return;
+    setInsightsTab("audit");
+    setPendingAuditSectionKey(key);
   };
 
   const openAuditHand = (event) => {
@@ -5535,14 +5877,43 @@ export default function HandReviewPanel({ entitlements = null }) {
                         <div className="coach-leak-card coach-leak-card--primary">
                           <span>Biggest improvement area</span>
                           <strong>
-                            {sanitizeCoachingCopy(tournamentCoachSummary.primaryLeak)}
+                            {coachPrimaryLeakItem?.auditTarget ? (
+                              <button
+                                type="button"
+                                className="coach-inline-link"
+                                onClick={() =>
+                                  openAuditSection(coachPrimaryLeakItem.auditTarget)
+                                }
+                              >
+                                {sanitizeCoachingCopy(coachPrimaryLeakItem.text)}
+                              </button>
+                            ) : (
+                              sanitizeCoachingCopy(
+                                coachPrimaryLeakItem?.text ||
+                                  tournamentCoachSummary.primaryLeak,
+                              )
+                            )}
                           </strong>
                         </div>
-                        {coachPrimaryAdjustment ? (
+                        {coachPrimaryAdjustmentItem ? (
                           <div className="coach-leak-card coach-leak-card--adjustment">
                             <span>Most profitable adjustment</span>
                             <strong>
-                              {sanitizeCoachingCopy(coachPrimaryAdjustment)}
+                              {coachPrimaryAdjustmentItem.auditTarget ? (
+                                <button
+                                  type="button"
+                                  className="coach-inline-link"
+                                  onClick={() =>
+                                    openAuditSection(
+                                      coachPrimaryAdjustmentItem.auditTarget,
+                                    )
+                                  }
+                                >
+                                  {sanitizeCoachingCopy(coachPrimaryAdjustmentItem.text)}
+                                </button>
+                              ) : (
+                                sanitizeCoachingCopy(coachPrimaryAdjustmentItem.text)
+                              )}
                             </strong>
                           </div>
                         ) : null}
@@ -5561,50 +5932,102 @@ export default function HandReviewPanel({ entitlements = null }) {
                           <strong>Key evidence</strong>
                         </p>
                         <div className="tournament-summary-flags coach-summary-flags">
-                          {coachSupportingEvidence.map((line, idx) => (
-                            <p
-                              key={`coach-evidence-${idx}`}
-                              className="trend-flag watch"
-                            >
-                              {sanitizeCoachingCopy(line)}
-                            </p>
-                          ))}
+                          {coachSupportingEvidence.map((item, idx) =>
+                            item.auditTarget ? (
+                              <button
+                                type="button"
+                                key={`coach-evidence-${idx}`}
+                                className={`trend-flag coach-flag-button ${
+                                  item.tone || "watch"
+                                }`}
+                                onClick={() => openAuditSection(item.auditTarget)}
+                              >
+                                {sanitizeCoachingCopy(item.text)}
+                              </button>
+                            ) : (
+                              <p
+                                key={`coach-evidence-${idx}`}
+                                className={`trend-flag ${item.tone || "watch"}`}
+                              >
+                                {sanitizeCoachingCopy(item.text)}
+                              </p>
+                            ),
+                          )}
                         </div>
                       </section>
                     ) : null}
 
-                    {tournamentCoachSummary.secondaryLeak ||
+                    {coachSecondaryLeakItem ||
                     coachSecondaryAdjustments.length > 0 ||
-                    postflopIpHighlights.length > 0 ? (
+                    postflopIpHighlightItems.length > 0 ? (
                       <section className="coach-narrative-section coach-narrative-section--secondary">
                         <p className="coach-summary-heading">
                           <strong>Additional adjustments</strong>
                         </p>
                         <div className="tournament-summary-flags coach-summary-flags">
-                          {tournamentCoachSummary.secondaryLeak ? (
-                            <p className="trend-flag watch">
-                              Secondary improvement area:{" "}
-                              {sanitizeCoachingCopy(
-                                tournamentCoachSummary.secondaryLeak,
-                              )}
-                            </p>
+                          {coachSecondaryLeakItem ? (
+                            coachSecondaryLeakItem.auditTarget ? (
+                              <button
+                                type="button"
+                                className={`trend-flag coach-flag-button ${
+                                  coachSecondaryLeakItem.tone || "watch"
+                                }`}
+                                onClick={() =>
+                                  openAuditSection(coachSecondaryLeakItem.auditTarget)
+                                }
+                              >
+                                Secondary improvement area:{" "}
+                                {sanitizeCoachingCopy(coachSecondaryLeakItem.text)}
+                              </button>
+                            ) : (
+                              <p className={`trend-flag ${coachSecondaryLeakItem.tone || "watch"}`}>
+                                Secondary improvement area:{" "}
+                                {sanitizeCoachingCopy(coachSecondaryLeakItem.text)}
+                              </p>
+                            )
                           ) : null}
-                          {coachSecondaryAdjustments.map((line, idx) => (
-                            <p
-                              key={`coach-secondary-action-${idx}`}
-                              className="trend-flag good"
-                            >
-                              {sanitizeCoachingCopy(line)}
-                            </p>
-                          ))}
-                          {postflopIpHighlights.map((line, idx) => (
-                            <p
-                              key={`postflop-ip-highlight-${idx}`}
-                              className="trend-flag watch"
-                            >
-                              {sanitizeCoachingCopy(line)}
-                            </p>
-                          ))}
+                          {coachSecondaryAdjustments.map((item, idx) =>
+                            item.auditTarget ? (
+                              <button
+                                type="button"
+                                key={`coach-secondary-action-${idx}`}
+                                className={`trend-flag coach-flag-button ${
+                                  item.tone || "good"
+                                }`}
+                                onClick={() => openAuditSection(item.auditTarget)}
+                              >
+                                {sanitizeCoachingCopy(item.text)}
+                              </button>
+                            ) : (
+                              <p
+                                key={`coach-secondary-action-${idx}`}
+                                className={`trend-flag ${item.tone || "good"}`}
+                              >
+                                {sanitizeCoachingCopy(item.text)}
+                              </p>
+                            ),
+                          )}
+                          {postflopIpHighlightItems.map((item, idx) =>
+                            item?.auditTarget ? (
+                              <button
+                                type="button"
+                                key={`postflop-ip-highlight-${idx}`}
+                                className={`trend-flag coach-flag-button ${
+                                  item.tone || "watch"
+                                }`}
+                                onClick={() => openAuditSection(item.auditTarget)}
+                              >
+                                {sanitizeCoachingCopy(item.text)}
+                              </button>
+                            ) : (
+                              <p
+                                key={`postflop-ip-highlight-${idx}`}
+                                className={`trend-flag ${item?.tone || "watch"}`}
+                              >
+                                {sanitizeCoachingCopy(item?.text)}
+                              </p>
+                            ),
+                          )}
                         </div>
                       </section>
                     ) : null}
@@ -5903,7 +6326,10 @@ export default function HandReviewPanel({ entitlements = null }) {
                   <h3>Hand Audit</h3>
                   <span>Sample: {parsedHands.length} parsed hands</span>
                 </div>
-                <details className="summary-section">
+                <details
+                  className="summary-section"
+                  ref={(node) => setAuditSectionRef("preflop_opportunity", node)}
+                >
                   <summary>Preflop Opportunity Audit (MVP)</summary>
                   <div className="tournament-summary-metrics">
                     <span>
@@ -6077,7 +6503,10 @@ export default function HandReviewPanel({ entitlements = null }) {
                   ) : null}
                 </details>
 
-                <details className="summary-section">
+                <details
+                  className="summary-section"
+                  ref={(node) => setAuditSectionRef("blind_defense", node)}
+                >
                   <summary>Biggest Improvement Area: Blind Defence</summary>
                   <p className="hand-review-empty">
                     SB and BB responses versus opens across the full session
@@ -6244,7 +6673,10 @@ export default function HandReviewPanel({ entitlements = null }) {
                   </div>
                 </details>
 
-                <details className="summary-section">
+                <details
+                  className="summary-section"
+                  ref={(node) => setAuditSectionRef("icm_spots", node)}
+                >
                   <summary>ICM Spots (Last 40 Hands, Level 25+)</summary>
                   <p className="hand-review-empty">
                     Heuristic late-stage ICM proxy focused on preflop pressure,
@@ -6467,7 +6899,10 @@ export default function HandReviewPanel({ entitlements = null }) {
                   )}
                 </details>
 
-                <details className="summary-section">
+                <details
+                  className="summary-section"
+                  ref={(node) => setAuditSectionRef("postflop_ip", node)}
+                >
                   <summary>Postflop In Position Audit (MVP)</summary>
                   <p className="hand-review-empty">
                     Scope: heads-up flop/turn/river spots where hero acts in

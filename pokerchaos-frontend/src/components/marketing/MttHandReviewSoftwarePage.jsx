@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/mtt-hand-review-software";
 const PAGE_TITLE = "MTT Hand Review Software | Playback Poker";
@@ -100,36 +100,45 @@ export default function MttHandReviewSoftwarePage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">MTT Hand Review Software</p>
-        <h1 className="marketing-title">
-          Parse, Rank, and Prioritize Tournament Hands
-        </h1>
-        <p className="marketing-subtitle">
-          Playback Poker is built for structured MTT review. Tournament hands
-          are parsed and ranked so key spots are identified quickly, with
-          AI-supported feedback available to speed up tactical refinement.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">Structured tournament parsing</span>
-          <span className="marketing-pill">Ranked high-impact spot queue</span>
-          <span className="marketing-pill">AI-supported study feedback</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">MTT Hand Review Software</p>
+          <h1 className="marketing-title">
+            Parse, rank, and prioritize tournament hands.
+          </h1>
+          <p className="marketing-subtitle">
+            Playback Poker is built for structured MTT review. Tournament hands
+            are parsed and ranked so key spots are identified quickly, with
+            AI-supported feedback available to speed up tactical refinement.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">Structured tournament parsing</span>
+            <span className="marketing-pill">Ranked high-impact spot queue</span>
+            <span className="marketing-pill">AI-supported study feedback</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Built for</span>
+            <strong>MTT players</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            A practical tournament review workflow for finding the spots that
+            deserve attention first.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>How MTT Review Works</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -156,7 +165,7 @@ export default function MttHandReviewSoftwarePage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>What Gets Flagged</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -183,7 +192,7 @@ export default function MttHandReviewSoftwarePage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -208,6 +217,6 @@ export default function MttHandReviewSoftwarePage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

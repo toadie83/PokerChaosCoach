@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 import {
   LANDING_PAGE_LABELS,
   buildArticlePath,
@@ -105,26 +105,19 @@ export default function ArticleDraftPage({ slug }) {
 
   if (!article) {
     return (
-      <main className="marketing-shell">
-        <section className="panel marketing-header-panel">
-          <img
-            src={mobileNavWordmark}
-            alt="Playback Poker"
-            className="marketing-wordmark"
-          />
-        </section>
-        <section className="panel marketing-hero-panel">
+      <MarketingSiteShell currentPath="/articles">
+        <section className="home-section learning-story-section">
           <p className="marketing-kicker">Article Framework</p>
           <h1 className="marketing-title">Article Not Found</h1>
           <p className="marketing-subtitle">
             Return to the article hub and choose one of the active draft
             frameworks.
           </p>
-          <a className="auth-button marketing-cta-button" href="/articles">
+          <a className="home-button home-button-primary" href="/articles">
             Open Article Hub
           </a>
         </section>
-      </main>
+      </MarketingSiteShell>
     );
   }
 
@@ -132,34 +125,52 @@ export default function ArticleDraftPage({ slug }) {
   const relatedArticle = getArticleBySlug(article.relatedSlug);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">
-          {article.publishReady ? article.cluster : `${article.cluster} Draft`}
-        </p>
-        <h1 className="marketing-title">{article.title}</h1>
-        <p className="marketing-subtitle">{article.excerpt}</p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">
-            Status: {article.publishReady ? "Publish Ready" : "Draft Framework"}
-          </span>
-          <span className="marketing-pill">
-            Robots: {article.publishReady ? "index,follow" : "noindex,follow"}
-          </span>
-          <span className="marketing-pill">Updated: {article.updatedAt}</span>
+    <MarketingSiteShell currentPath={buildArticlePath(article.slug)}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">
+            {article.publishReady ? article.cluster : `${article.cluster} Draft`}
+          </p>
+          <h1 className="marketing-title">{article.title}</h1>
+          <p className="marketing-subtitle">{article.excerpt}</p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">
+              Status: {article.publishReady ? "Publish Ready" : "Draft Framework"}
+            </span>
+            <span className="marketing-pill">
+              Robots: {article.publishReady ? "index,follow" : "noindex,follow"}
+            </span>
+            <span className="marketing-pill">Updated: {article.updatedAt}</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
+        </div>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Cluster</span>
+            <strong>{article.cluster}</strong>
+          </div>
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">
+              Primary landing page
+            </span>
+            <strong>{LANDING_PAGE_LABELS[article.primaryLandingPath]}</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            This article now sits inside the same lighter product language as
+            the homepage and learning hub.
+          </p>
         </div>
       </section>
 
       {hasWalkthrough ? (
-        <section className="panel">
+        <section className="home-section learning-story-section">
           <h2>{article.walkthroughTitle || "How-To Walkthrough"}</h2>
           {article.walkthroughIntro ? (
             <p className="trust-walkthrough-intro">{article.walkthroughIntro}</p>
@@ -268,7 +279,7 @@ export default function ArticleDraftPage({ slug }) {
         </section>
       ) : null}
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>
           {article.publishReady
             ? "Content"
@@ -299,7 +310,7 @@ export default function ArticleDraftPage({ slug }) {
         )}
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>Internal Links For This Article</h2>
         <div className="article-link-stack">
           <a className="article-link article-link-strong" href={article.primaryLandingPath}>
@@ -313,6 +324,6 @@ export default function ArticleDraftPage({ slug }) {
           </a>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/poker-leak-finder";
 const PAGE_TITLE = "Poker Leak Finder | Playback Poker";
@@ -100,34 +100,43 @@ export default function PokerLeakFinderPage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">Poker Leak Finder</p>
-        <h1 className="marketing-title">Find Your Biggest Poker Leaks Faster</h1>
-        <p className="marketing-subtitle">
-          Playback Poker runs structured hand audits to surface missed opens,
-          defense gaps, and postflop opportunities so your next session starts
-          with clear adjustments.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">Missed open detection</span>
-          <span className="marketing-pill">Defense leak spotting</span>
-          <span className="marketing-pill">Postflop opportunity audits</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">Poker Leak Finder</p>
+          <h1 className="marketing-title">Find Your Biggest Poker Leaks Faster</h1>
+          <p className="marketing-subtitle">
+            Playback Poker runs structured hand audits to surface missed opens,
+            defense gaps, and postflop opportunities so your next session starts
+            with clear adjustments.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">Missed open detection</span>
+            <span className="marketing-pill">Defense leak spotting</span>
+            <span className="marketing-pill">Postflop opportunity audits</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Focus</span>
+            <strong>Repeated mistakes</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            Designed to turn patterns into practical study priorities, not
+            vague advice or overconfident solver claims.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>What Gets Audited</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -154,7 +163,7 @@ export default function PokerLeakFinderPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>How To Use Results</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -181,7 +190,7 @@ export default function PokerLeakFinderPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -205,6 +214,6 @@ export default function PokerLeakFinderPage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }

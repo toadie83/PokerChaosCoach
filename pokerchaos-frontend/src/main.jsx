@@ -11,6 +11,7 @@ import {
 import App from "./App.jsx";
 import ReviewApp from "./ReviewApp.jsx";
 import AboutModal from "./components/AboutModal.jsx";
+import HomePage from "./components/marketing/HomePage.jsx";
 import AiPokerHandAnalyzerPage from "./components/marketing/AiPokerHandAnalyzerPage.jsx";
 import GgPokerHandReviewToolPage from "./components/marketing/GgPokerHandReviewToolPage.jsx";
 import PokerLeakFinderPage from "./components/marketing/PokerLeakFinderPage.jsx";
@@ -44,6 +45,10 @@ const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
 const MARKETING_PAGE_CONFIG = [
+  {
+    path: "/",
+    component: HomePage,
+  },
   {
     path: "/ai-poker-hand-analyzer",
     component: AiPokerHandAnalyzerPage,
@@ -152,7 +157,7 @@ function normalizeMarketingPath(pathname) {
 
 function normalizeRoutePath(pathname) {
   const raw = typeof pathname === "string" ? pathname.trim() : "";
-  if (!raw || raw === "/") return DEFAULT_ROUTE;
+  if (!raw) return DEFAULT_ROUTE;
   const normalized = raw.replace(/\/+$/, "") || "/";
   if (MARKETING_ROUTE_LOOKUP.has(normalized)) return normalized;
   return ROUTE_LOOKUP.has(normalized) ? normalized : DEFAULT_ROUTE;

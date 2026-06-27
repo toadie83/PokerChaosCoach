@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import mobileNavWordmark from "../../assets/brand/playback-nav-image-mobile.png";
+import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 const PAGE_PATH = "/tournament-hand-analysis";
 const PAGE_TITLE = "Tournament Hand Analysis | Playback Poker";
@@ -100,36 +100,45 @@ export default function TournamentHandAnalysisPage() {
   }, []);
 
   return (
-    <main className="marketing-shell">
-      <section className="panel marketing-header-panel">
-        <img
-          src={mobileNavWordmark}
-          alt="Playback Poker"
-          className="marketing-wordmark"
-        />
-      </section>
-
-      <section className="panel marketing-hero-panel">
-        <p className="marketing-kicker">Tournament Hand Analysis</p>
-        <h1 className="marketing-title">
-          Structured Tournament Analysis That Prioritizes Your Key Spots
-        </h1>
-        <p className="marketing-subtitle">
-          Playback Poker parses your tournament uploads, ranks high-leverage
-          hands, and helps you audit recurring decision errors with optional
-          AI-supported feedback.
-        </p>
-        <div className="marketing-proof-row">
-          <span className="marketing-pill">Tournament parser workflow</span>
-          <span className="marketing-pill">Ranked spot prioritization</span>
-          <span className="marketing-pill">MTT-focused leak auditing</span>
+    <MarketingSiteShell currentPath={PAGE_PATH}>
+      <section className="home-hero learning-story-hero">
+        <div className="learning-story-copy">
+          <p className="marketing-kicker">Tournament Hand Analysis</p>
+          <h1 className="marketing-title">
+            Structured tournament analysis for key spots.
+          </h1>
+          <p className="marketing-subtitle">
+            Playback Poker parses your tournament uploads, ranks high-leverage
+            hands, and helps you audit recurring decision errors with optional
+            AI-supported feedback.
+          </p>
+          <div className="marketing-proof-row">
+            <span className="marketing-pill">Tournament parser workflow</span>
+            <span className="marketing-pill">Ranked spot prioritization</span>
+            <span className="marketing-pill">MTT-focused leak auditing</span>
+          </div>
+          <div className="learning-story-actions">
+            <a className="home-button home-button-primary" href="/review">
+              Review a Hand
+            </a>
+            <a className="home-button home-button-secondary" href="/articles">
+              Back to Articles
+            </a>
+          </div>
         </div>
-        <a className="auth-button marketing-cta-button" href="/">
-          Start Free Hand Review
-        </a>
+        <div className="learning-story-aside">
+          <div className="learning-story-stat">
+            <span className="learning-story-stat-label">Priority</span>
+            <strong>High-leverage decisions</strong>
+          </div>
+          <p className="learning-story-aside-copy">
+            Built to focus review around the decisions most likely to change a
+            tournament result.
+          </p>
+        </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>Analysis Workflow</h2>
         <div className="marketing-grid">
           <article className="marketing-card">
@@ -156,7 +165,7 @@ export default function TournamentHandAnalysisPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="home-section learning-story-section">
         <h2>FAQ</h2>
         <div className="marketing-faq-grid">
           <article className="marketing-faq-item">
@@ -179,6 +188,6 @@ export default function TournamentHandAnalysisPage() {
           </article>
         </div>
       </section>
-    </main>
+    </MarketingSiteShell>
   );
 }
