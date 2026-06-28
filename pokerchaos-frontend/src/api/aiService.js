@@ -1,4 +1,4 @@
-import { getJson, postJson } from "../lib/api.js";
+import { deleteJson, getJson, postJson } from "../lib/api.js";
 
 export async function requestChaosLine(payload) {
   return postJson("/prompts", payload);
@@ -64,4 +64,17 @@ export async function requestSavedTournament(tournamentId) {
 export async function requestDeleteSavedTournament(tournamentId) {
   const safeId = encodeURIComponent(String(tournamentId || "").trim());
   return postJson(`/tournaments/${safeId}/delete`, {});
+}
+
+export async function requestTournamentPerformanceSnapshots() {
+  return getJson("/performance/tournaments");
+}
+
+export async function requestSaveTournamentPerformanceSnapshot(payload) {
+  return postJson("/performance/tournaments", payload);
+}
+
+export async function requestDeleteTournamentPerformanceSnapshot(tournamentId) {
+  const safeId = encodeURIComponent(String(tournamentId || "").trim());
+  return deleteJson(`/performance/tournaments/${safeId}`);
 }

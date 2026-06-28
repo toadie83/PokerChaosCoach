@@ -96,6 +96,33 @@ export async function initDatabase() {
   `);
 
   await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS tournament_performance_snapshots (
+      user_id TEXT NOT NULL,
+      tournament_id TEXT NOT NULL,
+      tournament_name TEXT,
+      tournament_played_at TIMESTAMPTZ,
+      score_10 NUMERIC(4, 1) NOT NULL,
+      score_pct NUMERIC(5, 1),
+      sample_hands INTEGER,
+      total_hands INTEGER,
+      source_upload_saved BOOLEAN NOT NULL DEFAULT FALSE,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, tournament_id)
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS tournament_performance_user_played_at_idx
+    ON tournament_performance_snapshots (
+      user_id,
+      tournament_played_at ASC NULLS LAST,
+      created_at ASC
+    );
+  `);
+
+  await resolvedPool.query(`
     CREATE TABLE IF NOT EXISTS ai_hand_reviews (
       user_id TEXT NOT NULL,
       tournament_id TEXT NOT NULL,
@@ -449,6 +476,125 @@ export async function deleteTournamentUpload(userId, tournamentId) {
       WHERE user_id = $1 AND tournament_id = $2;
     `,
     [userId, tournamentId]
+  );
+  return Number(result.rowCount) > 0;
+}
+
+function toPerformanceSnapshotPayload(row) {
+  if (!row) return null;
+  return {
+    userId: row.user_id,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name,
+    tournamentPlayedAt: row.tournament_played_at,
+    score10: parseNumericDbValue(row.score_10),
+    scorePct:
+      row.score_pct === null || row.score_pct === undefined
+        ? null
+        : parseNumericDbValue(row.score_pct),
+    sampleHands:
+      row.sample_hands === null || row.sample_hands === undefined
+        ? null
+        : Number(row.sample_hands),
+    totalHands:
+      row.total_hands === null || row.total_hands === undefined
+        ? null
+        : Number(row.total_hands),
+    sourceUploadSaved: Boolean(row.source_upload_saved),
+    metadata:
+      row.metadata && typeof row.metadata === "object" ? row.metadata : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listTournamentPerformanceSnapshots(userId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      SELECT *
+      FROM tournament_performance_snapshots
+      WHERE user_id = $1
+      ORDER BY tournament_played_at ASC NULLS LAST, created_at ASC;
+    `,
+    [userId],
+  );
+  return result.rows.map(toPerformanceSnapshotPayload).filter(Boolean);
+}
+
+export async function insertTournamentPerformanceSnapshot({
+  userId,
+  tournamentId,
+  tournamentName = null,
+  tournamentPlayedAt = null,
+  score10,
+  scorePct = null,
+  sampleHands = null,
+  totalHands = null,
+  sourceUploadSaved = false,
+  metadata = {},
+}) {
+  const resolvedPool = getRequiredPool();
+  try {
+    const result = await resolvedPool.query(
+      `
+        INSERT INTO tournament_performance_snapshots (
+          user_id,
+          tournament_id,
+          tournament_name,
+          tournament_played_at,
+          score_10,
+          score_pct,
+          sample_hands,
+          total_hands,
+          source_upload_saved,
+          metadata
+        ) VALUES (
+          $1,
+          $2,
+          $3,
+          $4::timestamptz,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10::jsonb
+        )
+        RETURNING *;
+      `,
+      [
+        userId,
+        tournamentId,
+        tournamentName || null,
+        tournamentPlayedAt || null,
+        score10,
+        scorePct,
+        sampleHands,
+        totalHands,
+        Boolean(sourceUploadSaved),
+        toJsonbParam(metadata, {}),
+      ],
+    );
+    return toPerformanceSnapshotPayload(result.rows[0]);
+  } catch (error) {
+    if (error?.code === "23505") {
+      const duplicateError = new Error("Tournament performance already saved.");
+      duplicateError.code = "duplicate_performance_snapshot";
+      throw duplicateError;
+    }
+    throw error;
+  }
+}
+
+export async function deleteTournamentPerformanceSnapshot(userId, tournamentId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      DELETE FROM tournament_performance_snapshots
+      WHERE user_id = $1 AND tournament_id = $2;
+    `,
+    [userId, tournamentId],
   );
   return Number(result.rowCount) > 0;
 }

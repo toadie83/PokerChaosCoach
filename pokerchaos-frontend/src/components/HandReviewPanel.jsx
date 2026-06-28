@@ -5,19 +5,24 @@ import {
   requestBillingStatus,
   requestBlindDefenseReview,
   requestDeleteSavedTournament,
+  requestDeleteTournamentPerformanceSnapshot,
   requestHandHistoryParse,
   requestHandHistoryReview,
   requestIcmSpotReview,
   requestSavedTournament,
   requestSavedTournaments,
+  requestSaveTournamentPerformanceSnapshot,
   requestTableHintReview,
   requestTournamentUpload,
+  requestTournamentPerformanceSnapshots,
   requestTournamentSummaryReview,
 } from "../api/aiService.js";
 import HandReviewV2Modal from "./HandReviewV2Modal.jsx";
+import TournamentPerformanceChart from "./TournamentPerformanceChart.jsx";
 import { resolveHandBbResult } from "../lib/handResult.js";
 
 const CASH_NOTICE_DISMISS_KEY = "pokerchaos_cash_notice_dismissed";
+const MIN_VALID_TOURNAMENT_EPOCH = Date.UTC(2000, 0, 1);
 
 function readCashNoticeDismissed() {
   try {
@@ -1179,8 +1184,18 @@ function parsePlayedAtEpoch(raw) {
 
 function getHandPlayedAtEpoch(hand) {
   const direct = Number(hand?.playedAtEpoch);
-  if (Number.isFinite(direct)) return direct;
-  return parsePlayedAtEpoch(String(hand?.playedAt || ""));
+  if (Number.isFinite(direct) && direct >= MIN_VALID_TOURNAMENT_EPOCH) {
+    return direct;
+  }
+  const parsed = parsePlayedAtEpoch(String(hand?.playedAt || ""));
+  return Number.isFinite(parsed) && parsed >= MIN_VALID_TOURNAMENT_EPOCH
+    ? parsed
+    : null;
+}
+
+function isValidTournamentEpoch(epoch) {
+  const numeric = Number(epoch);
+  return Number.isFinite(numeric) && numeric >= MIN_VALID_TOURNAMENT_EPOCH;
 }
 
 function isWonWithoutShowdownOutcome(hand) {
@@ -1231,7 +1246,9 @@ function parseTournamentMetaFromFileName(fileName) {
     return {
       tournamentId: rawId,
       tournamentName: rawName,
-      playedAtEpoch: Number.isFinite(playedAtEpoch) ? playedAtEpoch : null,
+      playedAtEpoch: isValidTournamentEpoch(playedAtEpoch)
+        ? playedAtEpoch
+        : null,
     };
   }
 
@@ -3079,6 +3096,21 @@ function publishTrialTokenUpdate(remainingTokens) {
   );
 }
 
+function sortPerformanceSnapshots(snapshots) {
+  return (Array.isArray(snapshots) ? snapshots : [])
+    .filter((snapshot) => snapshot && typeof snapshot === "object")
+    .sort((a, b) => {
+      const aDate = new Date(a.tournamentPlayedAt || a.createdAt || 0).getTime();
+      const bDate = new Date(b.tournamentPlayedAt || b.createdAt || 0).getTime();
+      if (Number.isFinite(aDate) && Number.isFinite(bDate) && aDate !== bDate) {
+        return aDate - bDate;
+      }
+      return String(a.tournamentId || "").localeCompare(
+        String(b.tournamentId || ""),
+      );
+    });
+}
+
 export default function HandReviewPanel({ entitlements = null }) {
   const showDeveloperQa = isDeveloperQaAccount(entitlements);
   const [heroName, setHeroName] = useState("Hero");
@@ -3111,6 +3143,19 @@ export default function HandReviewPanel({ entitlements = null }) {
   const [loadingSavedTournaments, setLoadingSavedTournaments] = useState(false);
   const [savedTournaments, setSavedTournaments] = useState([]);
   const [savedTournamentError, setSavedTournamentError] = useState("");
+  const [performanceSnapshots, setPerformanceSnapshots] = useState([]);
+  const [loadingPerformanceSnapshots, setLoadingPerformanceSnapshots] =
+    useState(false);
+  const [performanceSnapshotsError, setPerformanceSnapshotsError] =
+    useState("");
+  const [performanceSaveStatusByTournamentId, setPerformanceSaveStatusByTournamentId] =
+    useState({});
+  const [savingPerformanceTournamentId, setSavingPerformanceTournamentId] =
+    useState("");
+  const [removingPerformanceTournamentId, setRemovingPerformanceTournamentId] =
+    useState("");
+  const [currentTournamentUploadSaved, setCurrentTournamentUploadSaved] =
+    useState(false);
   const [billingStatus, setBillingStatus] = useState(null);
   const [billingStatusError, setBillingStatusError] = useState("");
   const [loadingBillingStatus, setLoadingBillingStatus] = useState(false);
@@ -3220,6 +3265,30 @@ export default function HandReviewPanel({ entitlements = null }) {
 
   useEffect(() => {
     loadBillingStatus();
+  }, []);
+
+  const loadPerformanceSnapshots = async () => {
+    setLoadingPerformanceSnapshots(true);
+    setPerformanceSnapshotsError("");
+    try {
+      const res = await requestTournamentPerformanceSnapshots();
+      setPerformanceSnapshots(
+        sortPerformanceSnapshots(
+          Array.isArray(res?.snapshots) ? res.snapshots : [],
+        ),
+      );
+    } catch (error) {
+      setPerformanceSnapshotsError(
+        error?.message || "Failed to load performance trend.",
+      );
+      setPerformanceSnapshots([]);
+    } finally {
+      setLoadingPerformanceSnapshots(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPerformanceSnapshots();
   }, []);
 
   const openUpgradeCheckout = async () => {
@@ -3468,13 +3537,13 @@ export default function HandReviewPanel({ entitlements = null }) {
       fileMeta.tournamentName ||
       (sourceFileName ? stripFileExtension(sourceFileName) : "") ||
       (tournamentId ? `Tournament ${tournamentId}` : "Tournament upload");
-    const playedAtEpoch = Number.isFinite(Number(fileMeta.playedAtEpoch))
+    const playedAtEpoch = isValidTournamentEpoch(fileMeta.playedAtEpoch)
       ? Number(fileMeta.playedAtEpoch)
       : parsedTournamentPlayedAtEpoch;
     return {
       tournamentId,
       tournamentName,
-      playedAtEpoch: Number.isFinite(Number(playedAtEpoch))
+      playedAtEpoch: isValidTournamentEpoch(playedAtEpoch)
         ? Number(playedAtEpoch)
         : null,
     };
@@ -4055,6 +4124,87 @@ export default function HandReviewPanel({ entitlements = null }) {
   const coachStrongestArea = useMemo(() => {
     return String(tournamentCoachSummary?.strongestArea || "").trim();
   }, [tournamentCoachSummary]);
+  const savedPerformanceTournamentIds = useMemo(() => {
+    return new Set(
+      performanceSnapshots
+        .map((snapshot) => String(snapshot?.tournamentId || "").trim())
+        .filter(Boolean),
+    );
+  }, [performanceSnapshots]);
+  const currentPerformanceTournamentId = String(
+    suggestedTournamentMeta.tournamentId || "",
+  ).trim();
+  const currentPerformanceScore10 = Number(
+    tournamentCoachSummary?.rating?.score10,
+  );
+  const currentPerformanceIsPreliminary = Boolean(
+    tournamentCoachSummary?.rating?.prelimNote,
+  );
+  const canSavePerformanceSnapshot = Boolean(
+    currentPerformanceTournamentId &&
+      Number.isFinite(currentPerformanceScore10) &&
+      tournamentCoachSummary?.rating &&
+      !currentPerformanceIsPreliminary,
+  );
+  const currentPerformanceSaveStatus =
+    performanceSaveStatusByTournamentId[currentPerformanceTournamentId] || "";
+  const currentPerformanceAlreadySaved =
+    Boolean(currentPerformanceTournamentId) &&
+    (savedPerformanceTournamentIds.has(currentPerformanceTournamentId) ||
+      currentPerformanceSaveStatus === "saved" ||
+      currentPerformanceSaveStatus === "duplicate");
+  const currentPerformancePayload = useMemo(() => {
+    if (!canSavePerformanceSnapshot) return null;
+    const playedAtEpoch = Number(suggestedTournamentMeta.playedAtEpoch);
+    const scorePct = Number(tournamentCoachSummary?.rating?.scorePct);
+    return {
+      tournamentId: currentPerformanceTournamentId,
+      tournamentName:
+        String(suggestedTournamentMeta.tournamentName || "").trim() ||
+        `Tournament ${currentPerformanceTournamentId}`,
+      tournamentPlayedAt: isValidTournamentEpoch(playedAtEpoch)
+        ? new Date(playedAtEpoch).toISOString()
+        : null,
+      score10: Number(currentPerformanceScore10.toFixed(1)),
+      scorePct: Number.isFinite(scorePct) ? Number(scorePct.toFixed(1)) : null,
+      sampleHands: Number(tournamentSummary?.sampleHands) || null,
+      totalHands: Number(tournamentSummary?.totalHands) || null,
+      sourceUploadSaved: Boolean(currentTournamentUploadSaved),
+      metadata: {
+        biggestImprovement: sanitizeCoachingCopy(
+          coachPrimaryLeakItem?.text || tournamentCoachSummary?.primaryLeak || "",
+        ),
+        mostProfitableAdjustment: sanitizeCoachingCopy(
+          coachPrimaryAdjustmentItem?.text || "",
+        ),
+        strongestArea: sanitizeCoachingCopy(coachStrongestArea),
+      },
+    };
+  }, [
+    canSavePerformanceSnapshot,
+    coachPrimaryAdjustmentItem,
+    coachPrimaryLeakItem,
+    coachStrongestArea,
+    currentPerformanceScore10,
+    currentPerformanceTournamentId,
+    currentTournamentUploadSaved,
+    currentPerformanceIsPreliminary,
+    suggestedTournamentMeta.playedAtEpoch,
+    suggestedTournamentMeta.tournamentName,
+    tournamentCoachSummary?.primaryLeak,
+    tournamentCoachSummary?.rating?.scorePct,
+    tournamentSummary?.sampleHands,
+    tournamentSummary?.totalHands,
+  ]);
+  const performanceSaveButtonLabel = savingPerformanceTournamentId
+    ? "Saving..."
+    : currentPerformanceIsPreliminary
+      ? "Performance locked"
+    : currentPerformanceSaveStatus === "duplicate"
+      ? "Already saved"
+      : currentPerformanceAlreadySaved
+        ? "Saved to Performance"
+        : "Save to Performance";
   const aiPrimaryAction = useMemo(
     () => aiSummaryActions.find(Boolean) || "",
     [aiSummaryActions],
@@ -4503,6 +4653,7 @@ export default function HandReviewPanel({ entitlements = null }) {
     setQuickReviewHandKey("");
     setActiveV2ReviewHandKey("");
     setPendingTournamentSave(null);
+    setCurrentTournamentUploadSaved(false);
   };
 
   const runParse = async () => {
@@ -4511,6 +4662,7 @@ export default function HandReviewPanel({ entitlements = null }) {
     setSaveTournamentError("");
     setSaveTournamentSuccess("");
     setPendingTournamentSave(null);
+    setCurrentTournamentUploadSaved(false);
     setLoadingParse(true);
     setQuickReviewHandKey("");
     setActiveV2ReviewHandKey("");
@@ -4625,10 +4777,95 @@ export default function HandReviewPanel({ entitlements = null }) {
         );
       }
       setPendingTournamentSave(null);
+      setCurrentTournamentUploadSaved(true);
     } catch (err) {
       setSaveTournamentError(err?.message || "Failed to save tournament.");
     } finally {
       setLoadingTournamentSave(false);
+    }
+  };
+
+  const savePerformanceSnapshot = async () => {
+    if (!canSavePerformanceSnapshot || !currentPerformancePayload) return;
+    const tournamentId = currentPerformancePayload.tournamentId;
+    if (!tournamentId || savingPerformanceTournamentId) return;
+    if (currentPerformanceAlreadySaved) return;
+
+    setSavingPerformanceTournamentId(tournamentId);
+    setPerformanceSnapshotsError("");
+    setPerformanceSaveStatusByTournamentId((previous) => ({
+      ...previous,
+      [tournamentId]: "saving",
+    }));
+    try {
+      const res = await requestSaveTournamentPerformanceSnapshot(
+        currentPerformancePayload,
+      );
+      const snapshot = res?.snapshot || null;
+      if (snapshot) {
+        setPerformanceSnapshots((previous) =>
+          sortPerformanceSnapshots([
+            ...previous.filter(
+              (item) =>
+                String(item?.tournamentId || "").trim() !== tournamentId,
+            ),
+            snapshot,
+          ]),
+        );
+      } else {
+        await loadPerformanceSnapshots();
+      }
+      setPerformanceSaveStatusByTournamentId((previous) => ({
+        ...previous,
+        [tournamentId]: "saved",
+      }));
+    } catch (err) {
+      if (err?.code === "duplicate_performance_snapshot" || err?.status === 409) {
+        setPerformanceSaveStatusByTournamentId((previous) => ({
+          ...previous,
+          [tournamentId]: "duplicate",
+        }));
+        await loadPerformanceSnapshots();
+      } else {
+        setPerformanceSaveStatusByTournamentId((previous) => ({
+          ...previous,
+          [tournamentId]: "error",
+        }));
+        setPerformanceSnapshotsError(
+          err?.message || "Failed to save performance snapshot.",
+        );
+      }
+    } finally {
+      setSavingPerformanceTournamentId("");
+    }
+  };
+
+  const removePerformanceSnapshot = async (tournamentId) => {
+    const id = String(tournamentId || "").trim();
+    if (!id || removingPerformanceTournamentId) return;
+
+    setRemovingPerformanceTournamentId(id);
+    setPerformanceSnapshotsError("");
+    try {
+      await requestDeleteTournamentPerformanceSnapshot(id);
+      setPerformanceSnapshots((previous) =>
+        sortPerformanceSnapshots(
+          previous.filter(
+            (snapshot) => String(snapshot?.tournamentId || "").trim() !== id,
+          ),
+        ),
+      );
+      setPerformanceSaveStatusByTournamentId((previous) => {
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+    } catch (err) {
+      setPerformanceSnapshotsError(
+        err?.message || "Failed to remove performance snapshot.",
+      );
+    } finally {
+      setRemovingPerformanceTournamentId("");
     }
   };
 
@@ -4722,6 +4959,7 @@ export default function HandReviewPanel({ entitlements = null }) {
       setSelectedAuditHandKey("");
       setPendingAuditScrollKey("");
       setPendingTournamentSave(null);
+      setCurrentTournamentUploadSaved(true);
       setSavedTournamentModalOpen(false);
     } catch (err) {
       setSavedTournamentError(
@@ -5163,6 +5401,7 @@ export default function HandReviewPanel({ entitlements = null }) {
                   setSelectedAuditHandKey("");
                   setPendingAuditScrollKey("");
                   setQuickReviewHandKey("");
+                  setCurrentTournamentUploadSaved(false);
                 }}
                 rows={10}
                 placeholder="or paste hand history text here"
@@ -5760,6 +5999,18 @@ export default function HandReviewPanel({ entitlements = null }) {
       </div>
 
       <div className="hand-review-pane hand-review-pane-right hand-review-pane-right--insights">
+        {parsedHands.length === 0 ? (
+          <div className="hand-insights hand-insights--performance-empty">
+            <TournamentPerformanceChart
+              snapshots={performanceSnapshots}
+              loading={loadingPerformanceSnapshots}
+              error={performanceSnapshotsError}
+              onRemoveSnapshot={removePerformanceSnapshot}
+              removingSnapshotId={removingPerformanceTournamentId}
+            />
+          </div>
+        ) : null}
+
         {hasTournamentSummary || hasHandAudit || hasOpponentSnapshot ? (
           <div className="hand-insights">
             <div
@@ -5842,6 +6093,35 @@ export default function HandReviewPanel({ entitlements = null }) {
                             {tournamentCoachSummary.rating.score10Label} (
                             {tournamentCoachSummary.rating.scorePctLabel})
                           </p>
+                          <div className="performance-save-row">
+                            <button
+                              type="button"
+                              className="performance-save-button"
+                              onClick={savePerformanceSnapshot}
+                              disabled={
+                                !canSavePerformanceSnapshot ||
+                                Boolean(savingPerformanceTournamentId) ||
+                                currentPerformanceAlreadySaved
+                              }
+                            >
+                              {performanceSaveButtonLabel}
+                            </button>
+                            {!currentPerformanceTournamentId ? (
+                              <span className="performance-save-note">
+                                Tournament ID required
+                              </span>
+                            ) : null}
+                            {currentPerformanceIsPreliminary ? (
+                              <span className="performance-save-note">
+                                Needs 60+ hands for tracking
+                              </span>
+                            ) : null}
+                            {currentPerformanceSaveStatus === "error" ? (
+                              <span className="performance-save-note performance-save-note--error">
+                                Save failed
+                              </span>
+                            ) : null}
+                          </div>
                           {tournamentCoachSummary.rating.prelimNote ? (
                             <p className="hand-review-empty coach-rating-note">
                               {tournamentCoachSummary.rating.prelimNote}
