@@ -1001,7 +1001,7 @@ export default function App() {
   const riverDisplay = formatCard(state.board?.river);
   return (
     <>
-      <div className={`wrap ${compactMode ? "wrap-compact" : ""}`}>
+      <div className={`wrap coach-wrap ${compactMode ? "wrap-compact" : ""}`}>
         <div className="panel">
           <div className="panel-heading">
             <div>

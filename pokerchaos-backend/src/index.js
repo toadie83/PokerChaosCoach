@@ -24,6 +24,7 @@ import { attachReviewEvaluation } from "./reviewEvaluationService.js";
 import {
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
+  deleteTournamentPerformanceSnapshot,
   deleteTournamentUpload,
   ensureAiTrialCredits,
   getAiHandReviewsForTournament,
@@ -33,7 +34,9 @@ import {
   getUserBillingAiAccess,
   getUserIdByStripeCustomerId,
   initDatabase,
+  insertTournamentPerformanceSnapshot,
   isDatabaseConfigured,
+  listTournamentPerformanceSnapshots,
   listTournamentUploads,
   recordAiUsageEvent,
   upsertAiHandReviews,
@@ -672,6 +675,30 @@ const tournamentUploadSchema = z.object({
 
 const tournamentIdParamSchema = z.object({
   tournamentId: z.string().trim().min(1).max(80),
+});
+
+const tournamentPerformanceSchema = z.object({
+  tournamentId: z.string().trim().min(1).max(80),
+  tournamentName: z.string().trim().max(160).optional().nullable(),
+  tournamentPlayedAt: z
+    .string()
+    .trim()
+    .datetime()
+    .optional()
+    .nullable()
+    .transform((value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (!Number.isFinite(parsed.getTime())) return null;
+      if (parsed.getTime() < Date.UTC(2000, 0, 1)) return null;
+      return value;
+    }),
+  score10: z.coerce.number().min(0).max(10),
+  scorePct: z.coerce.number().min(0).max(100).optional().nullable(),
+  sampleHands: z.coerce.number().int().nonnegative().optional().nullable(),
+  totalHands: z.coerce.number().int().nonnegative().optional().nullable(),
+  sourceUploadSaved: z.boolean().optional().default(false),
+  metadata: z.record(z.any()).optional().default({}),
 });
 
 const checkoutSessionSchema = z.object({
@@ -1432,6 +1459,133 @@ app.post(
       console.error("[pokerchaos-backend] Hand parse error", error);
       return res.status(500).json({
         error: "Failed to parse hand history. Check file format and try again.",
+      });
+    }
+  },
+);
+
+app.post(
+  "/performance/tournaments",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsed = tournamentPerformanceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const snapshot = await insertTournamentPerformanceSnapshot({
+        userId: req.auth?.userId || "",
+        tournamentId: parsed.data.tournamentId,
+        tournamentName: parsed.data.tournamentName || null,
+        tournamentPlayedAt: parsed.data.tournamentPlayedAt || null,
+        score10: parsed.data.score10,
+        scorePct: parsed.data.scorePct ?? null,
+        sampleHands: parsed.data.sampleHands ?? null,
+        totalHands: parsed.data.totalHands ?? null,
+        sourceUploadSaved: parsed.data.sourceUploadSaved,
+        metadata: parsed.data.metadata || {},
+      });
+      return res.json({ snapshot });
+    } catch (error) {
+      if (error?.code === "duplicate_performance_snapshot") {
+        return res.status(409).json({
+          error: "Tournament performance already saved.",
+          code: "duplicate_performance_snapshot",
+        });
+      }
+      console.error(
+        "[pokerchaos-backend] Tournament performance save error",
+        error,
+      );
+      return res.status(500).json({
+        error: "Failed to save tournament performance snapshot.",
+      });
+    }
+  },
+);
+
+app.get(
+  "/performance/tournaments",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    try {
+      const snapshots = await listTournamentPerformanceSnapshots(
+        req.auth?.userId || "",
+      );
+      return res.json({ snapshots });
+    } catch (error) {
+      console.error(
+        "[pokerchaos-backend] Tournament performance list error",
+        error,
+      );
+      return res.status(500).json({
+        error: "Failed to list tournament performance snapshots.",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/performance/tournaments/:tournamentId",
+  requireAuth,
+  requireFeature("review"),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(500).json({
+        error:
+          "Database is not configured. Set DATABASE_URL (or PG* env vars) and restart the backend.",
+      });
+    }
+
+    const parsedParams = tournamentIdParamSchema.safeParse(req.params ?? {});
+    if (!parsedParams.success) {
+      return res.status(400).json({
+        error: "Invalid tournament ID",
+        details: parsedParams.error.flatten(),
+      });
+    }
+
+    try {
+      const deleted = await deleteTournamentPerformanceSnapshot(
+        req.auth?.userId || "",
+        parsedParams.data.tournamentId,
+      );
+      if (!deleted) {
+        return res.status(404).json({
+          error: "Tournament performance snapshot not found.",
+        });
+      }
+      return res.json({
+        ok: true,
+        deletedTournamentId: parsedParams.data.tournamentId,
+      });
+    } catch (error) {
+      console.error(
+        "[pokerchaos-backend] Tournament performance delete error",
+        error,
+      );
+      return res.status(500).json({
+        error: "Failed to delete tournament performance snapshot.",
       });
     }
   },

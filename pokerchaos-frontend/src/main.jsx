@@ -34,7 +34,6 @@ import {
 } from "./api/aiService.js";
 import { initAnalytics, trackPageView } from "./lib/analytics.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
-import desktopNavWordmark from "./assets/brand/playback-nav-image-desktop.png";
 import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
 import navIconMark from "./assets/brand/playback-nav-image-icon.png";
 import "./styles.css";
@@ -367,14 +366,6 @@ function SignedInShell() {
   const marketingPage = MARKETING_ROUTE_LOOKUP.get(routePath);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
-  const [theme, setTheme] = useState(() => {
-    try {
-      const saved = window.localStorage?.getItem("pcc_theme");
-      return saved === "light" ? "light" : "dark";
-    } catch {
-      return "dark";
-    }
-  });
   const [entitlements, setEntitlements] = useState(null);
   const [entitlementsStatus, setEntitlementsStatus] = useState("loading"); // loading | ready | error
   const [entitlementsError, setEntitlementsError] = useState("");
@@ -386,10 +377,10 @@ function SignedInShell() {
 
   useEffect(() => {
     try {
-      document.documentElement.setAttribute("data-theme", theme);
-      window.localStorage?.setItem("pcc_theme", theme);
+      document.documentElement.setAttribute("data-theme", "light");
+      window.localStorage?.setItem("pcc_theme", "light");
     } catch {}
-  }, [theme]);
+  }, []);
 
   useEffect(() => {
     setMobileUtilityOpen(false);
@@ -598,6 +589,13 @@ function SignedInShell() {
     <>
       <div className="app-shell-container app-shell-header">
         <div className="auth-bar auth-bar-shell">
+          <div className="auth-bar-brand">
+            <img src={navIconMark} alt="" className="auth-bar-brand-mark" />
+            <span className="auth-bar-brand-copy">
+              <strong>Playback Poker</strong>
+              <span>Smarter review for online poker players</span>
+            </span>
+          </div>
           <div className="auth-bar-nav">
             {SECTION_CONFIG.map((section) => {
               const enabled = Boolean(
@@ -616,13 +614,6 @@ function SignedInShell() {
                 </button>
               );
             })}
-          </div>
-          <div className="auth-bar-brand" aria-hidden="true">
-            <img
-              src={desktopNavWordmark}
-              alt=""
-              className="auth-bar-brand-wordmark auth-bar-brand-wordmark-desktop"
-            />
           </div>
           <div className="auth-bar-actions">
             <div className="auth-bar-actions-desktop">
@@ -669,37 +660,12 @@ function SignedInShell() {
                   </span>
                 ) : null}
               </button>
-              <button
-                type="button"
-                className="top-nav-link top-nav-utility"
-                onClick={() =>
-                  setTheme((value) => (value === "dark" ? "light" : "dark"))
-                }
-                aria-label={
-                  theme === "dark"
-                    ? "Switch to light mode"
-                    : "Switch to dark high-contrast mode"
-                }
-              >
-                <span className="top-nav-utility-icon" aria-hidden="true">
-                  {theme === "dark" ? "\u2600" : "\u263E"}
-                </span>
-                <span className="top-nav-utility-label">
-                  {theme === "dark" ? "Light mode" : "Dark mode"}
-                </span>
-              </button>
               <div className="top-nav-account">
                 <UserButton />
               </div>
             </div>
 
             <div className="auth-bar-actions-mobile">
-              <img
-                src={mobileNavWordmark}
-                alt=""
-                className="auth-bar-brand-wordmark auth-bar-brand-wordmark-mobile"
-                aria-hidden="true"
-              />
               <button
                 type="button"
                 className={`top-nav-link mobile-utility-toggle ${
@@ -756,19 +722,6 @@ function SignedInShell() {
                     {"\u265B"}
                   </span>
                 ) : null}
-              </button>
-              <button
-                type="button"
-                className="mobile-utility-item"
-                onClick={() => {
-                  setMobileUtilityOpen(false);
-                  setTheme((value) => (value === "dark" ? "light" : "dark"));
-                }}
-              >
-                <span className="mobile-utility-label">Theme</span>
-                <span className="mobile-utility-value">
-                  {theme === "dark" ? "\u2600" : "\u263E"}
-                </span>
               </button>
               <div className="mobile-utility-account">
                 <span className="mobile-utility-label">Account</span>
