@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import {
   getAggressionPrompt,
+  recognizeReplayCards,
   reviewBlindDefenseSummary,
   reviewIcmSpotSummary,
   reviewCurrentTableHint,
@@ -608,8 +609,94 @@ function requireFeature(featureKey) {
   };
 }
 
+const liveActionSchema = z.enum([
+  "open",
+  "call",
+  "3-bet",
+  "4-bet",
+  "check",
+  "bet",
+  "raise",
+  "jam",
+  "fold",
+]);
+
+const liveDecisionNodeSchema = z
+  .object({
+    street: z.enum(["preflop", "flop", "turn", "river"]),
+    decisionKind: z.string().nullable().optional(),
+    heroSeat: z.string().nullable().optional(),
+    opponentSeat: z.string().nullable().optional(),
+    relativePosition: z.enum(["ip", "oop", "unknown", "not_applicable"]),
+    tableSize: z.number().int().min(2).max(10),
+    playersInHand: z.number().int().min(2).max(10),
+    gameType: z.enum(["tournament", "cash"]),
+    anteBB: z.number().nonnegative(),
+    potBB: z.number().positive().nullable(),
+    effectiveStackBB: z.number().positive().nullable(),
+    startingEffectiveStackBB: z.number().positive().nullable().optional(),
+    startingHeroStackBB: z.number().positive().nullable().optional(),
+    startingOpponentStackBB: z.number().positive().nullable().optional(),
+    heroStackBehindBB: z.number().nonnegative().nullable().optional(),
+    opponentStackBehindBB: z.number().nonnegative().nullable().optional(),
+    heroStackAfterCallBB: z.number().nonnegative().nullable().optional(),
+    heroTotalCommittedBB: z.number().nonnegative().optional(),
+    opponentTotalCommittedBB: z.number().nonnegative().optional(),
+    maxHeroTotalToBB: z.number().positive().nullable().optional(),
+    maxOpponentTotalToBB: z.number().positive().nullable().optional(),
+    effectiveStackToPotRatio: z.number().nonnegative().nullable().optional(),
+    heroStackToPotRatio: z.number().nonnegative().nullable().optional(),
+    potSource: z
+      .enum([
+        "running_from_manual_override",
+        "estimated_from_actions",
+        "manual_override",
+        "forced_preflop_baseline",
+        "unknown",
+      ])
+      .optional(),
+    spr: z.number().nonnegative().nullable(),
+    potOddsPct: z.number().min(0).max(100).nullable(),
+    minimumRaiseToBB: z.number().positive().nullable(),
+    minimumBetBB: z.number().positive().nullable(),
+    heroCommittedBB: z.number().nonnegative(),
+    opponentCommittedBB: z.number().nonnegative(),
+    currentBetBB: z.number().nonnegative(),
+    facingAction: z
+      .object({
+        type: z.string(),
+        actorSeat: z.string().nullable().optional(),
+        amountBB: z.number().positive().nullable(),
+        toAmountBB: z.number().positive().nullable(),
+        callAmountBB: z.number().positive().nullable(),
+        allIn: z.boolean(),
+      })
+      .nullable(),
+    lastAggressorSeat: z.string().nullable().optional(),
+    legalActions: z.array(liveActionSchema).min(1).max(9),
+    heroCards: z.array(z.string()).max(2),
+    boardCards: z.array(z.string()).max(5),
+    actionHistory: z.array(z.record(z.any())).max(40),
+    missingInformation: z.array(z.string()).max(12),
+  })
+  .passthrough();
+
+const livePromptContextSchema = z
+  .object({
+    street: z.enum(["preflop", "flop", "turn", "river"]).optional(),
+    heroSeat: z.string().optional(),
+    tableSize: z.number().int().min(2).max(10).optional(),
+    persona: z.string().optional(),
+    heroCards: z.record(z.any()).optional(),
+    board: z.record(z.any()).optional(),
+    decisionNode: liveDecisionNodeSchema.optional(),
+    legalActions: z.array(liveActionSchema).max(9).optional(),
+    history: z.array(z.record(z.any())).max(40).optional(),
+  })
+  .passthrough();
+
 const promptSchema = z.object({
-  context: z.record(z.any()).optional().default({}),
+  context: livePromptContextSchema.optional().default({}),
   instruction: z.string().trim().max(500).optional(),
 });
 
@@ -637,6 +724,32 @@ const handReviewSchema = z.object({
     })
     .optional(),
 });
+
+const replayImageDataUrlSchema = z
+  .string()
+  .max(6_000_000)
+  .regex(/^data:image\/(?:jpeg|png|webp);base64,/i);
+const replayCardCodeSchema = z.string().regex(/^[AKQJT2-9][shdc]$/i);
+const replayVisionSchema = z
+  .object({
+    boardImageDataUrl: replayImageDataUrlSchema.optional(),
+    heroImageDataUrl: replayImageDataUrlSchema.optional(),
+    imageDataUrl: replayImageDataUrlSchema.optional(),
+    expectedBoardCount: z.union([
+      z.literal(0),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+    ]),
+    knownHeroCards: z.array(replayCardCodeSchema).max(2).optional().default([]),
+    knownBoardCards: z.array(replayCardCodeSchema).max(5).optional().default([]),
+  })
+  .refine(
+    (value) =>
+      Boolean(value.imageDataUrl) ||
+      Boolean(value.boardImageDataUrl && value.heroImageDataUrl),
+    { message: "Provide both card crops or one legacy composite image." },
+  );
 
 const summaryReviewSchema = z.object({
   summary: z.record(z.any()),
@@ -1405,6 +1518,35 @@ app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
     });
   }
 });
+
+app.post(
+  "/replay-vision/cards",
+  requireAuth,
+  requireFeature("coach"),
+  async (req, res) => {
+    const parsed = replayVisionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid replay image",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    try {
+      const result = await recognizeReplayCards(parsed.data);
+      return res.json(result);
+    } catch (error) {
+      console.error("[pokerchaos-backend] Replay vision error", error);
+      return res.status(502).json({
+        error: "Failed to recognize replay cards. Please try again.",
+      });
+    }
+  },
+);
 
 app.post(
   "/hand-history/parse",

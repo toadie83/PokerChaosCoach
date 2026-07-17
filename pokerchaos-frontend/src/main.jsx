@@ -43,6 +43,8 @@ const DEFAULT_ROUTE = "/review";
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
+const LOCAL_LIVE_STREAM_URL = "/livestream/index.html";
+const SHOW_LOCAL_LIVE_STREAM = import.meta.env.DEV;
 const MARKETING_PAGE_CONFIG = [
   {
     path: "/",
@@ -617,6 +619,17 @@ function SignedInShell() {
           </div>
           <div className="auth-bar-actions">
             <div className="auth-bar-actions-desktop">
+              {SHOW_LOCAL_LIVE_STREAM ? (
+                <a
+                  className="top-nav-link top-nav-link--live"
+                  href={LOCAL_LIVE_STREAM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="top-nav-live-dot" aria-hidden="true" />
+                  Live stream
+                </a>
+              ) : null}
               {entitlementsStatus === "ready" && !hasActiveSubscription ? (
                 <button
                   type="button"
@@ -687,6 +700,21 @@ function SignedInShell() {
           </div>
           {mobileUtilityOpen ? (
             <div className="mobile-utility-menu">
+              {SHOW_LOCAL_LIVE_STREAM ? (
+                <a
+                  className="mobile-utility-item mobile-utility-item--live"
+                  href={LOCAL_LIVE_STREAM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileUtilityOpen(false)}
+                >
+                  <span className="mobile-utility-label">Live stream</span>
+                  <span className="mobile-utility-live-status">
+                    <span className="top-nav-live-dot" aria-hidden="true" />
+                    Open
+                  </span>
+                </a>
+              ) : null}
               {entitlementsStatus === "ready" && !hasActiveSubscription ? (
                 <button
                   type="button"

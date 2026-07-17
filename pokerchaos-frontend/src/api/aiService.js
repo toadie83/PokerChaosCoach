@@ -4,6 +4,10 @@ export async function requestChaosLine(payload) {
   return postJson("/prompts", payload);
 }
 
+export async function requestReplayCardRecognition(payload) {
+  return postJson("/replay-vision/cards", payload);
+}
+
 export async function requestHandHistoryParse(payload) {
   return postJson("/hand-history/parse", payload);
 }

@@ -385,21 +385,7 @@ export default function PlayHandModal({
     return match?.label || "Unknown";
   }, [state?.villainType, villainTypeOptions]);
   const relativePosition = state?.heroRelativePosition || "auto";
-  const highlightedActionCodes = useMemo(() => {
-    const suggestionText = (coach?.hero_action || "").toLowerCase();
-    if (!suggestionText) return [];
-    return (actions || [])
-      .filter((action) => {
-        if (!action) return false;
-        const label = String(action.label || "").toLowerCase();
-        const code = String(action.code || "").toLowerCase();
-        if (label && suggestionText.includes(label)) return true;
-        if (code && suggestionText.includes(code)) return true;
-        const shortLabel = label.replace(/\s+/g, "");
-        return shortLabel && suggestionText.replace(/\s+/g, "").includes(shortLabel);
-      })
-      .map((action) => action.code);
-  }, [actions, coach?.hero_action]);
+  const highlightedActionCodes = [];
   const confidencePercent = useMemo(() => {
     const raw =
       coach?.confidence ??

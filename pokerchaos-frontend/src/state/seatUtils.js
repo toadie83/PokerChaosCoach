@@ -24,6 +24,13 @@ export function seatsForTableSize(size) {
   return ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
 }
 
+export function previousSeatForNextHand(seat, size = 8) {
+  const seats = seatsForTableSize(Number(size));
+  const currentIndex = seats.indexOf(normalizeSeat(seat));
+  if (currentIndex < 0) return normalizeSeat(seat);
+  return seats[(currentIndex - 1 + seats.length) % seats.length];
+}
+
 export function positionCategory(seat, size = 8) {
   const s = normalizeSeat(seat);
   const late = new Set(["BTN"]);

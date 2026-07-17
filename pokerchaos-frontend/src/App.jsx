@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestChaosLine } from "./api/aiService.js";
 import ActionButtons from "./components/ActionButtons.jsx";
+import ActionAmountModal from "./components/ActionAmountModal.jsx";
 import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
 import DecisionCard from "./components/DecisionCard.jsx";
@@ -10,11 +11,18 @@ import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
 import SingleBoardCardInput from "./components/SingleBoardCardInput.jsx";
 import StackDepthModal from "./components/StackDepthModal.jsx";
+import ReplayVisionPanel from "./components/ReplayVisionPanel.jsx";
+import BetaCoachHudModal from "./components/BetaCoachHudModal.jsx";
 import { useGameState } from "./state/useGameState.js";
 import { summarizeForAI, getAvailableActions } from "./state/machine.js";
 import { getChaosMood } from "./state/chaosMeter.js";
-import { computeSizingNote, parseSizing } from "./lib/sizing.js";
+import { computeSizingNote } from "./lib/sizing.js";
 import { seatsForTableSize } from "./state/seatUtils.js";
+import {
+  buildDecisionNode,
+  buildStackState,
+  assumedHeroEventFromRecommendation,
+} from "./state/decisionState.js";
 
 const HERO_CARD_SLOTS = [
   { key: "card1", label: "Card 1" },
@@ -27,12 +35,52 @@ const FLOP_CARD_SLOTS = [
   { key: "card3", label: "Flop card 3" },
 ];
 
+const COACH_STREETS = ["preflop", "flop", "turn", "river"];
+const DECISION_MOMENT_LIMIT = 10;
+
+function cloneDecisionValue(value) {
+  if (value === null || value === undefined) return value;
+  try {
+    if (typeof structuredClone === "function") return structuredClone(value);
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+function decisionMomentSignature(state, coach) {
+  return JSON.stringify({ state, coach: coach || null });
+}
+
+function buildDecisionMomentLabel(state, coach) {
+  const street = String(state?.street || "preflop");
+  const streetLabel = `${street.charAt(0).toUpperCase()}${street.slice(1)}`;
+  const seat = state?.heroSeat ? String(state.heroSeat).toUpperCase() : "Seat unset";
+  const action = coach?.hero_action
+    ? String(coach.hero_action).replaceAll("_", " ").toUpperCase()
+    : "State saved";
+  return `${streetLabel} · ${seat} · ${action}`;
+}
+
 export default function App() {
-  const { state, setField, dispatch, clearActions, reset } = useGameState();
+  const {
+    state,
+    setField,
+    dispatch,
+    clearActions,
+    restoreSnapshot,
+    commitDetectedCards,
+    reset,
+  } = useGameState();
   const [coach, setCoach] = useState(null);
   const [loading, setLoading] = useState(false);
   const [cardSelectorConfig, setCardSelectorConfig] = useState(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [betaHudOpen, setBetaHudOpen] = useState(false);
+  const [decisionMoments, setDecisionMoments] = useState([]);
+  const decisionMomentCounterRef = useRef(0);
+  const previousDecisionStateRef = useRef(null);
+  const restoringDecisionMomentRef = useRef(false);
   const [compactMode, setCompactMode] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -51,18 +99,67 @@ export default function App() {
       return true;
     }
   });
+  const [autoRotateSeat, setAutoRotateSeat] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage?.getItem("pcc_auto_rotate_seat") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [previewSizing, setPreviewSizing] = useState(null);
+  const [actionAmountConfig, setActionAmountConfig] = useState(null);
+  const [replayVisionOpen, setReplayVisionOpen] = useState(false);
+  const [replayVisionStatus, setReplayVisionStatus] = useState("idle");
   const [stackModalOpen, setStackModalOpen] = useState(false);
   const [playHandOpen, setPlayHandOpen] = useState(false);
+
+  const storeDecisionMoment = useCallback((sourceState, sourceCoach, source = "manual") => {
+    if (!sourceState) return null;
+    decisionMomentCounterRef.current += 1;
+    const stateSnapshot = cloneDecisionValue(sourceState);
+    const coachSnapshot = cloneDecisionValue(sourceCoach || null);
+    const signature = decisionMomentSignature(stateSnapshot, coachSnapshot);
+    const moment = {
+      id: `decision-${Date.now()}-${decisionMomentCounterRef.current}`,
+      street: String(stateSnapshot.street || "preflop"),
+      label: buildDecisionMomentLabel(stateSnapshot, coachSnapshot),
+      heroSeat: stateSnapshot.heroSeat || "",
+      heroCards: [stateSnapshot.heroCards?.card1, stateSnapshot.heroCards?.card2].filter(Boolean),
+      boardCards: [
+        ...(Array.isArray(stateSnapshot.board?.flop) ? stateSnapshot.board.flop : []),
+        stateSnapshot.board?.turn,
+        stateSnapshot.board?.river,
+      ].filter(Boolean),
+      action: coachSnapshot?.hero_action || "",
+      source,
+      createdAt: Date.now(),
+      signature,
+      state: stateSnapshot,
+      coach: coachSnapshot,
+    };
+    setDecisionMoments((current) => {
+      if (current.some((item) => item.signature === signature)) return current;
+      return [moment, ...current].slice(0, DECISION_MOMENT_LIMIT);
+    });
+    return moment.id;
+  }, []);
   const handlePlayHandOpen = useCallback(() => {
     setField("heroSeat", "");
     setField("heroCards", { card1: null, card2: null });
     setField("heroRelativePosition", "auto");
     setPlayHandOpen(true);
   }, [setField]);
-  const lastAutoAdvanceAt = useRef(0);
-  const lastCommittedCoachAt = useRef(0);
-  const lastCoachAt = useRef(0);
+
+  const handleReplayCardsDetected = useCallback(
+    (detection) => {
+      if (commitDetectedCards(detection, { autoRotateSeat })) {
+        setCoach(null);
+        setPreviewSizing(null);
+      }
+    },
+    [commitDetectedCards, autoRotateSeat],
+  );
 
   const openStackModal = useCallback(() => {
     setStackModalOpen(true);
@@ -73,12 +170,25 @@ export default function App() {
   }, []);
 
   const handleSaveStacksQuick = useCallback(
-    ({ heroStack, villainStack }) => {
+    ({
+      heroStack,
+      villainStack,
+      heroRemainingStack,
+      villainRemainingStack,
+      potOverride,
+    }) => {
       if (heroStack !== undefined) {
         setField("heroStackBB", heroStack);
       }
       if (villainStack !== undefined) {
         setField("villainStackBB", villainStack);
+      }
+      setField("remainingStacks", {
+        heroRemainingBB: heroRemainingStack ?? null,
+        opponentRemainingBB: villainRemainingStack ?? null,
+      });
+      if (potOverride !== undefined) {
+        setField("potSizes", { total: potOverride });
       }
       setStackModalOpen(false);
     },
@@ -110,10 +220,20 @@ export default function App() {
     } catch {}
   }, [autoSaveHands]);
 
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(
+          "pcc_auto_rotate_seat",
+          autoRotateSeat ? "true" : "false",
+        );
+      }
+    } catch {}
+  }, [autoRotateSeat]);
+
   const handleReset = useCallback(() => {
     setCoach(null);
-    lastCoachAt.current = 0;
-    lastCommittedCoachAt.current = 0;
+    setDecisionMoments([]);
     setCardSelectorConfig(null);
     setStackModalOpen(false);
     reset();
@@ -121,8 +241,6 @@ export default function App() {
 
   const handleClearActions = useCallback(() => {
     setCoach(null);
-    lastCoachAt.current = 0;
-    lastCommittedCoachAt.current = 0;
     setCardSelectorConfig(null);
     clearActions();
   }, [clearActions]);
@@ -156,7 +274,23 @@ export default function App() {
   );
 
   const onAction = useCallback(
-    (evt) => {
+    (eventOrSpec) => {
+      const spec =
+        eventOrSpec && typeof eventOrSpec === "object"
+          ? eventOrSpec
+          : { code: String(eventOrSpec || "") };
+      const evt = String(spec.code || "");
+      if (!evt) return;
+
+      const enteredAmount = Number(spec.amountBB ?? spec.toAmountBB);
+      if (
+        spec.requiresAmount &&
+        (!Number.isFinite(enteredAmount) || enteredAmount <= 0)
+      ) {
+        setActionAmountConfig(spec);
+        return;
+      }
+
       if (evt === "next_street" || evt === "reset_hand") {
         try {
           setCoach(null);
@@ -165,6 +299,7 @@ export default function App() {
           setField("nextActor", "hero");
         } catch {}
         if (evt === "reset_hand") {
+          setDecisionMoments([]);
           try {
             setField("potSizes", { total: null });
           } catch {}
@@ -179,6 +314,22 @@ export default function App() {
         "opp_one_call",
         "opp_multi_call",
         "opp_check_back",
+        "opp_bet",
+        "opp_raise",
+        "opp_4bet",
+        "opp_shove",
+        "unopened",
+        "limped_to_me",
+        "opened_to_me",
+        "multiple_villains_opened",
+        "button_steal",
+        "faced_3bet",
+        "faced_4bet",
+        "first_to_act",
+        "checked_to_me",
+        "faced_bet",
+        "faced_raise",
+        "faced_allin",
       ]);
       if (autoClearCoach.has(evt)) {
         try {
@@ -186,73 +337,116 @@ export default function App() {
         } catch {}
       }
 
-      try {
-        const additions = [];
-        if (
-          coach &&
-          lastCoachAt.current &&
-          lastCommittedCoachAt.current !== lastCoachAt.current
-        ) {
-          const normAction = String(coach.hero_action || "").toLowerCase();
-          const parsed = parseSizing(coach.sizing || "");
-          const sizing =
-            parsed.kind === "unknown"
-              ? null
-              : { kind: parsed.kind, value: parsed.value };
-          const note = /squeeze|probe|c\s*bet|cbet|check-?raise|delayed/i.test(
-            coach.hero_action || "",
-          )
-            ? coach.hero_action || ""
-            : undefined;
-          additions.push({
-            at: Date.now(),
-            street: state.street,
-            actor: "hero",
-            action: normAction,
-            sizing,
-            note,
-          });
-          lastCommittedCoachAt.current = lastCoachAt.current;
-        }
-
-        const oppMap = {
-          opp_one_call: { action: "call", note: "one" },
-          opp_multi_call: { action: "call", note: "multi" },
-          opp_all_fold: { action: "fold" },
-          opp_4bet: { action: "4-bet" },
-          opp_shove: { action: "jam" },
-          opp_fold: { action: "fold" },
-          opp_call: { action: "call" },
-          opp_check_back: { action: "check", note: "checked back" },
-          opp_raise: { action: "raise" },
-        };
-        if (oppMap[evt]) {
-          const spec = oppMap[evt];
-          additions.push({
-            at: Date.now(),
-            street: state.street,
-            actor: "opp",
-            action: spec.action,
-            sizing: null,
-            note: spec.note,
-          });
-        }
-
-        if (additions.length > 0) {
-          const nextHistory = [...(state.history || []), ...additions].slice(
-            -8,
-          );
-          setField("history", nextHistory);
-          const isOpp = evt.startsWith("opp_");
-          try {
-            setField("nextActor", isOpp ? "hero" : "opp");
-          } catch {}
-        }
-      } catch {}
-      dispatch(evt);
+      const isHeroActual = evt.startsWith("hero_");
+      const payload = {
+        ...spec,
+        code: evt,
+        actorSeat: spec.actorSeat || state.opponentSeat || null,
+        amountBB:
+          Number.isFinite(enteredAmount) && enteredAmount > 0
+            ? enteredAmount
+            : spec.amountBB,
+        toAmountBB:
+          Number.isFinite(enteredAmount) && enteredAmount > 0
+            ? enteredAmount
+            : spec.toAmountBB,
+        recommendation: isHeroActual ? coach : undefined,
+      };
+      setActionAmountConfig(null);
+      dispatch(payload);
     },
-    [dispatch, coach, state.street, state.history, setField],
+    [dispatch, coach, state.opponentSeat, setField],
   );
+
+  const handleSaveDecisionMoment = useCallback(() => {
+    storeDecisionMoment(state, coach, "manual");
+  }, [state, coach, storeDecisionMoment]);
+
+  const handleRestoreDecisionMoment = useCallback(
+    (momentId) => {
+      const moment = decisionMoments.find((item) => item.id === momentId);
+      if (!moment) return;
+      restoringDecisionMomentRef.current = true;
+      restoreSnapshot(moment.state);
+      setCoach(cloneDecisionValue(moment.coach || null));
+      setPreviewSizing(null);
+      setActionAmountConfig(null);
+      setCardSelectorConfig(null);
+      setStackModalOpen(false);
+    },
+    [decisionMoments, restoreSnapshot],
+  );
+
+  const handleBetaStreetChange = useCallback(
+    (nextStreet) => {
+      const nextIndex = COACH_STREETS.indexOf(nextStreet);
+      const currentIndex = COACH_STREETS.indexOf(state.street || "preflop");
+      if (nextIndex < 0 || nextIndex === currentIndex) return;
+
+      const savedMoment = decisionMoments.find(
+        (moment) => moment.street === nextStreet,
+      );
+      if (savedMoment) {
+        handleRestoreDecisionMoment(savedMoment.id);
+        return;
+      }
+
+      if (nextIndex === currentIndex + 1 && !state.handComplete) {
+        onAction("next_street");
+      }
+    },
+    [
+      state.street,
+      state.handComplete,
+      decisionMoments,
+      handleRestoreDecisionMoment,
+      onAction,
+    ],
+  );
+
+  useEffect(() => {
+    const previous = previousDecisionStateRef.current;
+    const current = { state, coach };
+    if (!previous) {
+      previousDecisionStateRef.current = current;
+      return;
+    }
+
+    if (restoringDecisionMomentRef.current) {
+      restoringDecisionMomentRef.current = false;
+      previousDecisionStateRef.current = current;
+      return;
+    }
+
+    const previousStreetIndex = COACH_STREETS.indexOf(
+      previous.state?.street || "preflop",
+    );
+    const currentStreetIndex = COACH_STREETS.indexOf(
+      state.street || "preflop",
+    );
+
+    if (currentStreetIndex > previousStreetIndex) {
+      storeDecisionMoment(previous.state, previous.coach, "automatic");
+    }
+
+    const previousHero = [
+      previous.state?.heroCards?.card1,
+      previous.state?.heroCards?.card2,
+    ].join("|");
+    const currentHero = [state.heroCards?.card1, state.heroCards?.card2].join("|");
+    const looksLikeNewHand =
+      state.street === "preflop" &&
+      (state.history || []).length === 0 &&
+      !state.lastEvent &&
+      (previous.state?.handComplete ||
+        previousStreetIndex > currentStreetIndex ||
+        previousHero !== currentHero);
+    if (looksLikeNewHand) {
+      setDecisionMoments([]);
+    }
+
+    previousDecisionStateRef.current = current;
+  }, [state, coach, storeDecisionMoment]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -261,6 +455,15 @@ export default function App() {
       const skip = new Set([
         "next_street",
         "reset_hand",
+        "hero_fold",
+        "hero_check",
+        "hero_call",
+        "hero_open",
+        "hero_bet",
+        "hero_raise",
+        "hero_3bet",
+        "hero_4bet",
+        "hero_jam",
         "opp_call",
         "opp_one_call",
         "opp_multi_call",
@@ -272,7 +475,8 @@ export default function App() {
 
       const personaCode = state.persona || "chaos_shark";
       const needsCards =
-        (personaCode === "range_professor" ||
+        (personaCode === "replay_analyst" ||
+          personaCode === "range_professor" ||
           personaCode === "short_stack_ninja" ||
           personaCode === "cash_game_crusher") &&
         (!state.heroCards?.card1 || !state.heroCards?.card2);
@@ -317,11 +521,13 @@ export default function App() {
         const payload = summarizeForAI(state);
         const res = await requestChaosLine(payload);
         if (!isCancelled) {
-          setCoach(res);
-          try {
-            setField("nextActor", "opp");
-          } catch {}
-          lastCoachAt.current = Date.now();
+          const assumedHeroEvent = assumedHeroEventFromRecommendation(res, state);
+          const acceptedRecommendation =
+            assumedHeroEvent?.recommendation || res;
+          setCoach(acceptedRecommendation);
+          if (assumedHeroEvent) {
+            dispatch(assumedHeroEvent);
+          }
           try {
             const inc = /bet|raise|jam|3-bet|4-bet|open/i.test(
               res?.hero_action || "",
@@ -360,21 +566,6 @@ export default function App() {
     setPreviewSizing(null);
   }, [coach?.hero_action, coach?.sizing, state.street]);
 
-  useEffect(() => {
-    const autoAdvancePreflop = new Set(["opp_one_call", "opp_multi_call"]);
-    if (
-      coach &&
-      state.street === "preflop" &&
-      state.lastEventAt &&
-      state.lastEventAt !== lastAutoAdvanceAt.current &&
-      autoAdvancePreflop.has(state.lastEvent)
-    ) {
-      lastAutoAdvanceAt.current = state.lastEventAt;
-      const t = setTimeout(() => dispatch("next_street"), 350);
-      return () => clearTimeout(t);
-    }
-  }, [coach, state.street, state.lastEvent, state.lastEventAt, dispatch]);
-
   const seats = useMemo(
     () => seatsForTableSize(state.tableSize),
     [state.tableSize],
@@ -393,7 +584,7 @@ export default function App() {
     [state, coach],
   );
 
-  const persona = state.persona || "chaos_shark";
+  const persona = state.persona || "replay_analyst";
   const stakeTier = state.stakeTier || "unknown";
   const heroCards = state.heroCards || { card1: null, card2: null };
   const heroCardsReady = Boolean(heroCards.card1 && heroCards.card2);
@@ -401,6 +592,7 @@ export default function App() {
     ? `${heroCards.card1} ${heroCards.card2}`
     : "Not set";
   const personaNeedsCards =
+    persona === "replay_analyst" ||
     persona === "range_professor" ||
     persona === "short_stack_ninja" ||
     persona === "cash_game_crusher";
@@ -657,19 +849,14 @@ export default function App() {
     Number.isFinite(heroStackNumber) && heroStackNumber > 0;
   const villainStackValid =
     Number.isFinite(villainStackNumber) && villainStackNumber > 0;
-  const effectiveStack = heroStackValid
-    ? villainStackValid
-      ? Math.min(heroStackNumber, villainStackNumber)
-      : heroStackNumber
-    : villainStackValid
-      ? villainStackNumber
-      : "";
-  const potTotal =
+  const stackState = useMemo(() => buildStackState(state), [state]);
+  const decisionMath = useMemo(() => buildDecisionNode(state), [state]);
+  const effectiveStack = stackState.effectiveStackBehindBB ?? "";
+  const potTotal = decisionMath.potBB;
+  const potOverrideActive =
     typeof state.potSizes?.total === "number" &&
     Number.isFinite(state.potSizes.total) &&
-    state.potSizes.total > 0
-      ? state.potSizes.total
-      : null;
+    state.potSizes.total > 0;
   const villainStackRanges = [
     { code: "", label: "Unknown", value: null },
     { code: "lt10", label: "< 10 BB", value: 8 },
@@ -698,9 +885,14 @@ export default function App() {
   );
   const personaOptions = [
     {
+      code: "replay_analyst",
+      label: "Replay Analyst",
+      description: "State-first, GTO-informed replay coach with legal-action checks; not a presolved solver.",
+    },
+    {
       code: "chaos_shark",
       label: "Chaos Coach",
-      description: "Card-blind hype master pushing relentless aggression.",
+      description: "Strategy-first card-aware coach with high-energy delivery.",
     },
     {
       code: "range_professor",
@@ -728,6 +920,7 @@ export default function App() {
   const personaMeta =
     personaOptions.find((p) => p.code === persona) || personaOptions[0];
   const personaAvatars = {
+    replay_analyst: "R",
     chaos_shark: "*",
     range_professor: "*",
     exploit_detective: "*",
@@ -795,12 +988,22 @@ export default function App() {
     if (!seats.includes(state.heroSeat)) {
       setField("heroSeat", "");
     }
-  }, [seats.join("|")]);
+    if (state.opponentSeat && !seats.includes(state.opponentSeat)) {
+      setField("opponentSeat", "");
+    }
+  }, [seats.join("|"), state.opponentSeat]);
 
   const actions = useMemo(
     () => getAvailableActions(state, !!coach),
     [state, coach],
   );
+  const actionStageLabel = useMemo(() => {
+    if (state.handComplete) return "Hand complete";
+    if (loading) return "Coach is evaluating this decision…";
+    if (state.nextActor === "opp") return "Record the opponent's response";
+    if (state.nextActor === "await_street") return "Waiting for the next board card";
+    return "Describe the action before Hero";
+  }, [loading, state.handComplete, state.nextActor]);
 
   const styleOptions = [
     { code: "controlled_maniac", label: "Controlled" },
@@ -824,19 +1027,7 @@ export default function App() {
       .join(" ");
   }, [aiSnapshot]);
 
-  const spr = useMemo(() => {
-    if (
-      !potTotal ||
-      !effectiveStack ||
-      !Number.isFinite(Number(effectiveStack))
-    ) {
-      return null;
-    }
-    if (potTotal <= 0) return null;
-    const ratio = Number(effectiveStack) / Number(potTotal || 1);
-    if (!Number.isFinite(ratio)) return null;
-    return ratio.toFixed(1);
-  }, [effectiveStack, potTotal]);
+  const spr = decisionMath.spr !== null ? Number(decisionMath.spr).toFixed(1) : null;
 
   const statusBadges = useMemo(() => {
     const badges = [];
@@ -867,8 +1058,11 @@ export default function App() {
       value: villainType.replace(/_/g, "-"),
     });
     badges.push({
-      label: "Eff",
-      value: effectiveStack ? `${effectiveStack} BB` : "Set stacks",
+      label: "Behind",
+      value:
+        effectiveStack !== null && effectiveStack !== undefined && effectiveStack !== ""
+          ? `${effectiveStack} BB`
+          : "Set stacks",
       variant: "interactive",
       onClick: openStackModal,
     });
@@ -941,7 +1135,7 @@ export default function App() {
         const idx = Number(event.code.replace("Digit", "")) - 1;
         if (idx >= 0 && idx < actions.length) {
           event.preventDefault();
-          onAction(actions[idx].code);
+          onAction(actions[idx]);
         }
         return;
       }
@@ -1020,6 +1214,43 @@ export default function App() {
               </button> */}
               <button
                 type="button"
+                className={`pill-toggle header-action-btn beta-hud-trigger ${
+                  betaHudOpen ? "active" : ""
+                }`}
+                onClick={() => setBetaHudOpen(true)}
+                title="Preview the redesigned Coach decision workspace"
+              >
+                Coach HUD <span className="beta-hud-trigger-badge">Beta</span>
+              </button>
+              <button
+                type="button"
+                className={`pill-toggle header-action-btn replay-vision-trigger ${
+                  replayVisionStatus === "watching" || replayVisionStatus === "reading"
+                    ? "active"
+                    : ""
+                }`}
+                onClick={() => setReplayVisionOpen(true)}
+                title="Recognize Hero and board cards from a PokerCraft replay"
+              >
+                {replayVisionStatus === "reading" ||
+                replayVisionStatus === "watching"
+                  ? (
+                      <>
+                        <span>Replay vision on</span>
+                        <span
+                          className={`replay-vision-reading-indicator ${
+                            replayVisionStatus === "reading" ? "is-reading" : ""
+                          }`}
+                          aria-hidden="true"
+                        >
+                          reading
+                        </span>
+                      </>
+                    )
+                  : "Watch replay"}
+              </button>
+              <button
+                type="button"
                 className={`pill-toggle header-action-btn ${
                   compactMode ? "active" : ""
                 }`}
@@ -1052,7 +1283,8 @@ export default function App() {
                       setCoach(null);
                       setField("persona", next);
                       if (
-                        (next === "range_professor" ||
+                        (next === "replay_analyst" ||
+                          next === "range_professor" ||
                           next === "short_stack_ninja" ||
                           next === "cash_game_crusher") &&
                         !heroCardsReady
@@ -1107,6 +1339,20 @@ export default function App() {
               </div>
               <button
                 type="button"
+                className={`seat-auto-btn ${autoRotateSeat ? "active" : ""}`}
+                onClick={() => setAutoRotateSeat((value) => !value)}
+                disabled={!state.heroSeat}
+                aria-pressed={autoRotateSeat}
+                title={
+                  state.heroSeat
+                    ? "Advance Hero one seat counter-clockwise when Replay Vision confirms a new hand"
+                    : "Select Hero's current seat before enabling Auto seat"
+                }
+              >
+                Auto seat {autoRotateSeat ? "on" : "off"}
+              </button>
+              <button
+                type="button"
                 className="seat-reset-btn"
                 onClick={handleReset}
                 title="Reset session"
@@ -1114,6 +1360,59 @@ export default function App() {
               >
                 ↻
               </button>
+            </div>
+            <div className="table-context-row decision-context-row">
+              <span className="pill-label">Opponent</span>
+              <select
+                className="decision-context-select"
+                value={state.opponentSeat || ""}
+                onChange={(event) => setField("opponentSeat", event.target.value)}
+                aria-label="Primary opponent seat"
+              >
+                <option value="">Seat unknown</option>
+                {seats
+                  .filter((seat) => seat !== state.heroSeat)
+                  .map((seat) => (
+                    <option key={seat} value={seat}>
+                      {seat}
+                    </option>
+                  ))}
+              </select>
+              <span className="pill-label">Players</span>
+              <div className="seat-ring" aria-label="Players remaining in hand">
+                {[2, 3, 4].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    className={`seat-chip ${
+                      Number(state.playersInHand || 2) === count ? "active" : ""
+                    }`}
+                    onClick={() => setField("playersInHand", count)}
+                    title={count === 4 ? "Four or more players" : `${count} players`}
+                  >
+                    {count === 4 ? "4+" : count}
+                  </button>
+                ))}
+              </div>
+              <span className="pill-label">Postflop</span>
+              <div className="seat-ring" aria-label="Hero relative position">
+                {[
+                  ["auto", "Auto"],
+                  ["ip", "IP"],
+                  ["oop", "OOP"],
+                ].map(([code, label]) => (
+                  <button
+                    key={code}
+                    type="button"
+                    className={`seat-chip ${
+                      (state.heroRelativePosition || "auto") === code ? "active" : ""
+                    }`}
+                    onClick={() => setField("heroRelativePosition", code)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1182,12 +1481,22 @@ export default function App() {
 
           {/* --- PRIMARY ACTIONS (moved up) --- */}
           <div className="actions-block actions-top">
+            <div className="action-stage-header">
+              <span className="pill-label">Decision</span>
+              <strong>{actionStageLabel}</strong>
+            </div>
             <ActionButtons
               actions={actions}
               onAction={onAction}
               embedded
               disabled={loading}
+              highlightedCodes={[]}
             />
+            {state.nextActor === "await_street" ? (
+              <span className="drawer-hint">
+                Replay Vision will advance automatically when the board changes, or use Next Street.
+              </span>
+            ) : null}
           </div>
 
           <DecisionCard
@@ -1202,6 +1511,7 @@ export default function App() {
             ticker={ticker}
             alternativeSizes={alternativeSizes}
             onSelectAlternativeSize={handleAlternativeSizeSelect}
+            comparison={state.lastComparison}
           />
 
           <HistoryStrip history={state.history} heroSeat={state.heroSeat} />
@@ -1286,6 +1596,38 @@ export default function App() {
 
               <div className="drawer-section">
                 <h3>Game settings</h3>
+                <div className="drawer-row">
+                  <span className="pill-label">Format</span>
+                  <div className="chip-group">
+                    {[
+                      ["tournament", "Tournament"],
+                      ["cash", "Cash"],
+                    ].map(([code, label]) => (
+                      <button
+                        key={code}
+                        type="button"
+                        className={`chip ${state.gameType === code ? "active" : ""}`}
+                        onClick={() => setField("gameType", code)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="pill-label" htmlFor="anteInput">
+                    Ante (BB)
+                  </label>
+                  <input
+                    id="anteInput"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={Number(state.anteBB || 0)}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      setField("anteBB", Number.isFinite(value) && value >= 0 ? value : 0);
+                    }}
+                  />
+                </div>
                 <div className="drawer-row">
                   <span className="pill-label">Table size</span>
                   <div className="chip-group">
@@ -1434,10 +1776,71 @@ export default function App() {
           ) : null}
         </div>
       </div>
+      <BetaCoachHudModal
+        open={betaHudOpen}
+        onClose={() => setBetaHudOpen(false)}
+        onResetSession={handleReset}
+        state={state}
+        coach={coach}
+        loading={loading}
+        actions={actions}
+        onAction={onAction}
+        actionStageLabel={actionStageLabel}
+        personaLabel={personaMeta?.label}
+        seats={seats}
+        onHeroSeatChange={(seat) => setField("heroSeat", seat)}
+        villainType={villainType}
+        villainTypeOptions={villainTypeOptions}
+        onVillainTypeChange={(nextType) => setField("villainType", nextType)}
+        villainLabel={
+          villainTypeOptions.find((option) => option.code === villainType)?.label ||
+          villainType
+        }
+        effectiveStack={effectiveStack}
+        potTotal={potTotal}
+        spr={spr}
+        sizingNote={sizingNote}
+        replayVisionStatus={replayVisionStatus}
+        decisionMoments={decisionMoments}
+        onSaveDecisionMoment={handleSaveDecisionMoment}
+        onRestoreDecisionMoment={handleRestoreDecisionMoment}
+        onClearDecisionMoments={() => setDecisionMoments([])}
+        onStreetChange={handleBetaStreetChange}
+        onEditHero={openHeroCardSelector}
+        onEditFlop={openFlopManualSelector}
+        onEditTurn={() => openTurnCardSelector(state.board?.turn)}
+        onEditRiver={() => openRiverCardSelector(state.board?.river)}
+        onOpenStacks={openStackModal}
+        onClearActions={handleClearActions}
+      />
+      <ActionAmountModal
+        config={actionAmountConfig}
+        onCancel={() => setActionAmountConfig(null)}
+        onConfirm={(amountBB) =>
+          onAction({
+            ...actionAmountConfig,
+            amountBB,
+            toAmountBB: amountBB,
+          })
+        }
+      />
+      <ReplayVisionPanel
+        open={replayVisionOpen}
+        onClose={() => setReplayVisionOpen(false)}
+        onCardsDetected={handleReplayCardsDetected}
+        onStatusChange={setReplayVisionStatus}
+        suppressCurrentHand={state.handComplete && !state.lastEventAssumed}
+      />
       <StackDepthModal
         open={stackModalOpen}
         heroStack={heroStackValid ? heroStackNumber : null}
         villainStack={villainStackValid ? villainStackNumber : null}
+        heroRemainingStack={stackState.heroStackBehindBB}
+        villainRemainingStack={stackState.opponentStackBehindBB}
+        heroRemainingOverrideActive={stackState.heroRemainingOverrideActive}
+        villainRemainingOverrideActive={stackState.opponentRemainingOverrideActive}
+        currentPot={potTotal}
+        potOverrideActive={potOverrideActive}
         villainRanges={villainStackRanges}
         onClose={closeStackModal}
         onSave={handleSaveStacksQuick}

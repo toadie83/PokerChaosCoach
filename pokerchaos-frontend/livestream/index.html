@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Playback Poker Live</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        --ink: #f7f5f1;
+        --muted: #a7adb6;
+        --panel: #151a20;
+        --panel-soft: #1b2128;
+        --line: rgb(255 255 255 / 0.1);
+        --red: #e1434c;
+        --green: #38c98b;
+        --amber: #f0b94b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 320px;
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 12% 0%, rgb(225 67 76 / 0.14), transparent 30rem),
+          radial-gradient(circle at 88% 12%, rgb(71 103 137 / 0.13), transparent 28rem),
+          #0b0e12;
+      }
+
+      button,
+      a {
+        font: inherit;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        width: min(1500px, 100%);
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 22px clamp(16px, 3vw, 44px) 30px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 22px;
+      }
+
+      .topbar,
+      .brand,
+      .actions,
+      .status,
+      .stream-meta,
+      .copy-row {
+        display: flex;
+        align-items: center;
+      }
+
+      .topbar {
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        gap: 13px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        background: linear-gradient(145deg, #26313d, #11161b);
+        border: 1px solid var(--line);
+        box-shadow: 0 12px 34px rgb(0 0 0 / 0.32);
+        font-weight: 900;
+        letter-spacing: -0.08em;
+      }
+
+      .brand-copy {
+        display: grid;
+        gap: 2px;
+      }
+
+      .brand-copy strong {
+        font-size: 1rem;
+      }
+
+      .brand-copy span {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .actions {
+        gap: 9px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .button {
+        min-height: 38px;
+        padding: 8px 13px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 0.045);
+        color: var(--ink);
+        text-decoration: none;
+        cursor: pointer;
+        transition: 150ms ease;
+      }
+
+      .button:hover {
+        border-color: rgb(255 255 255 / 0.24);
+        background: rgb(255 255 255 / 0.08);
+      }
+
+      .button.primary {
+        border-color: rgb(225 67 76 / 0.34);
+        background: var(--red);
+        color: white;
+        font-weight: 750;
+      }
+
+      .button.primary:hover {
+        background: #f0525b;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+        gap: 22px;
+        align-items: start;
+      }
+
+      .stage,
+      .setup-card {
+        border: 1px solid var(--line);
+        background: rgb(21 26 32 / 0.92);
+        box-shadow: 0 24px 70px rgb(0 0 0 / 0.28);
+      }
+
+      .stage {
+        min-width: 0;
+        border-radius: 18px;
+        overflow: hidden;
+      }
+
+      .stage-header {
+        min-height: 60px;
+        padding: 12px 15px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .stream-meta {
+        gap: 11px;
+        min-width: 0;
+      }
+
+      .live-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        flex: 0 0 auto;
+        color: #ff8e95;
+        font-size: 0.75rem;
+        font-weight: 850;
+        letter-spacing: 0.09em;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 4px rgb(225 67 76 / 0.13);
+      }
+
+      h1 {
+        margin: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: clamp(0.98rem, 2vw, 1.2rem);
+      }
+
+      .status {
+        gap: 8px;
+        flex: 0 0 auto;
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgb(255 255 255 / 0.035);
+        font-size: 0.76rem;
+        font-weight: 700;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #777f89;
+      }
+
+      .status[data-state="live"] {
+        color: #8be2b9;
+        border-color: rgb(56 201 139 / 0.28);
+        background: rgb(56 201 139 / 0.08);
+      }
+
+      .status[data-state="live"] .status-dot {
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgb(56 201 139 / 0.12);
+      }
+
+      .status[data-state="waiting"] {
+        color: #f5ce7d;
+      }
+
+      .status[data-state="waiting"] .status-dot {
+        background: var(--amber);
+      }
+
+      .status[data-state="offline"] .status-dot {
+        background: var(--red);
+      }
+
+      .player-wrap {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        min-height: 280px;
+        background:
+          linear-gradient(135deg, rgb(255 255 255 / 0.018), transparent 40%),
+          #050709;
+      }
+
+      iframe {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #050709;
+      }
+
+      .stage-footer {
+        padding: 11px 15px;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .setup-card {
+        border-radius: 18px;
+        padding: 20px;
+        display: grid;
+        gap: 20px;
+      }
+
+      .setup-card h2,
+      .setup-card p {
+        margin: 0;
+      }
+
+      .setup-card h2 {
+        font-size: 1rem;
+      }
+
+      .setup-card p,
+      .steps {
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.55;
+      }
+
+      .steps {
+        margin: 0;
+        padding-left: 1.25rem;
+        display: grid;
+        gap: 11px;
+      }
+
+      .steps strong {
+        color: var(--ink);
+      }
+
+      .endpoint {
+        display: grid;
+        gap: 8px;
+      }
+
+      .endpoint label {
+        color: var(--muted);
+        font-size: 0.73rem;
+        font-weight: 750;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .copy-row {
+        gap: 7px;
+      }
+
+      code {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0c1014;
+        color: #dbe3ea;
+        font: 0.76rem/1.3 "SFMono-Regular", Consolas, monospace;
+      }
+
+      .copy {
+        flex: 0 0 auto;
+        min-height: 36px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--panel-soft);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.76rem;
+      }
+
+      .privacy {
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      footer {
+        color: #7e8690;
+        font-size: 0.74rem;
+        text-align: center;
+      }
+
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        .setup-card {
+          grid-template-columns: 1fr 1fr;
+          align-items: start;
+        }
+
+        .setup-card > :first-child,
+        .privacy {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .shell {
+          padding-inline: 12px;
+        }
+
+        .topbar {
+          align-items: flex-start;
+        }
+
+        .brand-copy span,
+        .actions .button:not(.primary) {
+          display: none;
+        }
+
+        main {
+          gap: 14px;
+        }
+
+        .stage-header {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 9px;
+        }
+
+        .player-wrap {
+          min-height: 205px;
+        }
+
+        .setup-card {
+          grid-template-columns: 1fr;
+        }
+
+        .setup-card > :first-child,
+        .privacy {
+          grid-column: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">PP</div>
+          <div class="brand-copy">
+            <strong>Playback Poker Live</strong>
+            <span>Local low-latency broadcast</span>
+          </div>
+        </div>
+        <div class="actions">
+          <a class="button" href="/review">Back to Playback Poker</a>
+          <a
+            class="button"
+            id="raw-player-link"
+            href="http://127.0.0.1:8889/mystream/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >Raw player</a>
+          <button class="button primary" id="reconnect" type="button">
+            Reconnect player
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="stage" aria-label="Livestream player">
+          <div class="stage-header">
+            <div class="stream-meta">
+              <span class="live-label"><span class="dot"></span>LIVE</span>
+              <h1>Development stream</h1>
+            </div>
+            <div class="status" id="status" data-state="checking" role="status">
+              <span class="status-dot"></span>
+              <span id="status-copy">Checking media server</span>
+            </div>
+          </div>
+          <div class="player-wrap">
+            <iframe
+              id="player"
+              title="Playback Poker livestream"
+              src="http://127.0.0.1:8889/mystream/?controls=true&muted=true&autoplay=true&playsInline=true"
+              allow="autoplay; fullscreen; picture-in-picture"
+              scrolling="no"
+            ></iframe>
+          </div>
+          <div class="stage-footer">
+            Playback starts muted. Use the player controls for sound and fullscreen.
+          </div>
+        </section>
+
+        <aside class="setup-card" aria-label="OBS setup">
+          <div>
+            <h2>Start broadcasting</h2>
+            <p>MediaMTX bridges OBS to this browser tab entirely on your machine.</p>
+          </div>
+
+          <ol class="steps">
+            <li>Run <strong>npm run stream</strong> in the frontend folder.</li>
+            <li>In OBS, choose <strong>WHIP</strong> as the stream service.</li>
+            <li>Paste the URL below, leave the token blank, and start streaming.</li>
+          </ol>
+
+          <div class="endpoint">
+            <label for="whip-url">OBS server URL</label>
+            <div class="copy-row">
+              <code id="whip-url">http://127.0.0.1:8889/mystream/whip</code>
+              <button class="copy" type="button" data-copy="whip-url">Copy</button>
+            </div>
+          </div>
+
+          <div class="privacy">
+            <p>
+              Local only. The media, status, and viewer ports are bound to loopback and are not exposed to your network.
+            </p>
+          </div>
+        </aside>
+      </main>
+
+      <footer>Playback Poker development broadcast · WebRTC via MediaMTX</footer>
+    </div>
+
+    <script>
+      const STREAM_NAME = "mystream";
+      const PLAYER_URL = `http://127.0.0.1:8889/${STREAM_NAME}/?controls=true&muted=true&autoplay=true&playsInline=true`;
+      const STATUS_URL = `http://127.0.0.1:9997/v3/paths/get/${STREAM_NAME}`;
+      const player = document.getElementById("player");
+      const status = document.getElementById("status");
+      const statusCopy = document.getElementById("status-copy");
+      let previousState = "checking";
+
+      function reconnectPlayer() {
+        player.src = `${PLAYER_URL}&reload=${Date.now()}`;
+      }
+
+      function setStatus(state, copy) {
+        status.dataset.state = state;
+        statusCopy.textContent = copy;
+        if (state === "live" && previousState !== "live") reconnectPlayer();
+        previousState = state;
+      }
+
+      async function checkStream() {
+        try {
+          const response = await fetch(STATUS_URL, { cache: "no-store" });
+          if (response.status === 404) {
+            setStatus("waiting", "Waiting for OBS");
+            return;
+          }
+          if (!response.ok) throw new Error(`Status ${response.status}`);
+          const path = await response.json();
+          if (path.ready) setStatus("live", "OBS is live");
+          else setStatus("waiting", "Waiting for OBS");
+        } catch {
+          setStatus("offline", "Media server offline");
+        }
+      }
+
+      document.getElementById("reconnect").addEventListener("click", reconnectPlayer);
+      document.querySelectorAll("[data-copy]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const source = document.getElementById(button.dataset.copy);
+          try {
+            await navigator.clipboard.writeText(source.textContent.trim());
+            const original = button.textContent;
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+              button.textContent = original;
+            }, 1400);
+          } catch {
+            window.getSelection().selectAllChildren(source);
+          }
+        });
+      });
+
+      checkStream();
+      window.setInterval(checkStream, 3000);
+    </script>
+  </body>
+</html>

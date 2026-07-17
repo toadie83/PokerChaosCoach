@@ -23,9 +23,14 @@ function describeAction(entry, heroSeat) {
       ? heroSeat
         ? heroSeat.toUpperCase()
         : "Hero"
-      : "Villain";
+      : entry.seat || "Villain";
   const sizing = formatSizing(entry.sizing);
-  const parts = [actor, entry.action ? entry.action.toUpperCase() : null, sizing || null];
+  const amount = entry.toAmountBB || entry.amountBB;
+  const parts = [
+    actor,
+    entry.action ? entry.action.toUpperCase() : null,
+    amount ? `${amount} BB` : sizing || null,
+  ];
   return parts.filter(Boolean).join(" ");
 }
 
@@ -44,10 +49,11 @@ function formatLogLine(entry, heroSeat) {
       ? heroSeat
         ? heroSeat.toUpperCase()
         : "Hero"
-      : "Villain";
+      : entry.seat || "Villain";
   const sizing = formatSizing(entry.sizing);
   const note = entry.note ? ` · ${entry.note}` : "";
-  const sizingPart = sizing ? ` (${sizing})` : "";
+  const amount = entry.toAmountBB || entry.amountBB;
+  const sizingPart = amount ? ` (${amount} BB)` : sizing ? ` (${sizing})` : "";
   return `${actorLabel}: ${entry.action || "—"}${sizingPart}${note}`;
 }
 

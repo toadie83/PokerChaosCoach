@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "stream": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-livestream.ps1",
+    "stream:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-mediamtx.ps1",
     "sitemap": "node scripts/generate-sitemap.mjs",
     "build": "npm run sitemap && vite build",
+    "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {

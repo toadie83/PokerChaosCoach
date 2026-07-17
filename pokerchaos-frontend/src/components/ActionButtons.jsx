@@ -13,7 +13,7 @@ export default function ActionButtons({
         return (
           <button
             key={a.code}
-            onClick={() => onAction(a.code)}
+            onClick={() => onAction(a)}
             disabled={disabled}
             className={`action-btn${isHighlighted ? " highlighted" : ""}`}
           >

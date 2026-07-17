@@ -1,16 +1,37 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { applyEvent, initialState } from "./machine.js";
+import { buildStackState, reopenAssumedFoldForVision } from "./decisionState.js";
+import { previousSeatForNextHand } from "./seatUtils.js";
 
-const normalizeCard = (card) =>
-  typeof card === "string" && card.trim().length === 2 ? card.trim().toUpperCase() : null;
+const CARD_CODE_PATTERN = /^[AKQJT2-9][shdc]$/i;
+
+const normalizeCard = (card) => {
+  const raw = typeof card === "string" ? card.trim() : "";
+  if (!CARD_CODE_PATTERN.test(raw)) return null;
+  return `${raw[0].toUpperCase()}${raw[1].toLowerCase()}`;
+};
 
 function sanitizeBoard(board) {
   const flop = Array.isArray(board?.flop) ? board.flop : [null, null, null];
   return {
-    flop: flop.map((card, idx) => (idx < 3 ? normalizeCard(card) : null)).slice(0, 3),
+    flop: Array.from({ length: 3 }, (_, idx) => normalizeCard(flop[idx])),
     turn: normalizeCard(board?.turn),
     river: normalizeCard(board?.river)
   };
+}
+
+function visibleBoardCount(board) {
+  const flopCount = Array.isArray(board?.flop)
+    ? board.flop.filter((card) => normalizeCard(card)).length
+    : 0;
+  return flopCount + (normalizeCard(board?.turn) ? 1 : 0) + (normalizeCard(board?.river) ? 1 : 0);
+}
+
+function streetForBoardCount(count) {
+  if (count >= 5) return "river";
+  if (count === 4) return "turn";
+  if (count === 3) return "flop";
+  return "preflop";
 }
 
 function loadInitialState() {
@@ -82,6 +103,45 @@ function snapshotState(state) {
   }
 }
 
+export function prepareRestoredGameState(snapshot) {
+  const restored = snapshotState(snapshot || {});
+  return {
+    ...initialState,
+    ...restored,
+    heroCards: {
+      card1: normalizeCard(restored.heroCards?.card1),
+      card2: normalizeCard(restored.heroCards?.card2)
+    },
+    board: sanitizeBoard(restored.board),
+    potSizes: {
+      ...initialState.potSizes,
+      ...(restored.potSizes || {})
+    },
+    stackRemainingOverrides: {
+      ...initialState.stackRemainingOverrides,
+      ...(restored.stackRemainingOverrides || {})
+    },
+    // Restoring is navigation, not a new poker event. Keeping this at zero
+    // prevents the Coach request effect from replaying the old trigger.
+    lastEventAt: 0
+  };
+}
+
+function persistRestoredFields(state) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("pcc_style", String(state.style || ""));
+    localStorage.setItem("pcc_persona", String(state.persona || ""));
+    localStorage.setItem("pcc_model", String(state.model || ""));
+    localStorage.setItem("pcc_hero_cards", JSON.stringify(state.heroCards || {}));
+    localStorage.setItem("pcc_hero_stack_bb", String(state.heroStackBB ?? ""));
+    localStorage.setItem("pcc_villain_stack_bb", String(state.villainStackBB ?? ""));
+    localStorage.setItem("pcc_villain_type", String(state.villainType || ""));
+    localStorage.setItem("pcc_stake_tier", String(state.stakeTier || ""));
+    localStorage.setItem("pcc_pot_sizes", String(state.potSizes?.total ?? ""));
+  } catch {}
+}
+
 export function useGameState() {
   const [state, setState] = useState(loadInitialState);
   const historyRef = useRef([]);
@@ -103,13 +163,17 @@ export function useGameState() {
       } catch {}
     }
     if (key === "heroCards") {
+      const normalizedCards = {
+        card1: normalizeCard(value?.card1),
+        card2: normalizeCard(value?.card2)
+      };
       try {
         if (typeof localStorage !== "undefined") {
           localStorage.setItem(
             "pcc_hero_cards",
             JSON.stringify({
-              card1: value?.card1 || null,
-              card2: value?.card2 || null
+              card1: normalizedCards.card1,
+              card2: normalizedCards.card2
             })
           );
         }
@@ -121,9 +185,7 @@ export function useGameState() {
       } catch {}
       setState((s) => ({
         ...s,
-        heroCards: value
-          ? { card1: value.card1 || null, card2: value.card2 || null }
-          : { card1: null, card2: null },
+        heroCards: normalizedCards,
         potSizes: { total: null }
       }));
       return;
@@ -141,6 +203,15 @@ export function useGameState() {
           localStorage.setItem("pcc_hero_stack_bb", String(value ?? ""));
         }
       } catch {}
+      setState((s) => ({
+        ...s,
+        heroStackBB: value,
+        stackRemainingOverrides: {
+          ...(s.stackRemainingOverrides || {}),
+          hero: null
+        }
+      }));
+      return;
     }
     if (key === "villainStackBB") {
       try {
@@ -148,6 +219,15 @@ export function useGameState() {
           localStorage.setItem("pcc_villain_stack_bb", String(value ?? ""));
         }
       } catch {}
+      setState((s) => ({
+        ...s,
+        villainStackBB: value,
+        stackRemainingOverrides: {
+          ...(s.stackRemainingOverrides || {}),
+          opponent: null
+        }
+      }));
+      return;
     }
     if (key === "villainType") {
       try {
@@ -174,8 +254,43 @@ export function useGameState() {
       } catch {}
       setState((s) => ({
         ...s,
-        potSizes: { total: nextValue }
+        potSizes: { total: nextValue },
+        estimatedPotBB: nextValue
       }));
+      return;
+    }
+    if (key === "remainingStacks") {
+      const normalizeRemaining = (raw) => {
+        if (raw === null || raw === undefined || raw === "") return null;
+        const numeric = Number(raw);
+        return Number.isFinite(numeric) && numeric >= 0
+          ? Number(numeric.toFixed(2))
+          : null;
+      };
+      setState((s) => {
+        const stackState = buildStackState(s);
+        const heroRemaining = normalizeRemaining(value?.heroRemainingBB);
+        const opponentRemaining = normalizeRemaining(value?.opponentRemainingBB);
+        return {
+          ...s,
+          stackRemainingOverrides: {
+            hero:
+              heroRemaining === null
+                ? null
+                : {
+                    remainingBB: heroRemaining,
+                    committedAtBB: stackState.heroTotalCommittedBB
+                  },
+            opponent:
+              opponentRemaining === null
+                ? null
+                : {
+                    remainingBB: opponentRemaining,
+                    committedAtBB: stackState.opponentTotalCommittedBB
+                  }
+          }
+        };
+      });
       return;
     }
     setState((s) => ({
@@ -214,8 +329,142 @@ export function useGameState() {
       actions: [],
       previousActions: [],
       nextActor: "hero",
-      handComplete: false
+      handComplete: false,
+      decisionKind: null,
+      facingAction: null,
+      legalActions: [],
+      lastRecommendation: null,
+      lastComparison: null
     }));
+  }, []);
+
+  const restoreSnapshot = useCallback((snapshot) => {
+    const restored = prepareRestoredGameState(snapshot);
+    historyRef.current = [];
+    persistRestoredFields(restored);
+    setState(restored);
+  }, []);
+
+  const commitDetectedCards = useCallback((detection, options = {}) => {
+    const heroCards = {
+      card1: normalizeCard(detection?.heroCards?.card1),
+      card2: normalizeCard(detection?.heroCards?.card2)
+    };
+    const board = sanitizeBoard(detection?.board);
+    const boardCount = visibleBoardCount(board);
+    const validBoardCount = boardCount === 0 || boardCount === 3 || boardCount === 4 || boardCount === 5;
+    const allCards = [
+      heroCards.card1,
+      heroCards.card2,
+      ...board.flop.filter(Boolean),
+      board.turn,
+      board.river
+    ].filter(Boolean);
+    if (
+      !heroCards.card1 ||
+      !heroCards.card2 ||
+      !validBoardCount ||
+      new Set(allCards).size !== allCards.length
+    ) {
+      return false;
+    }
+
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("pcc_hero_cards", JSON.stringify(heroCards));
+      }
+    } catch {}
+
+    setState((s) => {
+      const currentHero1 = normalizeCard(s.heroCards?.card1);
+      const currentHero2 = normalizeCard(s.heroCards?.card2);
+      const currentHeroReady = Boolean(currentHero1 && currentHero2);
+      const heroChanged =
+        currentHeroReady &&
+        (currentHero1 !== heroCards.card1 || currentHero2 !== heroCards.card2);
+      const currentBoardCount = visibleBoardCount(s.board);
+      const nextStreet = streetForBoardCount(boardCount);
+      const streetOrder = ["preflop", "flop", "turn", "river"];
+      const streetRegressed =
+        streetOrder.indexOf(nextStreet) < streetOrder.indexOf(s.street || "preflop");
+      const newHand =
+        Boolean(detection?.newHandDetected) ||
+        (heroChanged && boardCount === 0) ||
+        (currentBoardCount > 0 && boardCount === 0) ||
+        (s.handComplete && !s.lastEventAssumed && boardCount === 0);
+      const shouldRotateSeat =
+        Boolean(options?.autoRotateSeat) &&
+        Boolean(detection?.newHandDetected) &&
+        Boolean(s.heroSeat) &&
+        Number(s.visionRevision || 0) > 0;
+      const nextHeroSeat = shouldRotateSeat
+        ? previousSeatForNextHand(s.heroSeat, s.tableSize)
+        : s.heroSeat;
+      const visionFields = {
+        heroCards,
+        board,
+        street: nextStreet,
+        visionSource: "gg_pokercraft",
+        visionConfidence: detection?.confidence || "medium",
+        visionUpdatedAt: Date.now(),
+        visionRevision: Number(s.visionRevision || 0) + 1
+      };
+
+      if (newHand) {
+        return {
+          ...initialState,
+          heroSeat: nextHeroSeat,
+          tableSize: s.tableSize,
+          style: s.style,
+          openSize: s.openSize,
+          persona: s.persona,
+          heroRelativePosition: s.heroRelativePosition,
+          opponentSeat: s.opponentSeat,
+          playersInHand: 2,
+          gameType: s.gameType,
+          anteBB: s.anteBB,
+          heroStackBB: s.heroStackBB,
+          villainStackBB: s.villainStackBB,
+          villainType: s.villainType,
+          preflopLimpers: 0,
+          preflopCallers: 0,
+          stakeTier: s.stakeTier,
+          model: s.model,
+          ...visionFields,
+          potSizes: { total: null }
+        };
+      }
+
+      const continuedState = nextStreet !== (s.street || "preflop")
+        ? reopenAssumedFoldForVision(s)
+        : s;
+
+      return {
+        ...continuedState,
+        ...visionFields,
+        ...(nextStreet !== (s.street || "preflop")
+          ? {
+              nextActor: "hero",
+              decisionKind: null,
+              facingAction: null,
+              legalActions: [],
+              lastRecommendation: null
+            }
+          : {}),
+        ...(streetRegressed
+          ? {
+              actions: [],
+              previousActions: [],
+              history: [],
+              lastEvent: null,
+              lastEventAt: 0,
+              nextActor: "hero",
+              handComplete: false
+            }
+          : {})
+      };
+    });
+    return true;
   }, []);
 
   const value = useMemo(
@@ -224,6 +473,8 @@ export function useGameState() {
       setField,
       dispatch,
       clearActions,
+      restoreSnapshot,
+      commitDetectedCards,
       reset: () => {
         try {
           if (typeof localStorage !== "undefined") {
@@ -240,6 +491,11 @@ export function useGameState() {
           style: s.style,
           openSize: s.openSize,
           persona: s.persona,
+          heroRelativePosition: s.heroRelativePosition,
+          opponentSeat: s.opponentSeat,
+          playersInHand: 2,
+          gameType: s.gameType,
+          anteBB: s.anteBB,
           board: {
             flop: [...(initialState.board?.flop || [null, null, null])],
             turn: initialState.board?.turn ?? null,
@@ -254,7 +510,7 @@ export function useGameState() {
         }));
       }
     }),
-    [state, setField, dispatch, clearActions]
+    [state, setField, dispatch, clearActions, restoreSnapshot, commitDetectedCards]
   );
 
   return value;
