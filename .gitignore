@@ -4,6 +4,7 @@ node_modules/
 # Builds
 dist/
 build/
+pokerchaos-frontend/.mediamtx/
 
 # Environment files
 .env
@@ -22,4 +23,3 @@ lerna-debug.log*
 Thumbs.db
 *.swp
 *.swo
-

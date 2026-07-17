@@ -7,16 +7,32 @@ function normalizeStack(value) {
   return Math.round(num * 100) / 100;
 }
 
+function normalizeRemainingStack(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Math.round(num * 100) / 100;
+}
+
 export default function StackDepthModal({
   open,
   heroStack,
   villainStack,
+  heroRemainingStack,
+  villainRemainingStack,
+  heroRemainingOverrideActive = false,
+  villainRemainingOverrideActive = false,
+  currentPot,
+  potOverrideActive = false,
   villainRanges = [],
   onClose,
   onSave,
 }) {
   const [heroValue, setHeroValue] = useState(heroStack ?? "");
   const [villainValue, setVillainValue] = useState(villainStack ?? "");
+  const [heroRemainingValue, setHeroRemainingValue] = useState("");
+  const [villainRemainingValue, setVillainRemainingValue] = useState("");
+  const [potValue, setPotValue] = useState("");
 
   const rangeDisplay = useMemo(() => {
     const items = Array.isArray(villainRanges) ? villainRanges : [];
@@ -27,8 +43,25 @@ export default function StackDepthModal({
     if (open) {
       setHeroValue(heroStack ?? "");
       setVillainValue(villainStack ?? "");
+      setHeroRemainingValue(
+        heroRemainingOverrideActive ? (heroRemainingStack ?? "") : "",
+      );
+      setVillainRemainingValue(
+        villainRemainingOverrideActive ? (villainRemainingStack ?? "") : "",
+      );
+      setPotValue(potOverrideActive ? (currentPot ?? "") : "");
     }
-  }, [open, heroStack, villainStack]);
+  }, [
+    open,
+    heroStack,
+    villainStack,
+    heroRemainingStack,
+    villainRemainingStack,
+    heroRemainingOverrideActive,
+    villainRemainingOverrideActive,
+    currentPot,
+    potOverrideActive,
+  ]);
 
   const inferRangeCode = (value) => {
     const numeric = Number(value);
@@ -60,6 +93,12 @@ export default function StackDepthModal({
     onSave({
       heroStack: normalizeStack(heroValue),
       villainStack: normalizeStack(villainValue),
+      heroRemainingStack: normalizeRemainingStack(heroRemainingValue),
+      villainRemainingStack: normalizeRemainingStack(villainRemainingValue),
+      potOverride:
+        potValue === "" && !potOverrideActive
+          ? undefined
+          : normalizeStack(potValue),
     });
   };
 
@@ -80,11 +119,12 @@ export default function StackDepthModal({
         </div>
         <div className="modal-body">
           <p className="sub" style={{ marginTop: 0 }}>
-            Update hero and villain effective stacks (in big blinds).
+            Starting stacks anchor the hand. Coach subtracts every recorded action to
+            calculate the chips remaining at each decision.
           </p>
           <div className="drawer-row" style={{ marginTop: 12 }}>
             <label className="pill-label" htmlFor="stackDepthHero">
-              Hero stack (BB)
+              Starting Hero stack (BB)
             </label>
             <input
               id="stackDepthHero"
@@ -112,7 +152,7 @@ export default function StackDepthModal({
           </div>
           <div className="drawer-row" style={{ marginTop: 12 }}>
             <label className="pill-label" htmlFor="stackDepthVillain">
-              Villain stack (BB)
+              Starting opponent stack (BB)
             </label>
             <input
               id="stackDepthVillain"
@@ -138,8 +178,66 @@ export default function StackDepthModal({
               </select>
             ) : null}
           </div>
+          <div className="drawer-row" style={{ marginTop: 20 }}>
+            <label className="pill-label" htmlFor="stackDepthHeroRemaining">
+              Hero remaining now (BB)
+            </label>
+            <input
+              id="stackDepthHeroRemaining"
+              type="number"
+              min={0}
+              step="0.1"
+              inputMode="decimal"
+              value={heroRemainingValue}
+              placeholder={
+                heroRemainingStack === null || heroRemainingStack === undefined
+                  ? "Unknown"
+                  : `Estimated ${heroRemainingStack}`
+              }
+              onChange={(e) => setHeroRemainingValue(e.target.value)}
+            />
+          </div>
+          <div className="drawer-row" style={{ marginTop: 12 }}>
+            <label className="pill-label" htmlFor="stackDepthVillainRemaining">
+              Opponent remaining now (BB)
+            </label>
+            <input
+              id="stackDepthVillainRemaining"
+              type="number"
+              min={0}
+              step="0.1"
+              inputMode="decimal"
+              value={villainRemainingValue}
+              placeholder={
+                villainRemainingStack === null || villainRemainingStack === undefined
+                  ? "Unknown"
+                  : `Estimated ${villainRemainingStack}`
+              }
+              onChange={(e) => setVillainRemainingValue(e.target.value)}
+            />
+          </div>
+          <div className="drawer-row" style={{ marginTop: 12 }}>
+            <label className="pill-label" htmlFor="stackDepthCurrentPot">
+              Current pot now (BB)
+            </label>
+            <input
+              id="stackDepthCurrentPot"
+              type="number"
+              min={0.01}
+              step="0.1"
+              inputMode="decimal"
+              value={potValue}
+              placeholder={
+                currentPot === null || currentPot === undefined
+                  ? "Unknown"
+                  : `Estimated ${currentPot}`
+              }
+              onChange={(e) => setPotValue(e.target.value)}
+            />
+          </div>
           <p className="sub" style={{ marginTop: 12 }}>
-            Leave a field blank to clear that stack value.
+            Remaining-stack and pot entries are optional live overrides. Future actions
+            continue updating them. Clear an existing override to return to Coach estimates.
           </p>
         </div>
         <div className="modal-footer">
@@ -147,7 +245,7 @@ export default function StackDepthModal({
             Cancel
           </button>
           <button type="button" onClick={handleSave}>
-            Save stacks
+            Save stack and pot state
           </button>
         </div>
       </div>

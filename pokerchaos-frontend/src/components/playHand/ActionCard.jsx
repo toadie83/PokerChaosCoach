@@ -26,7 +26,7 @@ export default function ActionCard({
     <div className="play-hand-card">
       <h2 className="play-hand-card-title">{streetLabel} decisions</h2>
       <p className="play-hand-card-subtitle">
-        Lock in the action you want to take. Keyboard shortcuts still work in Play Hand mode.
+        Describe the replay action. The Coach recommendation is applied as Hero's MVP action automatically.
       </p>
       <div className="play-hand-actions">
         <ActionButtons
@@ -67,7 +67,7 @@ export default function ActionCard({
             {flavor ? <div className="play-hand-coach-flavor">{flavor}</div> : null}
           </div>
         ) : (
-          <span className="play-hand-coach-status">No advice yet - take an action to continue.</span>
+          <span className="play-hand-coach-status">Describe the action before Hero to get guidance.</span>
         )}
       </div>
     </div>

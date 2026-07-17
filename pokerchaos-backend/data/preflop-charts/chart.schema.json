@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pokerchaoscoach.local/schemas/preflop-chart-v1.json",
+  "title": "Poker Chaos Coach preflop chart",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "chartVersion", "game", "spots"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "chartVersion": { "type": "string", "minLength": 1 },
+    "source": { "type": ["string", "null"] },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "tableSize", "anteBB", "effectiveStackBB"],
+      "properties": {
+        "format": { "enum": ["tournament", "cash"] },
+        "tableSize": { "type": "integer", "minimum": 2, "maximum": 10 },
+        "anteBB": { "type": "number", "minimum": 0 },
+        "effectiveStackBB": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "number", "minimum": 0 },
+            "max": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    },
+    "spots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "situation",
+          "heroPosition",
+          "villainPosition",
+          "playersInHand",
+          "hands"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "situation": {
+            "enum": [
+              "unopened",
+              "limped",
+              "facing_open",
+              "facing_open_callers",
+              "facing_3bet",
+              "facing_4bet"
+            ]
+          },
+          "heroPosition": { "$ref": "#/$defs/position" },
+          "villainPosition": {
+            "oneOf": [
+              { "$ref": "#/$defs/position" },
+              { "type": "null" }
+            ]
+          },
+          "playersInHand": { "type": "integer", "minimum": 2, "maximum": 10 },
+          "hands": {
+            "type": "object",
+            "propertyNames": { "pattern": "^(?:AA|KK|QQ|JJ|TT|99|88|77|66|55|44|33|22|[2-9TJQKA]{2}[so])$" },
+            "additionalProperties": { "$ref": "#/$defs/frequencies" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "position": {
+      "enum": ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
+    },
+    "frequencies": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "fold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "check": { "type": "number", "minimum": 0, "maximum": 1 },
+        "call": { "type": "number", "minimum": 0, "maximum": 1 },
+        "open": { "type": "number", "minimum": 0, "maximum": 1 },
+        "raise": { "type": "number", "minimum": 0, "maximum": 1 },
+        "3-bet": { "type": "number", "minimum": 0, "maximum": 1 },
+        "4-bet": { "type": "number", "minimum": 0, "maximum": 1 },
+        "jam": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

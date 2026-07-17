@@ -24,11 +24,19 @@ export default function DecisionCard({
   ticker = [],
   alternativeSizes = [],
   onSelectAlternativeSize,
+  comparison,
 }) {
   const [expanded, setExpanded] = useState(false);
   const action = coach?.hero_action ? String(coach.hero_action).toUpperCase() : null;
   const sizing = coach?.sizing ?? "";
   const flavor = coach?.flavor_text ?? "";
+  const reasoning = coach?.reasoning ?? "";
+  const confidence = coach?.confidence ?? "";
+  const assumptions = Array.isArray(coach?.assumptions)
+    ? coach.assumptions.filter(Boolean)
+    : [];
+  const alternativeAction = coach?.alternative_action ?? "";
+  const alternativeSizing = coach?.alternative_sizing ?? "";
   const hasDetails = flavor && flavor.length > 0;
   const summary = useMemo(() => truncate(flavor), [flavor]);
 
@@ -113,10 +121,64 @@ export default function DecisionCard({
             </p>
           ) : null}
 
+          {action && (confidence || reasoning || assumptions.length || alternativeAction) ? (
+            <div className="decision-analysis">
+              {confidence ? (
+                <span className={`decision-confidence confidence-${confidence}`}>
+                  {String(confidence).toUpperCase()} confidence
+                </span>
+              ) : null}
+              {reasoning && reasoning !== flavor ? (
+                <p><strong>Why:</strong> {reasoning}</p>
+              ) : null}
+              {alternativeAction ? (
+                <p>
+                  <strong>Alternative:</strong> {String(alternativeAction).toUpperCase()}
+                  {alternativeSizing ? ` · ${alternativeSizing}` : ""}
+                </p>
+              ) : null}
+              {assumptions.length ? (
+                <p><strong>Assumptions:</strong> {assumptions.join("; ")}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {sizingNote ? (
             <p className="decision-note">
               <span className="badge muted">Sizing</span> {sizingNote}
             </p>
+          ) : null}
+
+          {comparison?.actualAction ? (
+            <div
+              className={`decision-comparison ${
+                comparison.lineMatched ? "is-match" : "is-different"
+              }`}
+            >
+              <strong>
+                {comparison.lineMatched
+                  ? "Line matched"
+                  : comparison.actionMatched
+                    ? "Action matched · sizing differs"
+                    : "Review the action difference"}
+              </strong>
+              <span>
+                Hero: {String(comparison.actualAction).toUpperCase()}
+                {comparison.actualAmountBB ? ` ${comparison.actualAmountBB} BB` : ""}
+              </span>
+              <span>
+                Coach: {String(comparison.recommendedAction || "unknown").toUpperCase()}
+                {comparison.recommendedSizing ? ` · ${comparison.recommendedSizing}` : ""}
+              </span>
+              {comparison.confidence ? (
+                <span>Confidence: {comparison.confidence}</span>
+              ) : null}
+              {comparison.sizingMatched === false ? (
+                <span>
+                  Suggested size: {comparison.recommendedAmountBB} BB · recorded: {comparison.actualAmountBB} BB
+                </span>
+              ) : null}
+            </div>
           ) : null}
 
           {/* {previewSizing ? (

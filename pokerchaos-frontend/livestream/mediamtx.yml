@@ -1,0 +1,25 @@
+# Playback Poker's development-only MediaMTX configuration.
+# Every listener is bound to loopback so the stream is not exposed to the LAN.
+
+logLevel: info
+
+api: true
+apiAddress: 127.0.0.1:9997
+apiAllowOrigins: ["*"]
+
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: 127.0.0.1:8189
+webrtcLocalTCPAddress: 127.0.0.1:8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+
+paths:
+  mystream:

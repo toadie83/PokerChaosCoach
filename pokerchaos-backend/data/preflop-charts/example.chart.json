@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "chartVersion": "example-only-v1",
+  "source": "Illustrative structure only; not strategy data",
+  "game": {
+    "format": "tournament",
+    "tableSize": 8,
+    "anteBB": 0.125,
+    "effectiveStackBB": { "min": 20, "max": 30 }
+  },
+  "spots": [
+    {
+      "id": "example-unopened-btn",
+      "situation": "unopened",
+      "heroPosition": "BTN",
+      "villainPosition": null,
+      "playersInHand": 8,
+      "hands": {
+        "AA": { "open": 1 },
+        "A5s": { "fold": 0.5, "open": 0.5 },
+        "72o": { "fold": 1 }
+      }
+    }
+  ]
+}
+
