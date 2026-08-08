@@ -17,6 +17,7 @@ import { useGameState } from "./state/useGameState.js";
 import { summarizeForAI, getAvailableActions } from "./state/machine.js";
 import { getChaosMood } from "./state/chaosMeter.js";
 import { computeSizingNote } from "./lib/sizing.js";
+import { getQuickOpenSnapshot } from "./lib/quickOpenRange.js";
 import { seatsForTableSize } from "./state/seatUtils.js";
 import {
   buildDecisionNode,
@@ -81,20 +82,19 @@ export default function App() {
   const decisionMomentCounterRef = useRef(0);
   const previousDecisionStateRef = useRef(null);
   const restoringDecisionMomentRef = useRef(false);
-  const [compactMode, setCompactMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      const saved = window.localStorage?.getItem("pcc_compact_mode");
-      return saved === "true";
-    } catch {
-      return false;
-    }
-  });
   const [autoSaveHands, setAutoSaveHands] = useState(() => {
     if (typeof window === "undefined") return true;
     try {
       const saved = window.localStorage?.getItem("pcc_auto_save_hands");
       return saved !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const [showQuickRanges, setShowQuickRanges] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return window.localStorage?.getItem("pcc_show_quick_ranges") !== "false";
     } catch {
       return true;
     }
@@ -198,16 +198,18 @@ export default function App() {
   useEffect(() => {
     try {
       if (typeof localStorage !== "undefined") {
-        localStorage.setItem(
-          "pcc_compact_mode",
-          compactMode ? "true" : "false",
-        );
+        localStorage.setItem("pcc_compact_mode", "true");
       }
     } catch {}
     if (typeof document !== "undefined") {
-      document.body.classList.toggle("compact-mode", compactMode);
+      document.body.classList.add("compact-mode");
     }
-  }, [compactMode]);
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.classList.remove("compact-mode");
+      }
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -219,6 +221,17 @@ export default function App() {
       }
     } catch {}
   }, [autoSaveHands]);
+
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(
+          "pcc_show_quick_ranges",
+          showQuickRanges ? "true" : "false",
+        );
+      }
+    } catch {}
+  }, [showQuickRanges]);
 
   useEffect(() => {
     try {
@@ -493,7 +506,14 @@ export default function App() {
           setCoach({
             hero_action: "...",
             sizing: "",
+            sizing_bb: null,
             flavor_text: prompt,
+            confidence: "low",
+            reasoning: "Hero cards are required to place this combo inside the selected persona's range.",
+            assumptions: ["hero_cards_missing"],
+            alternative_action: null,
+            alternative_sizing: null,
+            legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
           });
           setLoading(false);
         }
@@ -507,8 +527,16 @@ export default function App() {
             setCoach({
               hero_action: "...",
               sizing: "",
+              sizing_bb: null,
               flavor_text:
                 "Set hero stack in BB for Short-Stack Ninja guidance.",
+              confidence: "low",
+              reasoning:
+                "Effective stack depth is required to distinguish jam, raise, call, and fold thresholds.",
+              assumptions: ["effective_stack_missing"],
+              alternative_action: null,
+              alternative_sizing: null,
+              legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
             });
             setLoading(false);
           }
@@ -591,6 +619,28 @@ export default function App() {
   const heroHandLabel = heroCardsReady
     ? `${heroCards.card1} ${heroCards.card2}`
     : "Not set";
+  const quickOpenSnapshot = useMemo(
+    () => {
+      if (!showQuickRanges) return null;
+      return getQuickOpenSnapshot({
+        heroCards,
+        heroSeat: state.heroSeat,
+        tableSize: state.tableSize,
+        gameType: persona === "cash_game_crusher" ? "cash" : state.gameType,
+        heroStackBB: state.heroStackBB,
+      });
+    },
+    [
+      showQuickRanges,
+      heroCards.card1,
+      heroCards.card2,
+      state.heroSeat,
+      state.tableSize,
+      state.gameType,
+      state.heroStackBB,
+      persona,
+    ],
+  );
   const personaNeedsCards =
     persona === "replay_analyst" ||
     persona === "range_professor" ||
@@ -1195,12 +1245,9 @@ export default function App() {
   const riverDisplay = formatCard(state.board?.river);
   return (
     <>
-      <div className={`wrap coach-wrap ${compactMode ? "wrap-compact" : ""}`}>
+      <div className="wrap coach-wrap wrap-compact">
         <div className="panel">
           <div className="panel-heading">
-            <div>
-              <h1 className="title"></h1>
-            </div>
             <div className="panel-heading-actions">
               {/* 
               # removed for now - may bring back as a separate guided mode in the future
@@ -1214,13 +1261,26 @@ export default function App() {
               </button> */}
               <button
                 type="button"
-                className={`pill-toggle header-action-btn beta-hud-trigger ${
+                className={`pill-toggle header-action-btn header-icon-btn beta-hud-trigger ${
                   betaHudOpen ? "active" : ""
                 }`}
                 onClick={() => setBetaHudOpen(true)}
-                title="Preview the redesigned Coach decision workspace"
+                title="Open Coach HUD"
+                aria-label="Open Coach HUD"
               >
-                Coach HUD <span className="beta-hud-trigger-badge">Beta</span>
+                <svg
+                  className="beta-hud-trigger-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="3" />
+                  <path d="M7 9h10M7 13h4M7 16h7" />
+                </svg>
               </button>
               <button
                 type="button"
@@ -1249,23 +1309,6 @@ export default function App() {
                     )
                   : "Watch replay"}
               </button>
-              <button
-                type="button"
-                className={`pill-toggle header-action-btn ${
-                  compactMode ? "active" : ""
-                }`}
-                onClick={() => setCompactMode((value) => !value)}
-                title="Toggle compact density"
-              >
-                Compact
-              </button>
-              <button
-                type="button"
-                className="pill-toggle header-action-btn"
-                onClick={() => setSetupOpen((value) => !value)}
-              >
-                {setupOpen ? "Hide setup" : "Game setup"}
-              </button>
               <div className="panel-heading-selectors">
                 <label
                   className="header-select-control"
@@ -1282,6 +1325,13 @@ export default function App() {
                       const next = e.target.value;
                       setCoach(null);
                       setField("persona", next);
+                      if (next === "cash_game_crusher") {
+                        setField("gameType", "cash");
+                        setField("tableSize", 6);
+                      } else if (next === "short_stack_ninja") {
+                        setField("gameType", "tournament");
+                        setField("tableSize", 8);
+                      }
                       if (
                         (next === "replay_analyst" ||
                           next === "range_professor" ||
@@ -1428,6 +1478,26 @@ export default function App() {
               <span className="card-pill-label">Hero</span>
               <span className="card-pill-value">{heroHandLabel}</span>
             </button>
+            {quickOpenSnapshot ? (
+              <div
+                className="quick-open-snapshot"
+                data-tone={quickOpenSnapshot.tone}
+                role="status"
+                aria-live="polite"
+                title={`${quickOpenSnapshot.explanation} Unopened-pot snapshot only; no action is recorded.`}
+              >
+                <span className="quick-open-snapshot-label">
+                  {quickOpenSnapshot.heading}
+                </span>
+                <strong>{quickOpenSnapshot.label}</strong>
+                <span className="quick-open-snapshot-hand">
+                  {quickOpenSnapshot.handCode} · {quickOpenSnapshot.seat}
+                </span>
+                <small>
+                  If folded to you · {quickOpenSnapshot.baselineLabel}
+                </small>
+              </div>
+            ) : null}
             <button
               type="button"
               className="card-pill"
@@ -1708,6 +1778,21 @@ export default function App() {
                   <span className="drawer-hint">
                     Saves and closes the card picker after the final required
                     rank+suit is selected.
+                  </span>
+                </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Range snapshot</span>
+                  <button
+                    type="button"
+                    className={`pill-toggle ${showQuickRanges ? "active" : ""}`}
+                    onClick={() => setShowQuickRanges((value) => !value)}
+                    aria-pressed={showQuickRanges}
+                    title="Show or hide approximate unopened-pot range guidance beside Hero cards"
+                  >
+                    Quick ranges {showQuickRanges ? "on" : "off"}
+                  </button>
+                  <span className="drawer-hint">
+                    Shows an unrecorded 6-max cash or 8-max MTT first-in snapshot.
                   </span>
                 </div>
               </div>

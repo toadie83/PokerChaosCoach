@@ -877,7 +877,20 @@ const LIVE_PREFLOP_POSITION_RULES = `Preflop range posture:
 - At roughly 30 BB or deeper, an unopened BTN is a wide steal spot and an unopened CO is meaningfully wider than middle position. Marginal hand labels do not override position: all pairs, suited aces, many offsuit aces, broadways, suited kings/queens, and connected suited hands can be legitimate late-position opens.
 - At roughly 25 BB or deeper, defend the BB substantially against 2-2.5 BB BTN/CO opens using calls and 3-bets; do not fold playable suited, connected, broadway, ace-x, king-x, or pair classes merely because they are non-premium. The SB should retain a selective call/3-bet continuing range.
 - Preserve in-position calls with hands that realize equity well when stack depth and price support them. Tighten progressively below about 25 BB and prioritize coherent jam/reshove or disciplined fold lines at genuinely short depth.
-- Antes, smaller opens, position, and weaker opponent ranges widen participation; multiway action, larger opens, ICM, and poor realization tighten it.`;
+- Antes, smaller opens, position, and weaker opponent ranges widen participation; multiway action, larger opens, and poor realization tighten it. ICM tightens ranges only when an actual tournament context supplies payout pressure; never import ICM into cash decisions.`;
+
+const CASH_GAME_LIFECYCLE_RULES = `Cash-game objective and full-hand lifecycle:
+- Maximize repeatable long-run monetary EV. Cash chips have linear monetary value, lost chips can be rebought, blinds do not rise, and there is no bubble, ladder, survival premium, or ICM risk premium.
+- Never preserve a stack for a later tournament stage or chase early-tournament chip accumulation. Choose the highest-EV current decision while respecting bankroll-independent table stakes and effective stacks.
+- Treat rake as a real drag on marginal calls and small pots, especially at low stakes, but never invent an exact rake structure when it is not supplied.
+- Preflop: construct position- and action-specific open, call, 3-bet, 4-bet, isolation, squeeze, and blind-defense ranges. Account for rake, limpers, likely callers, position, and deep-stack reverse implied odds; size larger when isolating callers or playing out of position when the state supports it.
+- Flop: decide whether the range wants a small range bet, selective medium sizing, polarized large sizing, or a check-heavy strategy from range advantage, nut advantage, board texture, position, player count, SPR, and opponent tendencies. Separate value, protection, semi-bluff, pure-bluff, and showdown-value checks.
+- Turn: update both ranges after the flop action and new card. Barrel cards that improve Hero's nut/range advantage or credible value region; give up poor bluffs; use geometric sizing when building toward a river shove and preserve a coherent checking range.
+- River: construct explicit value-bet and bluff regions, including thin value against likely worse calls and blocker/unblocker quality for bluffs. Low-stakes populations often under-bluff large river lines and over-call some nodes, so adjust only when the supplied profile supports it.
+- Across every street, choose one legal action for this exact hand as a combo inside a range strategy. In reasoning, name the qualitative range posture (range-bet, selective/merged, polarized, or check-heavy), the value region, the best bluff candidates, and the principal checking/calling/folding region when the known state supports those claims.
+- Choose sizing for the range, not just for the exact hand. Tie it to potBB, facing amount, SPR, effective stack, number of players, range geometry, and the intended next-street plan; never use a large size merely because Hero currently has a strong hand.
+- Multiway pots require stronger value, fewer bluffs, and awareness that different opponents can retain different nut regions. Heads-up assumptions are forbidden when decisionNode.playersInHand exceeds 2.
+- Use only cards and actions available at the current node. Keep the line consistent with prior actions, but express future play only as conditional plans versus calls, raises, folds, and runout classes.`;
 
 function buildLivePreflopGuidance(context = {}) {
   const decision = context?.decisionNode || {};
@@ -1024,6 +1037,20 @@ function liveCoachFallbackAction(legalActions = [], preflopGuidance = null) {
   return [...legal][0] || "fold";
 }
 
+function cashGameFallbackAction({
+  legalActions = [],
+  preflopGuidance = null,
+  weakHandFacingPreflopAggression = false,
+} = {}) {
+  const legal = new Set(
+    (Array.isArray(legalActions) ? legalActions : []).map((action) =>
+      String(action || "").toLowerCase(),
+    ),
+  );
+  if (weakHandFacingPreflopAggression && legal.has("fold")) return "fold";
+  return liveCoachFallbackAction(legalActions, preflopGuidance);
+}
+
 async function completePrompt({
   system,
   user,
@@ -1116,6 +1143,13 @@ function liveDecisionResponseSchema(legalActions = []) {
       "alternative_sizing",
       "flavor_text",
     ],
+  };
+}
+
+function structuredLiveDecisionConfig(legalActions, responseSchemaName) {
+  return {
+    responseSchema: liveDecisionResponseSchema(legalActions),
+    responseSchemaName,
   };
 }
 
@@ -1217,13 +1251,49 @@ function buildResponse(
   };
 }
 
+function buildIncompleteLiveCoachResponse({
+  flavorText,
+  reasoning,
+  assumptions = [],
+  legalActions = [],
+} = {}) {
+  const normalizedLegal = Array.from(
+    new Set(
+      (Array.isArray(legalActions) ? legalActions : [])
+        .map((action) => String(action || "").trim().toLowerCase())
+        .filter((action) => VALID_ACTIONS.includes(action)),
+    ),
+  );
+  const message = String(flavorText || "More decision information is required.").trim();
+  return {
+    hero_action: "...",
+    sizing: "",
+    sizing_bb: null,
+    flavor_text: message,
+    confidence: "low",
+    reasoning: String(reasoning || message).trim(),
+    assumptions: (Array.isArray(assumptions) ? assumptions : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 6),
+    alternative_action: null,
+    alternative_sizing: null,
+    legal_actions: normalizedLegal,
+    usage: null,
+  };
+}
+
 export const __liveCoachTestables = {
   buildLivePreflopGuidance,
+  buildIncompleteLiveCoachResponse,
   buildResponse,
+  cashGameFallbackAction,
+  cashGameLifecycleRules: CASH_GAME_LIFECYCLE_RULES,
   categorizeRangeHand,
   liveCoachFallbackAction,
   liveDecisionResponseSchema,
   positionCategory,
+  structuredLiveDecisionConfig,
 };
 
 function clampStreetScore(value) {
@@ -7847,8 +7917,7 @@ Instruction: ${
     top_p: 0.5,
     max_tokens: 280,
     model,
-    responseSchema: liveDecisionResponseSchema(legalActions),
-    responseSchemaName: "replay_analyst_decision",
+    ...structuredLiveDecisionConfig(legalActions, "replay_analyst_decision"),
   });
 
   return buildResponse(
@@ -7968,8 +8037,9 @@ Instruction: ${
 
 async function runCashGameCrusher(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
-  const effective = stacks.effective || stacks.hero || 100;
-  const villainType = String(context?.villainType || "fishy");
+  const stackDepthAssumed = stacks.effective === null && stacks.hero === null;
+  const effective = stacks.effective ?? stacks.hero ?? 100;
+  const villainType = String(context?.villainType || "balanced");
   const villainNotes = {
     balanced: "Balanced regular - pressure capped ranges, respect reraises.",
     nit: "Nitty villain - bluff scare cards, fold to aggression, isolate limps.",
@@ -7979,7 +8049,7 @@ async function runCashGameCrusher(context = {}, instruction, model) {
       "Maniac - let them hang themselves, 3-bet premiums, pot control marginal.",
     fishy: "Loose-passive fish - iso wide, overbet value, deny equity.",
   };
-  const villainPlan = villainNotes[villainType] || villainNotes.fishy;
+  const villainPlan = villainNotes[villainType] || villainNotes.balanced;
   const posCategory = positionCategory(context?.heroSeat);
   const { compact, readable } = formatHeroHand(context);
   const handFeatures = describeHandFeatures(context?.heroCards, context?.board);
@@ -7990,33 +8060,67 @@ async function runCashGameCrusher(context = {}, instruction, model) {
     ? context.previousActions
     : [];
   const historyHint = summarizeHistory(context?.history);
+  const decisionNode =
+    context?.decisionNode && typeof context.decisionNode === "object"
+      ? context.decisionNode
+      : {};
+  const legalActions = Array.isArray(decisionNode?.legalActions)
+    ? decisionNode.legalActions
+    : Array.isArray(context?.legalActions)
+      ? context.legalActions
+      : [];
+  const preflopBaseline = buildLivePreflopGuidance(context);
+  const street = String(decisionNode?.street || context?.street || "").toLowerCase();
+  const decisionKind = String(decisionNode?.decisionKind || "").toLowerCase();
+  const sourceGameType = String(
+    decisionNode?.gameType || context?.gameType || context?.format || "unknown",
+  ).toLowerCase();
+  const formatConflict = !["", "unknown", "cash"].includes(sourceGameType);
 
   const stackNote =
-    effective >= 140
+    stackDepthAssumed
+      ? "Effective stack was not supplied - use a provisional 100 BB cash baseline and lower confidence."
+      : effective >= 140
       ? `Deep stack ${effective} BB - room for triple-barrels and check-raise traps.`
       : effective <= 60
-        ? `Effective stack ${effective} BB - trim bluff frequency, prioritize value.`
+        ? `Effective stack ${effective} BB - cash EV still applies; let SPR and commitment, not tournament survival, drive aggression.`
         : `Effective stack ${effective} BB - standard 100 BB cash depth.`;
-  const multiOpened = previous.some((code) =>
-    /preflop_multiple_villains_opened/.test(String(code)),
-  );
+  const multiOpened =
+    decisionKind === "facing_open_callers" ||
+    previous.some((code) =>
+      /preflop_multiple_villains_opened/.test(String(code)),
+    );
   const multiwayNote = multiOpened
     ? "Preflop: multiple villains entered before hero - expect multiway pots."
     : null;
-  const facingOpen = previous.some((code) =>
-    /preflop_opened_to_me|preflop_multiple_villains_opened|preflop_faced_3bet/.test(
-      String(code),
-    ),
-  );
-  const fallbackAction = isWeakHand && facingOpen ? "fold" : "bet";
+  const facingPreflopAggression =
+    street === "preflop" &&
+    (["facing_open", "facing_open_callers", "facing_3bet", "facing_4bet"].includes(
+      decisionKind,
+    ) ||
+      previous.some((code) =>
+        /preflop_opened_to_me|preflop_multiple_villains_opened|preflop_faced_3bet|preflop_faced_4bet/.test(
+          String(code),
+        ),
+      ));
+  const weakHandFacingPreflopAggression = isWeakHand && facingPreflopAggression;
+  const fallbackAction = cashGameFallbackAction({
+    legalActions,
+    preflopGuidance: preflopBaseline,
+    weakHandFacingPreflopAggression,
+  });
   const weakHandNote =
-    isWeakHand && facingOpen
-      ? "Hand tier is weak; prioritize folding or cheap over-limps unless a clear exploit exists."
+    weakHandFacingPreflopAggression
+      ? "Preflop hand tier is weak against aggression; continue only when position, price, implied odds, and the opponent range create a clear cash-EV case."
       : null;
 
   const focusLines = [
-    "Game type: low/mid stakes cash (no ICM).",
+    "Mode: cash game. Optimize repeatable long-run monetary EV, never tournament survival or payout equity.",
+    formatConflict
+      ? `Source format was labelled ${sourceGameType}; Cash Game Crusher overrides that stale/conflicting label and must disclose the cash-mode assumption.`
+      : "Source format is cash or unspecified; no ICM applies.",
     stackNote,
+    context?.stakeTier ? `Stake tier: ${String(context.stakeTier)}` : "",
     `Villain profile: ${villainType}`,
     villainPlan,
     posCategory !== "unknown" ? `Hero seat category: ${posCategory}` : "",
@@ -8030,10 +8134,18 @@ async function runCashGameCrusher(context = {}, instruction, model) {
   ].filter(Boolean);
 
   const cashContext = {
-    street: context?.street,
+    coachingMode: "cash",
+    sourceGameType,
+    formatConflict,
+    street: street || context?.street,
     branch: context?.branch,
     heroSeat: context?.heroSeat,
     tableSize: context?.tableSize,
+    playersInHand: decisionNode?.playersInHand ?? context?.playersInHand,
+    anteBB: context?.anteBB,
+    stakeTier: context?.stakeTier,
+    preflopLimpers: context?.preflopLimpers,
+    preflopCallers: context?.preflopCallers,
     previousActions: previous,
     history: context?.history,
     aggressors: context?.aggressors,
@@ -8042,8 +8154,8 @@ async function runCashGameCrusher(context = {}, instruction, model) {
     heroCards: context?.heroCards,
     board: context?.board,
     handFeatures: handFeatures || undefined,
-    decisionNode: context?.decisionNode,
-    preflopBaseline: buildLivePreflopGuidance(context),
+    decisionNode,
+    preflopBaseline,
     relativePosition: context?.relativePosition,
     potSize: context?.potSize,
     stacks: {
@@ -8053,29 +8165,48 @@ async function runCashGameCrusher(context = {}, instruction, model) {
     },
     multiVillainsOpened: multiOpened,
     handTier,
+    tendencies: context?.tendencies,
+    assumptions: [
+      ...(stackDepthAssumed ? ["effective_stack_assumed_100bb"] : []),
+      ...(formatConflict ? ["cash_persona_overrides_format_label"] : []),
+    ],
   };
 
-  const system = `You are Cash Game Crusher - a deep-stack cash poker coach who exploits loose low-stakes opponents.
-Focus on building pots with value, isolating weak players, leveraging position, and adjusting aggression to stack depth.
-No ICM or payout concerns ever enter the plan.
+  const system = `You are Cash Game Crusher, a state-first cash poker decision coach.
+Use GTO-informed range construction with practical, sample-aware population exploits. Never claim solver precision or exact frequencies without solver data.
+The decisionNode object is the source of truth. Recommend only an action listed in decisionNode.legalActions.
+Use exact seats, relative position, player count, action order, board, pot, facing amount, SPR, effective stack, and opponent profile when supplied.
+Do not invent cards, positions, ranges, rake numbers, bet sizes, pot odds, stack values, or prior actions. Lower confidence and list assumptions when important information is missing.
+This persona is cash-only. If sourceGameType conflicts, apply cash strategy and include cash_persona_overrides_format_label in assumptions; never blend in MTT advice.
+${CASH_GAME_LIFECYCLE_RULES}
 ${LIVE_STACK_LEVERAGE_RULES}
-${buildLivePreflopGuidance(context) ? LIVE_PREFLOP_POSITION_RULES : ""}
+${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
 {
-  "hero_action": "string",
-  "sizing": "string",
-  "flavor_text": "string"
+  "hero_action": "one legal action",
+  "sizing": "concrete cash-game size or empty string",
+  "sizing_bb": 6.5,
+  "confidence": "low|medium|high",
+  "reasoning": "concise hand-and-range justification with lifecycle plan",
+  "assumptions": ["short assumption"],
+  "alternative_action": "another legal action or empty string",
+  "alternative_sizing": "concrete size or empty string",
+  "flavor_text": "short actionable cash coaching line"
 }
 
 Rules:
 - hero_action: choose only from decisionNode.legalActions.
-- sizing: specify cash-game sizes (e.g., "raise to 3.5x", "70% pot", "overbet 135%").
-- flavor_text: <= 20 words, highlight exploit reasoning (value targeting, isolating fish, pressure capped range).
-- Mention the follow-up plan vs calls or raises (e.g., double barrel, check back turn).
-- Assume effective stacks around 100 BB unless context specifies otherwise.
-- If hand tier is trash or marginal and facing raises out of position, default to folding or cheap over-limps unless a clear exploit warrants aggression.`;
+- When facing a wager, never recommend check or bet. When no wager is faced postflop, never recommend call or fold.
+- sizing must state the total BB amount for an open or raise and the bet amount/percentage for a postflop bet. sizing_bb is the total numeric BB size for an open, raise, bet, or call; use null for check or fold.
+- The reasoning must distinguish the exact-hand recommendation from the broader betting/continuing range and include the conditional next-street plan. Do not claim a hand is a range bet merely because this combo is strong.
+- Use assumptions from cashContext and add any decisionNode.missingInformation that materially changes the answer.
+- If the effective stack is missing, use the stated 100 BB baseline only provisionally and set confidence low.
+- If a preflop hand is weak against aggression, default to fold unless price, position, implied odds, and opponent range provide a clear profitable continue. An over-limp is a call, never a response to a raise.
+- Multiway pots tighten both bluffs and thin value. Large river aggression from low-stakes passive profiles requires stronger bluff-catchers than a balanced baseline.
+- The alternative must be the main credible range branch, not an arbitrary legal action.
+- flavor_text: no hype, max 20 words, and name the cash-specific driver such as value target, rake, SPR, range cap, or blocker.`;
 
   const user = `Context: ${JSON.stringify(cashContext, null, 2)}
 ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
@@ -8086,10 +8217,11 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   const { parsed, completion } = await completePrompt({
     system,
     user,
-    temperature: 0.5,
-    top_p: 0.85,
-    max_tokens: 160,
+    temperature: 0.15,
+    top_p: 0.6,
+    max_tokens: 320,
     model,
+    ...structuredLiveDecisionConfig(legalActions, "cash_game_crusher_decision"),
   });
 
   return buildResponse(
@@ -8097,7 +8229,7 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     completion,
     "Extract max value from the cash table.",
     fallbackAction,
-    context?.decisionNode?.legalActions,
+    legalActions,
   );
 }
 
@@ -8206,23 +8338,33 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
 
 async function runShortStackNinja(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
+  const decisionNode =
+    context?.decisionNode && typeof context.decisionNode === "object"
+      ? context.decisionNode
+      : {};
+  const legalActions = Array.isArray(decisionNode?.legalActions)
+    ? decisionNode.legalActions
+    : Array.isArray(context?.legalActions)
+      ? context.legalActions
+      : [];
+  const preflopBaseline = buildLivePreflopGuidance(context);
   if (!stacks.hero && !stacks.effective) {
-    return {
-      hero_action: "...",
-      sizing: "",
-      flavor_text: "Need hero stack in BB for shove-or-fold advice.",
-      usage: null,
-    };
+    return buildIncompleteLiveCoachResponse({
+      flavorText: "Need hero stack in BB for Short-Stack Ninja advice.",
+      reasoning: "Effective stack depth is required to distinguish jam, raise, call, and fold thresholds.",
+      assumptions: ["effective_stack_missing"],
+      legalActions,
+    });
   }
 
   const { compact, readable } = formatHeroHand(context);
   if (!compact) {
-    return {
-      hero_action: "...",
-      sizing: "",
-      flavor_text: "Select hero cards for Short-Stack Ninja.",
-      usage: null,
-    };
+    return buildIncompleteLiveCoachResponse({
+      flavorText: "Select hero cards for Short-Stack Ninja.",
+      reasoning: "Hole cards are required to place this combo inside a short-stack continuing range.",
+      assumptions: ["hero_cards_missing"],
+      legalActions,
+    });
   }
   const descriptor = compact ? describeHand(compact) : null;
   const handFeatures = describeHandFeatures(context?.heroCards, context?.board);
@@ -8264,35 +8406,48 @@ async function runShortStackNinja(context = {}, instruction, model) {
     heroCards: context?.heroCards,
     board: context?.board,
     handFeatures: handFeatures || undefined,
-    decisionNode: context?.decisionNode,
-    preflopBaseline: buildLivePreflopGuidance(context),
+    decisionNode,
+    preflopBaseline,
     relativePosition: context?.relativePosition,
     potSize: context?.potSize,
     stacks,
     actionContext: actionInfo,
   };
 
-  const system = `You are Short-Stack Ninja - an expert at shove-or-fold tournament spots.
-Specialize in effective stacks of 20 BB or less, and call out when depth is beyond that zone.
-Use disciplined push/fold charts, blocker logic, and fold equity calculations.
+  const system = `You are Short-Stack Ninja, a state-first short-stack tournament poker coach.
+  Specialize in effective stacks of 20 BB or less, and call out when depth is beyond that zone.
+Use GTO-informed push/fold, raise/fold, raise/call, flat, blocker, and fold-equity logic without claiming exact chart frequencies or calculations that were not supplied.
+The decisionNode object is the source of truth. Recommend only an action listed in decisionNode.legalActions.
+Use position, action order, pot, antes, facing size, effective stack, players remaining, and opponent ranges when supplied. Never invent payout pressure, cards, positions, sizes, or fold equity.
 ${LIVE_STACK_LEVERAGE_RULES}
-${buildLivePreflopGuidance(context) ? LIVE_PREFLOP_POSITION_RULES : ""}
+${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
 {
-  "hero_action": "string",
-  "sizing": "string",
-  "flavor_text": "string"
+  "hero_action": "one legal action",
+  "sizing": "concrete size or empty string",
+  "sizing_bb": 12,
+  "confidence": "low|medium|high",
+  "reasoning": "concise short-stack range justification and response plan",
+  "assumptions": ["short assumption"],
+  "alternative_action": "another legal action or empty string",
+  "alternative_sizing": "concrete size or empty string",
+  "flavor_text": "short tactical coaching line"
 }
 
 Rules:
 - hero_action: choose only from decisionNode.legalActions.
-- Emphasize jam/fold/induce logic. If recommending min-raise, specify follow-up plan vs shove.
-- sizing: provide precise guidance ("jam", "min-raise to 2.1x", "fold").
-- flavor_text: <= 18 words, concise, tactical, reference fold equity, blockers, or ladder awareness. No hype.
+- When facing a wager, never recommend check or bet. When no wager is faced postflop, never recommend call or fold.
+- Emphasize jam/fold/induce logic, but retain non-all-in opens, flats, and raise-folds when stack depth, price, and range construction support them. If recommending a non-all-in raise, state the plan versus a shove.
+- sizing must be precise. sizing_bb is the total numeric BB size for an open, raise, bet, or call; use null for check or fold and decisionNode.maxHeroTotalToBB for a jam when known.
+- reasoning must place Hero's exact combo inside a position- and action-specific range, identify the main fold-equity/blocker driver, and give the conditional plan versus calls or reshoves.
+- Use decisionNode.missingInformation as assumptions when it materially changes the answer and lower confidence accordingly.
+- Apply ICM, ladder pressure, or survival premiums only when explicit payout/stage information is supplied. Otherwise use tournament chip-EV and say that ICM is unknown rather than inventing it.
+- At more than 20 BB effective, call out that pure shove/fold is too narrow and prefer a normal range strategy where legal.
 - Default to folding trash hands with <12 BB when facing raises unless blockers or antes justify aggression.
-- Mention how to respond vs calls, reshoves, or folds in the next beats.`;
+- The alternative must be the main credible range branch, not an arbitrary legal action.
+- flavor_text: <= 18 words, concise and tactical, referencing stack depth, fold equity, blockers, or explicit ICM. No hype.`;
 
   const user = `Context: ${JSON.stringify(shortContext, null, 2)}
 ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
@@ -8303,30 +8458,40 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   const { parsed, completion } = await completePrompt({
     system,
     user,
-    temperature: 0.35,
-    top_p: 0.7,
-    max_tokens: 140,
+    temperature: 0.15,
+    top_p: 0.6,
+    max_tokens: 300,
     model,
+    ...structuredLiveDecisionConfig(legalActions, "short_stack_ninja_decision"),
   });
 
   return buildResponse(
     parsed,
     completion,
     "Stay sharp with shove-or-fold discipline.",
-    "jam",
-    context?.decisionNode?.legalActions,
+    liveCoachFallbackAction(legalActions, preflopBaseline),
+    legalActions,
   );
 }
 
 async function runRangeProfessor(context = {}, instruction, model) {
+  const decisionNode =
+    context?.decisionNode && typeof context.decisionNode === "object"
+      ? context.decisionNode
+      : {};
+  const legalActions = Array.isArray(decisionNode?.legalActions)
+    ? decisionNode.legalActions
+    : Array.isArray(context?.legalActions)
+      ? context.legalActions
+      : [];
   const { compact, readable } = formatHeroHand(context);
   if (!compact) {
-    return {
-      hero_action: "...",
-      sizing: "",
-      flavor_text: "Select hero cards for Range Professor.",
-      usage: null,
-    };
+    return buildIncompleteLiveCoachResponse({
+      flavorText: "Select hero cards for Range Professor.",
+      reasoning: "Hole cards are required to place this combo inside the relevant betting or continuing range.",
+      assumptions: ["hero_cards_missing"],
+      legalActions,
+    });
   }
 
   const descriptor = describeHand(compact);
@@ -8341,10 +8506,12 @@ async function runRangeProfessor(context = {}, instruction, model) {
     : [];
   const historyHint = summarizeHistory(context?.history);
   const stakeTier = String(context?.stakeTier || "unknown");
-  const format = String(context?.format || "unknown");
+  const format = String(
+    decisionNode?.gameType || context?.gameType || context?.format || "unknown",
+  );
   const stacks = stackSnapshot(context);
   const preflopBaseline = buildLivePreflopGuidance(context);
-  const effectiveStack = stacks.effective || stacks.hero || null;
+  const effectiveStack = stacks.effective ?? stacks.hero ?? null;
   const stackBucket =
     context?.stackBucket ||
     (effectiveStack !== null
@@ -8427,7 +8594,7 @@ async function runRangeProfessor(context = {}, instruction, model) {
     stakeGuide
       ? `Stakes: ${stakeGuide.label}. Guidance: ${stakeGuide.note}`
       : stakeTier === "unknown"
-        ? "Stakes: Unknown - use baseline solver frequencies."
+        ? "Stakes: Unknown - use a balanced baseline without claiming exact solver frequencies."
         : "",
     relativePosition === "ip"
       ? "In position: leverage informational advantage to mix flats and controlled aggression."
@@ -8471,7 +8638,7 @@ async function runRangeProfessor(context = {}, instruction, model) {
     preflopBaseline,
     stackBucket,
     relativePosition,
-    decisionNode: context?.decisionNode,
+    decisionNode,
     potSize: context?.potSize,
     heroProfile: {
       riskTolerance: "medium",
@@ -8483,24 +8650,35 @@ async function runRangeProfessor(context = {}, instruction, model) {
     stakeGuidance: stakeGuide ? stakeGuide.note : undefined,
   };
 
-  const system = `You are Range Professor - a disciplined poker strategy coach.
-You evaluate hands with range logic, blockers, and positional awareness.
-Ground every recommendation in solver/GTO logic, flagging any exploitative deviations explicitly.
-Leverage board texture as context while keeping range fundamentals primary.
+  const system = `You are Range Professor, a state-first poker range-construction coach.
+Evaluate the exact hand as one combo inside position- and action-specific ranges, using blockers, board texture, stack depth, sizing, and positional awareness.
+Use GTO-informed baselines without claiming solver precision or exact equilibrium frequencies. Label exploitative deviations and tie them to supplied opponent or population evidence.
+The decisionNode object is the source of truth. Recommend only an action listed in decisionNode.legalActions.
+Do not invent missing cards, positions, player counts, pot odds, bet sizes, ranges, stack values, ICM pressure, or prior actions. Lower confidence and list material assumptions.
 ${LIVE_STACK_LEVERAGE_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
 {
-  "hero_action": "string",
-  "sizing": "string",
-  "flavor_text": "string"
+  "hero_action": "one legal action",
+  "sizing": "concrete size or empty string",
+  "sizing_bb": 5.5,
+  "confidence": "low|medium|high",
+  "reasoning": "concise exact-combo and range-construction justification",
+  "assumptions": ["short assumption"],
+  "alternative_action": "another legal action or empty string",
+  "alternative_sizing": "concrete size or empty string",
+  "flavor_text": "short analytical coaching line"
 }
 
 Rules:
 - hero_action: choose only from decisionNode.legalActions.
-- sizing: supply a concrete size tied to the line (e.g. "55% pot","3.5x 3-bet","jam").
+- When facing a wager, never recommend check or bet. When no wager is faced postflop, never recommend call or fold.
+- sizing must be tied to the whole range strategy. sizing_bb is the total numeric BB size for an open, raise, bet, or call; use null for check or fold.
+- reasoning must distinguish the exact-combo decision from the broader value, bluff/semi-bluff, checking, calling, and folding regions when the known state supports those claims. Name whether the strategy is merged, polarized, range-betting, or check-heavy where relevant.
+- Use decisionNode.missingInformation as assumptions when it materially affects range construction, and lower confidence accordingly.
+- The alternative must be the main credible range branch or mixed-strategy counterpart, not an arbitrary legal action.
 - flavor_text: <= 22 words, analytical, reference range or blocker insights when useful, no hype.
 - Consider hero hand ${readable} and anticipate likely villain responses for the next decisions.
 - When board cards are present, state hero's current made hand class (e.g. top pair, two pair, set, straight) before discussing draw potential.
@@ -8525,21 +8703,19 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
   const { parsed, completion } = await completePrompt({
     system,
     user,
-    temperature: 0.35,
-    top_p: 0.75,
-    max_tokens: 160,
+    temperature: 0.15,
+    top_p: 0.6,
+    max_tokens: 320,
     model,
+    ...structuredLiveDecisionConfig(legalActions, "range_professor_decision"),
   });
 
   return buildResponse(
     parsed,
     completion,
     "Balance range discipline.",
-    liveCoachFallbackAction(
-      context?.decisionNode?.legalActions,
-      preflopBaseline,
-    ),
-    context?.decisionNode?.legalActions,
+    liveCoachFallbackAction(legalActions, preflopBaseline),
+    legalActions,
   );
 }
 

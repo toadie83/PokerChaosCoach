@@ -836,7 +836,10 @@ export function summarizeForAI(state) {
       : effectiveStack > 0
       ? "short"
       : "unknown";
-  const inferredFormat = state.gameType || "tournament";
+  const inferredFormat =
+    state.persona === "cash_game_crusher"
+      ? "cash"
+      : state.gameType || "tournament";
   const normalizeCard = (card) =>
     typeof card === "string" && card.trim().length === 2
       ? card.trim().toUpperCase()
@@ -899,7 +902,7 @@ export function summarizeForAI(state) {
   const heroFirstToActCurrent = heroFirstToActStreets.has(state.street);
   const relativePositionExplicit = state.heroRelativePosition || "auto";
   const resolvedRelativePosition = deriveRelativePosition(state);
-  const decisionNode = buildDecisionNode(state);
+  const decisionNode = buildDecisionNode({ ...state, gameType: inferredFormat });
 
   const cautionNotes = [];
   if (
@@ -908,7 +911,9 @@ export function summarizeForAI(state) {
     (state.persona === "range_professor" || state.persona === "cash_game_crusher")
   ) {
     cautionNotes.push(
-      "Opponent has already called previous aggression. Prioritise pot control when out of position unless equity is strong."
+      state.persona === "cash_game_crusher"
+        ? "Opponent has called previous aggression. Rebuild both cash-game ranges: keep value barrels and credible semi-bluffs on favorable runouts, while checking marginal showdown value and poor bluffs out of position."
+        : "Opponent has already called previous aggression. Prioritise pot control when out of position unless equity is strong."
     );
   }
   if (
@@ -917,7 +922,7 @@ export function summarizeForAI(state) {
     state.street === "turn"
   ) {
     cautionNotes.push(
-      "Flop bet was called; consider checking marginal holdings on the turn to avoid bloating the pot."
+      "The flop bet was called. On the turn, update both ranges and choose barrels from the runout, value target, blockers, position, and SPR; check marginal holdings and poor bluffs where appropriate."
     );
   }
 

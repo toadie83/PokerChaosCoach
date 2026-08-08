@@ -50,7 +50,13 @@ function loadInitialState() {
       const savedStyle = localStorage.getItem("pcc_style");
       if (savedStyle) base.style = savedStyle;
       const savedPersona = localStorage.getItem("pcc_persona");
-      if (savedPersona) base.persona = savedPersona;
+      if (savedPersona) {
+        base.persona = savedPersona;
+        if (savedPersona === "cash_game_crusher") {
+          base.gameType = "cash";
+          base.tableSize = 6;
+        }
+      }
       const savedModel = localStorage.getItem("pcc_model");
       if (savedModel) base.model = savedModel;
       const savedCards = localStorage.getItem("pcc_hero_cards");

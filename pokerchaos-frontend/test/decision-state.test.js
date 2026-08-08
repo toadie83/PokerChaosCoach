@@ -319,6 +319,30 @@ test("AI summary contains a structured legal decision node", () => {
   assert.deepEqual(buildDecisionNode(state).legalActions, decision.legalActions);
 });
 
+test("Cash Game Crusher turn caution rebuilds ranges instead of defaulting to pot control", () => {
+  const state = freshState({
+    street: "turn",
+    persona: "cash_game_crusher",
+    gameType: "tournament",
+    heroSeat: "BB",
+    opponentSeat: "BTN",
+    heroRelativePosition: "oop",
+    board: { flop: ["Kd", "7c", "2h"], turn: "9s", river: null },
+    potSizes: { total: 12 },
+    history: [
+      { street: "flop", actor: "hero", action: "bet", amountBB: 4 },
+      { street: "flop", actor: "opp", action: "call", amountBB: 4 },
+    ],
+  });
+
+  const summary = summarizeForAI(state);
+  assert.equal(summary.context.gameType, "cash");
+  assert.equal(summary.context.decisionNode.gameType, "cash");
+  assert.match(summary.instruction, /Rebuild both cash-game ranges/i);
+  assert.match(summary.instruction, /value barrels/i);
+  assert.doesNotMatch(summary.instruction, /Prioritise pot control/i);
+});
+
 test("tracks running pot, total commitments, and chips behind across streets", () => {
   let state = freshState({
     heroSeat: "BTN",
