@@ -39,6 +39,10 @@ export function getResourceState(spot) {
   };
 }
 
+export function getLearningResourceHref(resource) {
+  return String(resource?.canonicalPath || resource?.url || "").trim();
+}
+
 export function formatStackDepth(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) return "";
