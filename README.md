@@ -96,3 +96,5 @@ Backend feature access is configured by env vars:
 - `ADMIN_ALLOWED_EMAILS`: comma-separated email addresses with access to all features.
 - `LEARNING_IMPORT_ALLOWED_USER_IDS`: comma-separated Clerk user IDs restricted to learning-resource preview and import.
 - `LEARNING_IMPORT_ALLOWED_EMAILS`: comma-separated Clerk emails restricted to learning-resource preview and import.
+- `LEARNING_ADMIN_ALLOWED_USER_IDS`: comma-separated Clerk user IDs with access to Learning Library management only.
+- `LEARNING_ADMIN_ALLOWED_EMAILS`: comma-separated Clerk emails with access to Learning Library management only.

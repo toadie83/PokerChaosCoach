@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   requireAdmin,
   requireLearningImporter,
-  scopedLearningImporterDenial,
+  requireLearningManager,
+  scopedLearningAccessDenial,
 } from "../src/adminAuthorization.js";
 
 function responseRecorder() {
@@ -32,11 +33,32 @@ test("admin middleware fails closed without exposing other administration", () =
 });
 
 test("learning importer middleware admits scoped importers and administrators", () => {
-  for (const entitlements of [{ learningImporter: true }, { admin: true }]) {
+  for (const entitlements of [
+    { learningImporter: true },
+    { learningManager: true },
+    { admin: true },
+  ]) {
     let called = false;
     requireLearningImporter({ entitlements }, responseRecorder(), () => { called = true; });
     assert.equal(called, true);
   }
+});
+
+test("learning manager middleware admits managers and administrators only", () => {
+  for (const entitlements of [{ learningManager: true }, { admin: true }]) {
+    let called = false;
+    requireLearningManager({ entitlements }, responseRecorder(), () => { called = true; });
+    assert.equal(called, true);
+  }
+
+  const response = responseRecorder();
+  requireLearningManager(
+    { entitlements: { learningImporter: true } },
+    response,
+    () => assert.fail("must not call next"),
+  );
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, "LEARNING_MANAGER_REQUIRED");
 });
 
 test("learning importer middleware rejects unrelated entitlements", () => {
@@ -55,7 +77,7 @@ test("scoped importer accounts are restricted to the two POST import routes", ()
     { method: "GET", path: "/me/entitlements" },
   ];
   for (const request of allowed) {
-    assert.equal(scopedLearningImporterDenial({ ...request, entitlements: { learningImporter: true } }), null);
+    assert.equal(scopedLearningAccessDenial({ ...request, entitlements: { learningImporter: true } }), null);
   }
 
   const denied = [
@@ -67,7 +89,7 @@ test("scoped importer accounts are restricted to the two POST import routes", ()
     { method: "POST", path: "/admin/learning/import/preview/extra" },
   ];
   for (const request of denied) {
-    const denial = scopedLearningImporterDenial({
+    const denial = scopedLearningAccessDenial({
       ...request,
       entitlements: { learningImporter: true },
     });
@@ -76,8 +98,32 @@ test("scoped importer accounts are restricted to the two POST import routes", ()
   }
 });
 
+test("scoped learning managers can use Learning Library routes but nothing else", () => {
+  for (const request of [
+    { method: "GET", path: "/me/entitlements" },
+    { method: "GET", path: "/admin/learning" },
+    { method: "GET", path: "/admin/learning/content-gaps" },
+    { method: "POST", path: "/admin/learning" },
+    { method: "PUT", path: "/admin/learning/resource-id" },
+    { method: "POST", path: "/admin/learning/resource-id/publish" },
+  ]) {
+    assert.equal(scopedLearningAccessDenial({
+      ...request,
+      entitlements: { learningManager: true },
+    }), null);
+  }
+
+  const denial = scopedLearningAccessDenial({
+    method: "POST",
+    path: "/study-spots/analyse",
+    entitlements: { learningManager: true },
+  });
+  assert.equal(denial?.status, 403);
+  assert.equal(denial?.payload?.code, "LEARNING_MANAGER_SCOPE_REQUIRED");
+});
+
 test("administrators are not restricted by the importer scope", () => {
-  assert.equal(scopedLearningImporterDenial({
+  assert.equal(scopedLearningAccessDenial({
     method: "GET",
     path: "/admin/learning",
     entitlements: { admin: true, learningImporter: true },

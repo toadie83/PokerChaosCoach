@@ -69,7 +69,8 @@ import {
 import {
   requireAdmin,
   requireLearningImporter,
-  scopedLearningImporterDenial,
+  requireLearningManager,
+  scopedLearningAccessDenial,
 } from "./adminAuthorization.js";
 import { LEARNING_RESOURCE_SEED } from "./studySpots/learningResourceSeed.js";
 import { getStudySpotTaxonomy } from "./studySpots/taxonomy.js";
@@ -339,6 +340,9 @@ const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
 const learningImportUserIds = parseUserIdSet(
   process.env.LEARNING_IMPORT_ALLOWED_USER_IDS,
 );
+const learningManagerUserIds = parseUserIdSet(
+  process.env.LEARNING_ADMIN_ALLOWED_USER_IDS,
+);
 const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
 const reviewAiAllowedEmails = parseEmailSet(
   process.env.REVIEW_AI_ALLOWED_EMAILS,
@@ -347,6 +351,9 @@ const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
 const learningImportAllowedEmails = parseEmailSet(
   process.env.LEARNING_IMPORT_ALLOWED_EMAILS,
+);
+const learningManagerAllowedEmails = parseEmailSet(
+  process.env.LEARNING_ADMIN_ALLOWED_EMAILS,
 );
 const developerQaAllowedEmails = new Set([
   "frosttrev@gmail.com",
@@ -358,6 +365,7 @@ const shouldLookupUserEmails =
   coachAllowedEmails.size > 0 ||
   adminAllowedEmails.size > 0 ||
   learningImportAllowedEmails.size > 0 ||
+  learningManagerAllowedEmails.size > 0 ||
   developerQaAllowedEmails.size > 0;
 
 function normalizeEmail(value) {
@@ -426,6 +434,9 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
   const learningImporter =
     learningImportUserIds.has(uid) ||
     hasAnyMatchingEmail(userEmails, learningImportAllowedEmails);
+  const learningManager =
+    learningManagerUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, learningManagerAllowedEmails);
   const review =
     isAdmin ||
     reviewAllowAll ||
@@ -447,6 +458,7 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     coach,
     admin: isAdmin,
     learningImporter,
+    learningManager,
     developer: isDeveloper,
     role: userRole || null,
     emails: Array.isArray(userEmails) ? userEmails : [],
@@ -656,13 +668,17 @@ async function requireAuth(req, res, next) {
     const baseEntitlements = buildEntitlements(userId, userEmails, {
       userRole,
     });
-    if (baseEntitlements.learningImporter && !baseEntitlements.admin) {
+    if (
+      (baseEntitlements.learningImporter || baseEntitlements.learningManager) &&
+      !baseEntitlements.admin
+    ) {
       req.entitlements = {
         admin: false,
-        learningImporter: true,
+        learningImporter: baseEntitlements.learningImporter,
+        learningManager: baseEntitlements.learningManager,
       };
       req.aiAccess = null;
-      const scopedDenial = scopedLearningImporterDenial(req);
+      const scopedDenial = scopedLearningAccessDenial(req);
       if (scopedDenial) {
         return res.status(scopedDenial.status).json(scopedDenial.payload);
       }
@@ -1160,7 +1176,10 @@ function attachOpponentContextToHand(hand, opponentLookup) {
 }
 
 app.get("/me/entitlements", requireAuth, (req, res) => {
-  if (req.entitlements?.learningImporter && !req.entitlements?.admin) {
+  if (
+    (req.entitlements?.learningImporter || req.entitlements?.learningManager) &&
+    !req.entitlements?.admin
+  ) {
     return res.json({
       userId: req.auth?.userId || null,
       emails: [],
@@ -1175,7 +1194,8 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
         coach: false,
         admin: false,
         developer: false,
-        learningImporter: true,
+        learningImporter: Boolean(req.entitlements?.learningImporter),
+        learningManager: Boolean(req.entitlements?.learningManager),
       },
       billing: {
         hasActiveSubscription: false,
@@ -1202,6 +1222,7 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
       admin: Boolean(req.entitlements?.admin),
       developer: Boolean(req.entitlements?.developer),
       learningImporter: Boolean(req.entitlements?.learningImporter),
+      learningManager: Boolean(req.entitlements?.learningManager),
     },
     billing: {
       hasActiveSubscription: Boolean(
@@ -1349,11 +1370,11 @@ app.get("/learn/resources/:slug", async (req, res) => {
   }
 });
 
-app.get("/admin/learning/taxonomy", requireAuth, requireAdmin, (_req, res) => {
+app.get("/admin/learning/taxonomy", requireAuth, requireLearningManager, (_req, res) => {
   return res.json(getStudySpotTaxonomy());
 });
 
-app.get("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+app.get("/admin/learning", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
     const resources = await listLearningResources({
@@ -1369,7 +1390,7 @@ app.get("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin/learning/content-gaps", requireAuth, requireAdmin, async (_req, res) => {
+app.get("/admin/learning/content-gaps", requireAuth, requireLearningManager, async (_req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
     return res.json({ gaps: await listContentGaps() });
@@ -1379,7 +1400,7 @@ app.get("/admin/learning/content-gaps", requireAuth, requireAdmin, async (_req, 
   }
 });
 
-app.get("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+app.get("/admin/learning/:id", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   const resource = await getLearningResourceById(String(req.params?.id || "").trim());
   if (!resource) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
@@ -1412,7 +1433,7 @@ app.post("/admin/learning/import", requireAuth, requireLearningImporter, async (
   }
 });
 
-app.post("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+app.post("/admin/learning", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
     const validation = await validateLearningWrite(req.body);
@@ -1424,7 +1445,7 @@ app.post("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.put("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+app.put("/admin/learning/:id", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
     const id = String(req.params?.id || "").trim();
@@ -1438,7 +1459,7 @@ app.put("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/admin/learning/:id/:action(publish|unpublish)", requireAuth, requireAdmin, async (req, res) => {
+app.post("/admin/learning/:id/:action(publish|unpublish)", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
     const id = String(req.params?.id || "").trim();
