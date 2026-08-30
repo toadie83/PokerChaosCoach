@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchLearningResources } from "../src/studySpots/resourceMatcher.js";
+import {
+  matchLearningResources,
+  scoreLearningResource,
+} from "../src/studySpots/resourceMatcher.js";
 
 const spot = {
   category: "preflop",
@@ -77,3 +80,38 @@ test("specific incompatible context prevents a fabricated recommendation", () =>
   assert.equal(matches[0].quality, "related");
 });
 
+test("every controlled context factor contributes deterministically", () => {
+  const contextualSpot = {
+    ...spot,
+    type: "close_decision",
+    tags: ["big-blind-defence", "short-stack"],
+    villainPosition: "BTN",
+    opponentType: "aggressive",
+  };
+  const contextualResource = resource({
+    primaryTag: "big-blind-defence",
+    secondaryTags: ["short-stack"],
+    studySpotTypes: ["close_decision"],
+    stackDepthTags: ["25-40"],
+    heroPositionTags: ["BB"],
+    villainPositionTags: ["BTN"],
+    opponentTypeTags: ["aggressive"],
+  });
+  const exact = scoreLearningResource(contextualSpot, contextualResource);
+  const mismatches = [
+    { primaryTag: "opening", secondaryTags: [] },
+    { secondaryTags: [] },
+    { studySpotTypes: ["mistake"] },
+    { stackDepthTags: ["0-10"] },
+    { heroPositionTags: ["CO"] },
+    { villainPositionTags: ["UTG"] },
+    { opponentTypeTags: ["passive"] },
+  ];
+  for (const override of mismatches) {
+    const mismatched = scoreLearningResource(contextualSpot, {
+      ...contextualResource,
+      ...override,
+    });
+    assert.ok(mismatched.score < exact.score, JSON.stringify(override));
+  }
+});

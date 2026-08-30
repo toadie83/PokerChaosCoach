@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import {
   getAggressionPrompt,
@@ -29,11 +30,15 @@ import {
   resolveCapabilities,
 } from "./capabilityService.js";
 import {
+  createLearningResource,
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
   deleteTournamentPerformanceSnapshot,
   deleteTournamentUpload,
   ensureAiTrialCredits,
+  findLearningResourceDuplicates,
+  getLearningResourceById,
+  getLearningResourceBySlug,
   getStudyReport,
   getAiHandReviewsForTournament,
   getMonthlyAiUsage,
@@ -44,6 +49,7 @@ import {
   initDatabase,
   insertTournamentPerformanceSnapshot,
   isDatabaseConfigured,
+  listContentGaps,
   listLearningResources,
   listStudyQueueItems,
   listStudyReports,
@@ -53,13 +59,28 @@ import {
   deleteStudyQueueItem,
   saveStudyQueueItem,
   seedLearningResources,
+  setLearningResourceStatus,
   upsertAiHandReviews,
   upsertBillingCustomer,
   upsertBillingSubscription,
+  updateLearningResource,
   updateStudyQueueItemStatus,
 } from "./db.js";
+import {
+  requireAdmin,
+  requireLearningImporter,
+  scopedLearningImporterDenial,
+} from "./adminAuthorization.js";
 import { LEARNING_RESOURCE_SEED } from "./studySpots/learningResourceSeed.js";
 import { getStudySpotTaxonomy } from "./studySpots/taxonomy.js";
+import {
+  learningResourceInputFromCanonical,
+  learningResourceValidationDetails,
+  unwrapLearningResourceImport,
+  validateLearningResourceImport,
+  validateLearningResourceInput,
+} from "./studySpots/learningResourceValidation.js";
+import { scoreLearningResource } from "./studySpots/resourceMatcher.js";
 import {
   detectStudyUploadSite,
   logStudyTelemetry,
@@ -315,12 +336,18 @@ const coachAllowedUserIds = parseUserIdSet(
   process.env.COACH_ALLOWED_USER_IDS,
 );
 const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
+const learningImportUserIds = parseUserIdSet(
+  process.env.LEARNING_IMPORT_ALLOWED_USER_IDS,
+);
 const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
 const reviewAiAllowedEmails = parseEmailSet(
   process.env.REVIEW_AI_ALLOWED_EMAILS,
 );
 const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
+const learningImportAllowedEmails = parseEmailSet(
+  process.env.LEARNING_IMPORT_ALLOWED_EMAILS,
+);
 const developerQaAllowedEmails = new Set([
   "frosttrev@gmail.com",
   ...parseEmailSet(process.env.DEVELOPER_QA_ALLOWED_EMAILS),
@@ -330,6 +357,7 @@ const shouldLookupUserEmails =
   reviewAiAllowedEmails.size > 0 ||
   coachAllowedEmails.size > 0 ||
   adminAllowedEmails.size > 0 ||
+  learningImportAllowedEmails.size > 0 ||
   developerQaAllowedEmails.size > 0;
 
 function normalizeEmail(value) {
@@ -395,6 +423,9 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     userRole === "developer" ||
     isAdmin ||
     hasAnyMatchingEmail(userEmails, developerQaAllowedEmails);
+  const learningImporter =
+    learningImportUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, learningImportAllowedEmails);
   const review =
     isAdmin ||
     reviewAllowAll ||
@@ -415,6 +446,7 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     reviewAi,
     coach,
     admin: isAdmin,
+    learningImporter,
     developer: isDeveloper,
     role: userRole || null,
     emails: Array.isArray(userEmails) ? userEmails : [],
@@ -624,6 +656,18 @@ async function requireAuth(req, res, next) {
     const baseEntitlements = buildEntitlements(userId, userEmails, {
       userRole,
     });
+    if (baseEntitlements.learningImporter && !baseEntitlements.admin) {
+      req.entitlements = {
+        admin: false,
+        learningImporter: true,
+      };
+      req.aiAccess = null;
+      const scopedDenial = scopedLearningImporterDenial(req);
+      if (scopedDenial) {
+        return res.status(scopedDenial.status).json(scopedDenial.payload);
+      }
+      return next();
+    }
     const billingAiAccess = await resolveBillingAiAccessForUser(userId);
     req.entitlements = mergeEntitlementsWithBilling(
       baseEntitlements,
@@ -1156,6 +1200,244 @@ app.get(
   requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
   (_req, res) => res.json(getStudySpotTaxonomy()),
 );
+
+function databaseRequiredForLearning(res) {
+  if (isDatabaseConfigured()) return false;
+  res.status(503).json({
+    error: "The Learning Library requires a configured database.",
+    code: "DATABASE_UNAVAILABLE",
+  });
+  return true;
+}
+
+function sendLearningWriteFailure(res, error) {
+  if (error?.code === "23505") {
+    return res.status(409).json({
+      error: "A learning resource already uses one of these identifiers.",
+      code: "LEARNING_RESOURCE_DUPLICATE",
+    });
+  }
+  console.error("[pokerchaos-backend] Learning resource write error", error);
+  return res.status(500).json({
+    error: "The learning resource could not be saved.",
+    code: "LEARNING_RESOURCE_SAVE_FAILED",
+  });
+}
+
+async function validateLearningWrite(input, excludeId = null, { importPayload = false } = {}) {
+  const parsed = importPayload
+    ? validateLearningResourceImport(input)
+    : validateLearningResourceInput(unwrapLearningResourceImport(input));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      payload: {
+        error: "Learning resource validation failed.",
+        code: "INVALID_LEARNING_RESOURCE",
+        details: learningResourceValidationDetails(parsed.error),
+      },
+    };
+  }
+  const duplicates = await findLearningResourceDuplicates(parsed.data, excludeId);
+  if (duplicates.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      payload: {
+        error: "Duplicate learning resource identifiers were found.",
+        code: "LEARNING_RESOURCE_DUPLICATE",
+        duplicates,
+      },
+    };
+  }
+  return { ok: true, resource: parsed.data, warnings: parsed.warnings || [] };
+}
+
+app.get("/learn/taxonomy", (_req, res) => res.json(getStudySpotTaxonomy()));
+
+app.get("/learn/resources", async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const resources = await listLearningResources({
+      publishedOnly: true,
+      tag: String(req.query?.tag || "").trim() || null,
+      category: String(req.query?.category || "").trim() || null,
+      resourceType: String(req.query?.resourceType || "").trim() || null,
+      search: String(req.query?.search || "").trim() || null,
+    });
+    return res.json({ resources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Public Learning Library list error", error);
+    return res.status(500).json({
+      error: "The Learning Library could not be loaded.",
+      code: "LEARNING_LIBRARY_LIST_FAILED",
+    });
+  }
+});
+
+app.get("/learn/resources/:slug", async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const slug = String(req.params?.slug || "").trim();
+    const resource = await getLearningResourceBySlug(slug, { publishedOnly: true });
+    if (!resource) {
+      return res.status(404).json({
+        error: "Published lesson not found.",
+        code: "LEARNING_RESOURCE_NOT_FOUND",
+      });
+    }
+    const candidates = await listLearningResources({
+      publishedOnly: true,
+      category: resource.category,
+    });
+    const relatedResources = candidates
+      .filter((candidate) => candidate.id !== resource.id)
+      .map((candidate) => ({
+        candidate,
+        score: scoreLearningResource(
+          {
+            category: resource.category,
+            primaryTag: resource.primaryTag,
+            secondaryTags: resource.secondaryTags,
+            tags: resource.tags,
+            type: resource.studySpotTypes[0] || "interesting_spot",
+            stackDepthTag: resource.stackDepthTags[0] || null,
+            heroPosition: resource.heroPositionTags[0] || "unknown",
+            villainPosition: resource.villainPositionTags[0] || "unknown",
+            opponentType: resource.opponentTypeTags[0] || "unknown",
+          },
+          candidate,
+        ),
+      }))
+      .filter((item) => item.score && (item.score.anyTagMatch || item.score.categoryMatch))
+      .sort((a, b) => b.score.score - a.score.score)
+      .slice(0, 3)
+      .map((item) => item.candidate);
+    return res.json({ resource, relatedResources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Public Learning Library detail error", error);
+    return res.status(500).json({
+      error: "The lesson could not be loaded.",
+      code: "LEARNING_RESOURCE_LOAD_FAILED",
+    });
+  }
+});
+
+app.get("/admin/learning/taxonomy", requireAuth, requireAdmin, (_req, res) => {
+  return res.json(getStudySpotTaxonomy());
+});
+
+app.get("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const resources = await listLearningResources({
+      publishedOnly: false,
+      category: String(req.query?.category || "").trim() || null,
+      resourceType: String(req.query?.resourceType || "").trim() || null,
+      search: String(req.query?.search || "").trim() || null,
+    });
+    return res.json({ resources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Admin Learning Library list error", error);
+    return res.status(500).json({ error: "Learning resources could not be loaded.", code: "LEARNING_RESOURCE_LIST_FAILED" });
+  }
+});
+
+app.get("/admin/learning/content-gaps", requireAuth, requireAdmin, async (_req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    return res.json({ gaps: await listContentGaps() });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Content gap list error", error);
+    return res.status(500).json({ error: "Content gaps could not be loaded.", code: "CONTENT_GAP_LIST_FAILED" });
+  }
+});
+
+app.get("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  const resource = await getLearningResourceById(String(req.params?.id || "").trim());
+  if (!resource) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+  return res.json({ resource });
+});
+
+app.post("/admin/learning/import/preview", requireAuth, requireLearningImporter, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    return res.json({ valid: true, resource: validation.resource, duplicates: [], warnings: validation.warnings });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/import", requireAuth, requireLearningImporter, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await createLearningResource({
+      ...validation.resource,
+      id: randomUUID(),
+    });
+    return res.status(201).json({ resource, imported: true, warnings: validation.warnings });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body);
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await createLearningResource({ ...validation.resource, id: randomUUID() });
+    return res.status(201).json({ resource });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.put("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const id = String(req.params?.id || "").trim();
+    const validation = await validateLearningWrite(req.body, id);
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await updateLearningResource({ ...validation.resource, id });
+    if (!resource) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+    return res.json({ resource });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/:id/:action(publish|unpublish)", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const id = String(req.params?.id || "").trim();
+    const existing = await getLearningResourceById(id);
+    if (!existing) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+    const status = req.params.action === "publish" ? "published" : "draft";
+    if (status === "published") {
+      const parsed = validateLearningResourceInput({
+        ...learningResourceInputFromCanonical(existing),
+        status,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "This resource is not ready to publish.",
+          code: "INVALID_LEARNING_RESOURCE",
+          details: learningResourceValidationDetails(parsed.error),
+        });
+      }
+    }
+    return res.json({ resource: await setLearningResourceStatus(id, status) });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
 
 app.get(
   "/learning-resources",

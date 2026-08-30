@@ -5,6 +5,7 @@ import LearningDropdown from "./homepage/LearningDropdown.jsx";
 import { LEARNING_DROPDOWN_SECTIONS } from "./homepage/homepageData.js";
 
 const LEARNING_ACTIVE_PATHS = new Set([
+  "/learn",
   "/articles",
   "/ai-poker-hand-analyzer",
   "/ggpoker-hand-review-tool",
@@ -20,6 +21,7 @@ const LEARNING_ACTIVE_PATHS = new Set([
 
 function isLearningPath(pathname) {
   if (!pathname) return false;
+  if (pathname.startsWith("/learn/")) return true;
   if (pathname.startsWith("/articles/")) return true;
   return LEARNING_ACTIVE_PATHS.has(pathname);
 }

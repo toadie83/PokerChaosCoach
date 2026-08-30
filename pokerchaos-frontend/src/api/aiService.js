@@ -24,6 +24,62 @@ export async function requestStudySpotAnalysis(payload) {
   return postJson("/study-spots/analyse", payload);
 }
 
+export async function requestLearningResources(filters = {}) {
+  const params = new URLSearchParams();
+  for (const key of ["category", "resourceType", "tag", "search"]) {
+    const value = String(filters?.[key] || "").trim();
+    if (value) params.set(key, value);
+  }
+  return getJson(`/learn/resources${params.size ? `?${params}` : ""}`);
+}
+
+export async function requestLearningResource(slug) {
+  return getJson(`/learn/resources/${encodeURIComponent(String(slug || "").trim())}`);
+}
+
+export async function requestLearningTaxonomy() {
+  return getJson("/learn/taxonomy");
+}
+
+export async function requestAdminLearningResources(filters = {}) {
+  const params = new URLSearchParams();
+  for (const key of ["category", "resourceType", "search"]) {
+    const value = String(filters?.[key] || "").trim();
+    if (value) params.set(key, value);
+  }
+  return getJson(`/admin/learning${params.size ? `?${params}` : ""}`);
+}
+
+export async function requestAdminLearningTaxonomy() {
+  return getJson("/admin/learning/taxonomy");
+}
+
+export async function requestAdminContentGaps() {
+  return getJson("/admin/learning/content-gaps");
+}
+
+export async function requestPreviewLearningImport(resource) {
+  return postJson("/admin/learning/import/preview", { resource });
+}
+
+export async function requestImportLearningResource(resource) {
+  return postJson("/admin/learning/import", { resource });
+}
+
+export async function requestCreateLearningResource(resource) {
+  return postJson("/admin/learning", resource);
+}
+
+export async function requestUpdateLearningResource(id, resource) {
+  const safeId = encodeURIComponent(String(id || "").trim());
+  return postJson(`/admin/learning/${safeId}`, resource, { method: "PUT" });
+}
+
+export async function requestSetLearningResourcePublished(id, published) {
+  const safeId = encodeURIComponent(String(id || "").trim());
+  return postJson(`/admin/learning/${safeId}/${published ? "publish" : "unpublish"}`, {});
+}
+
 export async function requestStudyReports() {
   return getJson("/study-spots/reports");
 }

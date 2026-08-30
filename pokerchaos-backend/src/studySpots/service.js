@@ -81,7 +81,7 @@ function toPersistedSpot(reportId, rankedSpot, resources, idFactory) {
     resourceMatches: matches,
     contentGapTag:
       matches.length === 0
-        ? rankedSpot.tags?.at(-1) || rankedSpot.category
+        ? rankedSpot.primaryTag || rankedSpot.tags?.[0] || rankedSpot.category
         : null,
   };
 }

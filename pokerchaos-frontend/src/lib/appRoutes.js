@@ -13,7 +13,12 @@ function normalizePath(pathname) {
 
 export function normalizeAppRoutePath(
   pathname,
-  { authenticatedPaths = [], authenticatedPrefixes = [], marketingPaths = [] } = {},
+  {
+    authenticatedPaths = [],
+    authenticatedPrefixes = [],
+    marketingPaths = [],
+    marketingPrefixes = [],
+  } = {},
 ) {
   const normalized = normalizePath(pathname);
   const redirected = LEGACY_AUTH_ROUTE_REDIRECTS[normalized];
@@ -27,5 +32,12 @@ export function normalizeAppRoutePath(
     return normalized;
   }
   if (marketingPaths.includes(normalized)) return normalized;
+  if (
+    marketingPrefixes.some(
+      (prefix) => normalized.startsWith(`${prefix}/`) && normalized.length > prefix.length + 1,
+    )
+  ) {
+    return normalized;
+  }
   return DEFAULT_AUTH_ROUTE;
 }

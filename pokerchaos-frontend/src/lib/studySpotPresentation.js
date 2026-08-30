@@ -20,7 +20,7 @@ export function getResourceState(spot) {
   if (recommended?.resource) {
     return {
       kind: "recommended",
-      label: "Recommended study",
+      label: "Recommended lesson",
       resource: recommended.resource,
     };
   }
@@ -28,13 +28,13 @@ export function getResourceState(spot) {
   if (related?.resource) {
     return {
       kind: "related",
-      label: "Related study",
+      label: "Related lesson",
       resource: related.resource,
     };
   }
   return {
     kind: "topic",
-    label: "Study topic",
+    label: "No dedicated lesson yet",
     resource: null,
   };
 }

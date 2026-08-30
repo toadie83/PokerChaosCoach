@@ -94,3 +94,5 @@ Backend feature access is configured by env vars:
 - `REVIEW_ALLOWED_EMAILS`: comma-separated email addresses with review access.
 - `COACH_ALLOWED_EMAILS`: comma-separated email addresses with coach access.
 - `ADMIN_ALLOWED_EMAILS`: comma-separated email addresses with access to all features.
+- `LEARNING_IMPORT_ALLOWED_USER_IDS`: comma-separated Clerk user IDs restricted to learning-resource preview and import.
+- `LEARNING_IMPORT_ALLOWED_EMAILS`: comma-separated Clerk emails restricted to learning-resource preview and import.

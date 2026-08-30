@@ -6,18 +6,25 @@ import "dotenv/config";
 import {
   closeDatabase,
   completeStudyReport,
+  createLearningResource,
   createStudyReport,
+  deleteLearningResource,
   deleteStudyQueueItem,
   deleteTournamentUpload,
+  findLearningResourceDuplicates,
+  getLearningResourceBySlug,
   getStudyReport,
   initDatabase,
   listContentGaps,
   listStudyQueueItems,
   listStudyReports,
   saveStudyQueueItem,
+  setLearningResourceStatus,
   updateStudyQueueItemStatus,
   upsertTournamentUpload,
 } from "../src/db.js";
+import { matchLearningResources } from "../src/studySpots/resourceMatcher.js";
+import { validateLearningResourceInput } from "../src/studySpots/learningResourceValidation.js";
 
 const suffix = randomUUID();
 const userId = `study-db-verifier-${suffix}`;
@@ -26,11 +33,68 @@ const tournamentId = `tournament-${suffix}`;
 const reportId = `report-${suffix}`;
 const spotId = `spot-${suffix}`;
 const gapTag = `integration-gap-${suffix}`;
+const learningResourceId = `learning-resource-${suffix}`;
+const learningSlug = `big-blind-defence-${suffix}`;
+const learningExternalId = `daily-edge-${suffix}`;
 
 let uploadCreated = false;
+let learningResourceCreated = false;
 
 try {
   await initDatabase();
+  const learningInput = {
+    externalId: learningExternalId,
+    series: `Verifier Series ${suffix}`,
+    lessonNumber: 1,
+    slug: learningSlug,
+    title: "Verifier Big Blind Defence Lesson",
+    shortTitle: "Verifier BB Defence",
+    description: "A complete canonical resource used to verify the Learning Library database contract.",
+    resourceType: "quick_lesson",
+    category: "preflop",
+    primaryTag: "bb-defence",
+    secondaryTags: ["short-stack"],
+    stackDepthTags: ["15-25"],
+    heroPositionTags: ["BB"],
+    villainPositionTags: ["BTN"],
+    opponentTypeTags: ["aggressive"],
+    studySpotTypes: ["close_decision"],
+    body: "Use price, stack depth, and the opener's range to construct the defence.",
+    exampleSpot: "Hero faces a button open from the big blind at 22 BB effective.",
+    mistake: "Folding automatically without considering the price.",
+    betterPlay: "Compare the holding with the opener's range and available price.",
+    whenToUse: ["Facing a late-position open"],
+    whenNotToUse: ["Facing a tight early-position range"],
+    takeaway: "Build big blind defence from context rather than a fixed chart.",
+    status: "draft",
+    publishedAt: null,
+    instagramCaption: "",
+    instagramUrl: "",
+    sourceUrl: "",
+    priority: 80,
+  };
+  const validatedLearning = validateLearningResourceInput(learningInput);
+  assert.equal(validatedLearning.success, true);
+  await createLearningResource({ ...validatedLearning.data, id: learningResourceId });
+  learningResourceCreated = true;
+  assert.equal(await getLearningResourceBySlug(learningSlug, { publishedOnly: true }), null);
+  const duplicates = await findLearningResourceDuplicates(validatedLearning.data);
+  assert.deepEqual(new Set(duplicates.map((item) => item.field)), new Set(["slug", "externalId", "lessonNumber"]));
+  const publishedLearning = await setLearningResourceStatus(learningResourceId, "published");
+  assert.equal(publishedLearning?.canonicalPath, `/learn/${learningSlug}`);
+  assert.equal((await getLearningResourceBySlug(learningSlug, { publishedOnly: true }))?.id, learningResourceId);
+  const matched = matchLearningResources({
+    category: "preflop",
+    type: "close_decision",
+    tags: ["bb-defence", "short-stack"],
+    stackDepthTag: "15-25",
+    heroPosition: "BB",
+    villainPosition: "BTN",
+    opponentType: "aggressive",
+  }, [publishedLearning]);
+  assert.equal(matched[0]?.quality, "recommended");
+  assert.equal(matched[0]?.resource?.url, `/learn/${learningSlug}`);
+
   await upsertTournamentUpload({
     userId,
     tournamentId,
@@ -102,7 +166,11 @@ try {
   assert.equal((await listStudyQueueItems(userId, "completed")).length, 1);
 
   const gaps = await listContentGaps();
-  assert.equal(gaps.some((gap) => gap.tag === gapTag && gap.occurrenceCount === 1), true);
+  assert.equal(gaps.some((gap) =>
+    gap.primaryTag === gapTag &&
+    gap.studySpotType === "Decision Point" &&
+    gap.occurrenceCount === 1
+  ), true);
 
   assert.equal(await deleteStudyQueueItem(userId, spotId), true);
   assert.equal(await deleteStudyQueueItem(userId, spotId), false);
@@ -115,6 +183,9 @@ try {
 } finally {
   if (uploadCreated) {
     await deleteTournamentUpload(userId, tournamentId);
+  }
+  if (learningResourceCreated) {
+    await deleteLearningResource(learningResourceId);
   }
   await closeDatabase();
 }

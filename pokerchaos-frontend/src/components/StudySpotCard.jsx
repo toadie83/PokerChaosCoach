@@ -67,9 +67,7 @@ export default function StudySpotCard({
             <>
               <h3>{resourceState.resource.title}</h3>
               <a
-                href={resourceState.resource.url}
-                target="_blank"
-                rel="noreferrer"
+                href={resourceState.resource.canonicalPath || resourceState.resource.url}
                 onClick={() =>
                   trackProductEvent("study_resource_opened", {
                     spot_category: spot.category,
@@ -84,7 +82,7 @@ export default function StudySpotCard({
           ) : (
             <>
               <h3>{spot.title}</h3>
-              <span>We don't have a dedicated lesson for this spot yet.</span>
+              <span>This topic is being tracked as a content gap.</span>
             </>
           )}
         </div>

@@ -95,6 +95,69 @@ export async function initDatabase() {
   `);
 
   await resolvedPool.query(`
+    ALTER TABLE learning_resources
+      ADD COLUMN IF NOT EXISTS external_id TEXT,
+      ADD COLUMN IF NOT EXISTS series TEXT,
+      ADD COLUMN IF NOT EXISTS lesson_number INTEGER,
+      ADD COLUMN IF NOT EXISTS short_title TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS primary_tag TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS secondary_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS hero_position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS villain_position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS opponent_type_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS study_spot_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS body TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS example_spot TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS mistake TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS better_play TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS when_to_use JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS when_not_to_use JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS takeaway TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS instagram_caption TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS instagram_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT '';
+  `);
+
+  await resolvedPool.query(`
+    UPDATE learning_resources
+    SET
+      status = CASE WHEN published THEN 'published' ELSE 'draft' END,
+      published_at = COALESCE(published_at, publish_date::TIMESTAMPTZ),
+      primary_tag = CASE
+        WHEN primary_tag = '' AND jsonb_array_length(tags) > 0 THEN tags->>0
+        ELSE primary_tag
+      END,
+      hero_position_tags = CASE
+        WHEN hero_position_tags = '[]'::jsonb THEN position_tags
+        ELSE hero_position_tags
+      END,
+      opponent_type_tags = CASE
+        WHEN opponent_type_tags = '[]'::jsonb THEN opponent_tags
+        ELSE opponent_type_tags
+      END,
+      source_url = CASE WHEN source_url = '' THEN url ELSE source_url END;
+  `);
+
+  await resolvedPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS learning_resources_external_id_uidx
+    ON learning_resources (external_id)
+    WHERE external_id IS NOT NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS learning_resources_series_lesson_uidx
+    ON learning_resources (series, lesson_number)
+    WHERE series IS NOT NULL AND lesson_number IS NOT NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS learning_resources_status_category_idx
+    ON learning_resources (status, category, priority DESC);
+  `);
+
+  await resolvedPool.query(`
     CREATE TABLE IF NOT EXISTS tournament_uploads (
       user_id TEXT NOT NULL,
       tournament_id TEXT NOT NULL,
@@ -236,6 +299,25 @@ export async function initDatabase() {
   await resolvedPool.query(`
     CREATE INDEX IF NOT EXISTS content_gap_tag_seen_idx
     ON content_gap_occurrences (tag, last_seen DESC);
+  `);
+
+  await resolvedPool.query(`
+    ALTER TABLE content_gap_occurrences
+      ADD COLUMN IF NOT EXISTS primary_tag TEXT,
+      ADD COLUMN IF NOT EXISTS study_spot_type TEXT;
+  `);
+
+  await resolvedPool.query(`
+    UPDATE content_gap_occurrences
+    SET
+      primary_tag = COALESCE(primary_tag, tag),
+      study_spot_type = COALESCE(study_spot_type, 'interesting_spot')
+    WHERE primary_tag IS NULL OR study_spot_type IS NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS content_gap_primary_type_seen_idx
+    ON content_gap_occurrences (primary_tag, study_spot_type, last_seen DESC);
   `);
 
   await resolvedPool.query(`
@@ -627,24 +709,170 @@ function toLearningResourcePayload(row) {
   if (!row) return null;
   return {
     id: row.id,
+    externalId: row.external_id || null,
+    series: row.series || null,
+    lessonNumber: row.lesson_number === null ? null : Number(row.lesson_number),
     slug: row.slug,
+    canonicalPath: `/learn/${row.slug}`,
     title: row.title,
+    shortTitle: row.short_title || "",
     description: row.description,
     category: row.category,
+    primaryTag: row.primary_tag || row.tags?.[0] || "",
+    secondaryTags: Array.isArray(row.secondary_tags)
+      ? row.secondary_tags
+      : Array.isArray(row.tags) ? row.tags.slice(1) : [],
     tags: Array.isArray(row.tags) ? row.tags : [],
     stackDepthTags: Array.isArray(row.stack_depth_tags)
       ? row.stack_depth_tags
       : [],
-    positionTags: Array.isArray(row.position_tags) ? row.position_tags : [],
-    opponentTags: Array.isArray(row.opponent_tags) ? row.opponent_tags : [],
+    heroPositionTags: Array.isArray(row.hero_position_tags)
+      ? row.hero_position_tags
+      : [],
+    villainPositionTags: Array.isArray(row.villain_position_tags)
+      ? row.villain_position_tags
+      : [],
+    opponentTypeTags: Array.isArray(row.opponent_type_tags)
+      ? row.opponent_type_tags
+      : [],
+    studySpotTypes: Array.isArray(row.study_spot_types)
+      ? row.study_spot_types
+      : [],
+    positionTags: Array.isArray(row.hero_position_tags)
+      ? row.hero_position_tags
+      : Array.isArray(row.position_tags) ? row.position_tags : [],
+    opponentTags: Array.isArray(row.opponent_type_tags)
+      ? row.opponent_type_tags
+      : Array.isArray(row.opponent_tags) ? row.opponent_tags : [],
+    resourceType: row.content_type,
     contentType: row.content_type,
-    url: row.url,
-    published: Boolean(row.published),
-    publishDate: row.publish_date || null,
+    body: row.body || "",
+    exampleSpot: row.example_spot || "",
+    mistake: row.mistake || "",
+    betterPlay: row.better_play || "",
+    whenToUse: Array.isArray(row.when_to_use) ? row.when_to_use : [],
+    whenNotToUse: Array.isArray(row.when_not_to_use) ? row.when_not_to_use : [],
+    takeaway: row.takeaway || "",
+    status: row.status || (row.published ? "published" : "draft"),
+    published: (row.status || (row.published ? "published" : "draft")) === "published",
+    publishedAt: row.published_at || row.publish_date || null,
+    publishDate: row.published_at || row.publish_date || null,
+    instagramCaption: row.instagram_caption || "",
+    instagramUrl: row.instagram_url || "",
+    sourceUrl: row.source_url || "",
+    url: `/learn/${row.slug}`,
     priority: Number(row.priority) || 0,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
+}
+
+function learningResourceWriteValues(resource) {
+  const published = resource.status === "published";
+  const publishedAt = published
+    ? resource.publishedAt || new Date().toISOString()
+    : null;
+  const canonicalPath = `/learn/${resource.slug}`;
+  return [
+    resource.id,
+    resource.externalId || null,
+    resource.series || null,
+    resource.lessonNumber || null,
+    resource.slug,
+    resource.title,
+    resource.shortTitle || "",
+    resource.description,
+    resource.category,
+    resource.primaryTag,
+    toJsonbParam(resource.secondaryTags, []),
+    toJsonbParam(resource.tags, []),
+    toJsonbParam(resource.stackDepthTags, []),
+    toJsonbParam(resource.heroPositionTags, []),
+    toJsonbParam(resource.villainPositionTags, []),
+    toJsonbParam(resource.opponentTypeTags, []),
+    toJsonbParam(resource.studySpotTypes, []),
+    resource.resourceType,
+    resource.body || "",
+    resource.exampleSpot || "",
+    resource.mistake || "",
+    resource.betterPlay || "",
+    toJsonbParam(resource.whenToUse, []),
+    toJsonbParam(resource.whenNotToUse, []),
+    resource.takeaway || "",
+    resource.status,
+    published,
+    publishedAt,
+    resource.instagramCaption || "",
+    resource.instagramUrl || "",
+    resource.sourceUrl || "",
+    canonicalPath,
+    Number(resource.priority) || 0,
+  ];
+}
+
+async function writeLearningResource(client, resource, conflictTarget) {
+  const conflictColumn = conflictTarget === "slug" ? "slug" : "id";
+  const result = await client.query(
+    `
+      INSERT INTO learning_resources (
+        id, external_id, series, lesson_number, slug, title, short_title,
+        description, category, primary_tag, secondary_tags, tags,
+        stack_depth_tags, hero_position_tags, villain_position_tags,
+        opponent_type_tags, study_spot_types, position_tags, opponent_tags,
+        content_type, body, example_spot, mistake, better_play, when_to_use,
+        when_not_to_use, takeaway, status, published, published_at,
+        publish_date, instagram_caption, instagram_url, source_url, url, priority
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+        $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb,
+        $14::jsonb, $16::jsonb, $18, $19, $20, $21, $22, $23::jsonb,
+        $24::jsonb, $25, $26, $27, $28, $28::timestamptz::date, $29, $30,
+        $31, $32, $33
+      )
+      ON CONFLICT (${conflictColumn})
+      DO UPDATE SET
+        external_id = EXCLUDED.external_id,
+        series = EXCLUDED.series,
+        lesson_number = EXCLUDED.lesson_number,
+        slug = EXCLUDED.slug,
+        title = EXCLUDED.title,
+        short_title = EXCLUDED.short_title,
+        description = EXCLUDED.description,
+        category = EXCLUDED.category,
+        primary_tag = EXCLUDED.primary_tag,
+        secondary_tags = EXCLUDED.secondary_tags,
+        tags = EXCLUDED.tags,
+        stack_depth_tags = EXCLUDED.stack_depth_tags,
+        hero_position_tags = EXCLUDED.hero_position_tags,
+        villain_position_tags = EXCLUDED.villain_position_tags,
+        opponent_type_tags = EXCLUDED.opponent_type_tags,
+        study_spot_types = EXCLUDED.study_spot_types,
+        position_tags = EXCLUDED.position_tags,
+        opponent_tags = EXCLUDED.opponent_tags,
+        content_type = EXCLUDED.content_type,
+        body = EXCLUDED.body,
+        example_spot = EXCLUDED.example_spot,
+        mistake = EXCLUDED.mistake,
+        better_play = EXCLUDED.better_play,
+        when_to_use = EXCLUDED.when_to_use,
+        when_not_to_use = EXCLUDED.when_not_to_use,
+        takeaway = EXCLUDED.takeaway,
+        status = EXCLUDED.status,
+        published = EXCLUDED.published,
+        published_at = EXCLUDED.published_at,
+        publish_date = EXCLUDED.publish_date,
+        instagram_caption = EXCLUDED.instagram_caption,
+        instagram_url = EXCLUDED.instagram_url,
+        source_url = EXCLUDED.source_url,
+        url = EXCLUDED.url,
+        priority = EXCLUDED.priority,
+        updated_at = NOW()
+      RETURNING *;
+    `,
+    learningResourceWriteValues(resource),
+  );
+  return toLearningResourcePayload(result.rows[0]);
 }
 
 export async function seedLearningResources(resources) {
@@ -656,63 +884,7 @@ export async function seedLearningResources(resources) {
   try {
     await client.query("BEGIN");
     for (const resource of items) {
-      const result = await client.query(
-        `
-          INSERT INTO learning_resources (
-            id,
-            slug,
-            title,
-            description,
-            category,
-            tags,
-            stack_depth_tags,
-            position_tags,
-            opponent_tags,
-            content_type,
-            url,
-            published,
-            publish_date,
-            priority
-          )
-          VALUES (
-            $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb,
-            $9::jsonb, $10, $11, $12, $13, $14
-          )
-          ON CONFLICT (slug)
-          DO UPDATE SET
-            title = EXCLUDED.title,
-            description = EXCLUDED.description,
-            category = EXCLUDED.category,
-            tags = EXCLUDED.tags,
-            stack_depth_tags = EXCLUDED.stack_depth_tags,
-            position_tags = EXCLUDED.position_tags,
-            opponent_tags = EXCLUDED.opponent_tags,
-            content_type = EXCLUDED.content_type,
-            url = EXCLUDED.url,
-            published = EXCLUDED.published,
-            publish_date = EXCLUDED.publish_date,
-            priority = EXCLUDED.priority,
-            updated_at = NOW()
-          RETURNING *;
-        `,
-        [
-          resource.id,
-          resource.slug,
-          resource.title,
-          resource.description,
-          resource.category,
-          toJsonbParam(resource.tags, []),
-          toJsonbParam(resource.stackDepthTags, []),
-          toJsonbParam(resource.positionTags, []),
-          toJsonbParam(resource.opponentTags, []),
-          resource.contentType,
-          resource.url,
-          Boolean(resource.published),
-          resource.publishDate || null,
-          Number(resource.priority) || 0,
-        ],
-      );
-      if (result.rows[0]) seeded.push(toLearningResourcePayload(result.rows[0]));
+      seeded.push(await writeLearningResource(client, resource, "slug"));
     }
     await client.query("COMMIT");
     return seeded;
@@ -727,14 +899,29 @@ export async function seedLearningResources(resources) {
 export async function listLearningResources({
   publishedOnly = true,
   tag = null,
+  category = null,
+  resourceType = null,
+  search = null,
 } = {}) {
   const resolvedPool = getRequiredPool();
   const filters = [];
   const values = [];
-  if (publishedOnly) filters.push("published = TRUE");
+  if (publishedOnly) filters.push("status = 'published'");
   if (tag) {
     values.push(JSON.stringify([String(tag)]));
     filters.push(`tags @> $${values.length}::jsonb`);
+  }
+  if (category) {
+    values.push(String(category));
+    filters.push(`category = $${values.length}`);
+  }
+  if (resourceType) {
+    values.push(String(resourceType));
+    filters.push(`content_type = $${values.length}`);
+  }
+  if (search) {
+    values.push(`%${String(search).trim()}%`);
+    filters.push(`(title ILIKE $${values.length} OR description ILIKE $${values.length})`);
   }
   const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
   const result = await resolvedPool.query(
@@ -742,11 +929,104 @@ export async function listLearningResources({
       SELECT *
       FROM learning_resources
       ${where}
-      ORDER BY priority DESC, publish_date DESC NULLS LAST, title ASC;
+      ORDER BY priority DESC, published_at DESC NULLS LAST, title ASC;
     `,
     values,
   );
   return result.rows.map(toLearningResourcePayload);
+}
+
+export async function getLearningResourceById(id, { publishedOnly = false } = {}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `SELECT * FROM learning_resources
+     WHERE id = $1 ${publishedOnly ? "AND status = 'published'" : ""}
+     LIMIT 1;`,
+    [id],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function getLearningResourceBySlug(slug, { publishedOnly = true } = {}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `SELECT * FROM learning_resources
+     WHERE slug = $1 ${publishedOnly ? "AND status = 'published'" : ""}
+     LIMIT 1;`,
+    [slug],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function findLearningResourceDuplicates(resource, excludeId = null) {
+  const resolvedPool = getRequiredPool();
+  const values = [resource.slug, resource.externalId || null, resource.series || null, resource.lessonNumber || null];
+  let exclusion = "";
+  if (excludeId) {
+    values.push(excludeId);
+    exclusion = `AND id <> $${values.length}`;
+  }
+  const result = await resolvedPool.query(
+    `
+      SELECT id, slug, external_id, series, lesson_number
+      FROM learning_resources
+      WHERE (
+        slug = $1
+        OR ($2::text IS NOT NULL AND external_id = $2)
+        OR ($3::text IS NOT NULL AND $4::integer IS NOT NULL AND series = $3 AND lesson_number = $4)
+      )
+      ${exclusion};
+    `,
+    values,
+  );
+  const duplicates = [];
+  for (const row of result.rows) {
+    if (row.slug === resource.slug) duplicates.push({ field: "slug", value: resource.slug, resourceId: row.id });
+    if (resource.externalId && row.external_id === resource.externalId) duplicates.push({ field: "externalId", value: resource.externalId, resourceId: row.id });
+    if (resource.series && resource.lessonNumber && row.series === resource.series && Number(row.lesson_number) === resource.lessonNumber) {
+      duplicates.push({ field: "lessonNumber", value: `${resource.series} #${resource.lessonNumber}`, resourceId: row.id });
+    }
+  }
+  return duplicates;
+}
+
+export async function createLearningResource(resource) {
+  return writeLearningResource(getRequiredPool(), resource, "id");
+}
+
+export async function updateLearningResource(resource) {
+  const existing = await getLearningResourceById(resource.id);
+  if (!existing) return null;
+  return writeLearningResource(getRequiredPool(), resource, "id");
+}
+
+export async function setLearningResourceStatus(id, status) {
+  const resolvedPool = getRequiredPool();
+  const published = status === "published";
+  const result = await resolvedPool.query(
+    `
+      UPDATE learning_resources
+      SET
+        status = $2,
+        published = $3,
+        published_at = CASE WHEN $3 THEN COALESCE(published_at, NOW()) ELSE NULL END,
+        publish_date = CASE WHEN $3 THEN COALESCE(publish_date, CURRENT_DATE) ELSE NULL END,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *;
+    `,
+    [id, status, published],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function deleteLearningResource(id) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    "DELETE FROM learning_resources WHERE id = $1 RETURNING id;",
+    [id],
+  );
+  return Boolean(result.rows[0]);
 }
 
 function toPerformanceSnapshotPayload(row) {
@@ -1612,13 +1892,18 @@ export async function completeStudyReport({ id, userId, spots }) {
                 study_spot_id,
                 report_id,
                 user_id,
-                tag
+                tag,
+                primary_tag,
+                study_spot_type
               )
-              VALUES ($1, $2, $3, $4)
+              VALUES ($1, $2, $3, $4, $4, $5)
               ON CONFLICT (study_spot_id, tag)
-              DO UPDATE SET last_seen = NOW();
+              DO UPDATE SET
+                primary_tag = EXCLUDED.primary_tag,
+                study_spot_type = EXCLUDED.study_spot_type,
+                last_seen = NOW();
             `,
-            [spot.id, id, userId, gapTag],
+            [spot.id, id, userId, gapTag, spot.type || "interesting_spot"],
           );
         }
       }
@@ -1813,17 +2098,20 @@ export async function listContentGaps() {
   const resolvedPool = getRequiredPool();
   const result = await resolvedPool.query(`
     SELECT
-      tag,
+      COALESCE(primary_tag, tag) AS primary_tag,
+      COALESCE(study_spot_type, 'interesting_spot') AS study_spot_type,
       COUNT(*)::INTEGER AS occurrence_count,
       (ARRAY_AGG(study_spot_id ORDER BY last_seen DESC))[1:10] AS example_spot_ids,
       MIN(first_seen) AS first_seen,
       MAX(last_seen) AS last_seen
     FROM content_gap_occurrences
-    GROUP BY tag
+    GROUP BY COALESCE(primary_tag, tag), COALESCE(study_spot_type, 'interesting_spot')
     ORDER BY occurrence_count DESC, last_seen DESC;
   `);
   return result.rows.map((row) => ({
-    tag: row.tag,
+    primaryTag: row.primary_tag,
+    tag: row.primary_tag,
+    studySpotType: row.study_spot_type,
     occurrenceCount: Number(row.occurrence_count) || 0,
     exampleSpotIds: Array.isArray(row.example_spot_ids)
       ? row.example_spot_ids

@@ -16,6 +16,7 @@ import MyTournamentsPage from "./components/MyTournamentsPage.jsx";
 import StudyReportPage from "./components/StudyReportPage.jsx";
 import StudySpotsEntryPage from "./components/StudySpotsEntryPage.jsx";
 import ToolsHub from "./components/ToolsHub.jsx";
+import AdminLearningPage from "./components/AdminLearningPage.jsx";
 import HomePage from "./components/marketing/HomePage.jsx";
 import AiPokerHandAnalyzerPage from "./components/marketing/AiPokerHandAnalyzerPage.jsx";
 import GgPokerHandReviewToolPage from "./components/marketing/GgPokerHandReviewToolPage.jsx";
@@ -24,6 +25,8 @@ import MttHandReviewSoftwarePage from "./components/marketing/MttHandReviewSoftw
 import TournamentHandAnalysisPage from "./components/marketing/TournamentHandAnalysisPage.jsx";
 import PokerSessionReviewPage from "./components/marketing/PokerSessionReviewPage.jsx";
 import ArticleHubPage from "./components/marketing/ArticleHubPage.jsx";
+import LearningLibraryPage from "./components/marketing/LearningLibraryPage.jsx";
+import LearningResourcePage from "./components/marketing/LearningResourcePage.jsx";
 import ArticleDraftPage from "./components/marketing/ArticleDraftPage.jsx";
 import TrustMethodologyBanner from "./components/marketing/TrustMethodologyBanner.jsx";
 import {
@@ -52,6 +55,7 @@ import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
 import navIconMark from "./assets/brand/playback-nav-image-icon.png";
 import "./styles.css";
 import "./study-spots.css";
+import "./learning-library.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = DEFAULT_AUTH_ROUTE;
@@ -104,6 +108,10 @@ const MARKETING_PAGE_CONFIG = [
     path: "/articles",
     component: ArticleHubPage,
   },
+  {
+    path: "/learn",
+    component: LearningLibraryPage,
+  },
   ...TRUST_PAGE_CATALOG.map((page) => ({
     path: page.path,
     component: () => <TrustPageDraft path={page.path} />,
@@ -112,6 +120,12 @@ const MARKETING_PAGE_CONFIG = [
     path: buildArticlePath(article.slug),
     component: () => <ArticleDraftPage slug={article.slug} />,
   })),
+];
+const DYNAMIC_MARKETING_PAGE_CONFIG = [
+  {
+    prefix: "/learn",
+    component: LearningResourcePage,
+  },
 ];
 const SECTION_CONFIG = [
   {
@@ -153,6 +167,13 @@ const SECTION_CONFIG = [
     capability: CAPABILITY_KEYS.STUDY_SPOTS,
     component: MyStudyPage,
   },
+  {
+    path: "/admin/learning",
+    label: "Learning Admin",
+    adminOnly: true,
+    component: AdminLearningPage,
+    lockedText: "Administrator access is required.",
+  },
 ];
 const DYNAMIC_SECTION_CONFIG = [
   {
@@ -160,6 +181,13 @@ const DYNAMIC_SECTION_CONFIG = [
     label: "Study Report",
     capability: CAPABILITY_KEYS.STUDY_SPOTS,
     component: StudyReportPage,
+  },
+  {
+    prefix: "/admin/learning",
+    label: "Learning Admin",
+    adminOnly: true,
+    component: AdminLearningPage,
+    lockedText: "Administrator access is required.",
   },
 ];
 const ROUTE_LOOKUP = new Map(SECTION_CONFIG.map((item) => [item.path, item]));
@@ -210,7 +238,19 @@ function normalizeMarketingPath(pathname) {
   const raw = typeof pathname === "string" ? pathname.trim() : "";
   if (!raw) return "/";
   const normalized = raw.replace(/\/+$/, "") || "/";
-  return MARKETING_ROUTE_LOOKUP.has(normalized) ? normalized : null;
+  return resolveMarketingPage(normalized) ? normalized : null;
+}
+
+function resolveMarketingPage(pathname) {
+  const exact = MARKETING_ROUTE_LOOKUP.get(pathname);
+  if (exact) return exact;
+  return (
+    DYNAMIC_MARKETING_PAGE_CONFIG.find(
+      (page) =>
+        pathname?.startsWith(`${page.prefix}/`) &&
+        pathname.length > page.prefix.length + 1,
+    ) || null
+  );
 }
 
 function normalizeRoutePath(pathname) {
@@ -218,6 +258,7 @@ function normalizeRoutePath(pathname) {
     authenticatedPaths: Array.from(ROUTE_LOOKUP.keys()),
     authenticatedPrefixes: DYNAMIC_SECTION_CONFIG.map((item) => item.prefix),
     marketingPaths: Array.from(MARKETING_ROUTE_LOOKUP.keys()),
+    marketingPrefixes: DYNAMIC_MARKETING_PAGE_CONFIG.map((item) => item.prefix),
   });
 }
 
@@ -432,7 +473,7 @@ function MobileScrollTopWidget({ enabled }) {
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
-  const marketingPage = MARKETING_ROUTE_LOOKUP.get(routePath);
+  const marketingPage = resolveMarketingPage(routePath);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
   const [entitlements, setEntitlements] = useState(null);
@@ -603,9 +644,11 @@ function SignedInShell() {
   const canAccessSection = useCallback(
     (section) =>
       Boolean(
-        section?.viewableWhenDisabled ||
-          !section?.capability ||
-          canAccessCapability(entitlements, section.capability),
+        section?.adminOnly
+          ? entitlements?.features?.admin === true
+          : section?.viewableWhenDisabled ||
+              !section?.capability ||
+              canAccessCapability(entitlements, section.capability),
       ),
     [entitlements],
   );
@@ -625,6 +668,14 @@ function SignedInShell() {
 
   useEffect(() => {
     if (marketingPage) return;
+    if (routePath.startsWith("/admin/learning")) {
+      setPageMeta({
+        title: "Learning Admin | Playback Poker",
+        description: "Restricted Learning Library resource management.",
+        path: routePath,
+      });
+      return;
+    }
     if (routePath === "/tools/coach") {
       const coachEnabled = canAccessCapability(
         entitlements,
@@ -694,7 +745,7 @@ function SignedInShell() {
     const MarketingComponent = marketingPage.component;
     return (
       <>
-        <MarketingComponent />
+        <MarketingComponent routePath={routePath} />
         <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
         <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
         <DisclaimerModal
@@ -723,7 +774,10 @@ function SignedInShell() {
             </span>
           </div>
           <div className="auth-bar-nav">
-            {SECTION_CONFIG.map((section) => {
+            {SECTION_CONFIG.filter(
+              (section) =>
+                !section.adminOnly || entitlements?.features?.admin === true,
+            ).map((section) => {
               const enabled = canAccessSection(section);
               const state = section.capability
                 ? getCapabilityState(entitlements, section.capability)
@@ -988,7 +1042,7 @@ function ServerWakeGate({ children }) {
 
 function SignedOutShell() {
   const marketingPath = normalizeMarketingPath(window.location.pathname);
-  const marketingPage = MARKETING_ROUTE_LOOKUP.get(marketingPath);
+  const marketingPage = resolveMarketingPage(marketingPath);
 
   useEffect(() => {
     if (marketingPage) return;
@@ -1002,7 +1056,7 @@ function SignedOutShell() {
 
   if (marketingPage) {
     const MarketingComponent = marketingPage.component;
-    return <MarketingComponent />;
+    return <MarketingComponent routePath={marketingPath} />;
   }
 
   return (
