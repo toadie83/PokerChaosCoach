@@ -1160,6 +1160,30 @@ function attachOpponentContextToHand(hand, opponentLookup) {
 }
 
 app.get("/me/entitlements", requireAuth, (req, res) => {
+  if (req.entitlements?.learningImporter && !req.entitlements?.admin) {
+    return res.json({
+      userId: req.auth?.userId || null,
+      emails: [],
+      capabilities: {
+        [CAPABILITY_KEYS.STUDY_SPOTS]: "disabled",
+        [CAPABILITY_KEYS.TOURNAMENT_REVIEW]: "disabled",
+        [CAPABILITY_KEYS.COACH]: "disabled",
+      },
+      features: {
+        review: false,
+        reviewAi: false,
+        coach: false,
+        admin: false,
+        developer: false,
+        learningImporter: true,
+      },
+      billing: {
+        hasActiveSubscription: false,
+        subscriptionStatus: null,
+        trial: null,
+      },
+    });
+  }
   const trial = req.entitlements?.billing?.trial;
   const capabilities = req.entitlements?.capabilities || resolveCapabilities();
   return res.json({
@@ -1177,6 +1201,7 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
       coach: canAccessCapability(capabilities, CAPABILITY_KEYS.COACH),
       admin: Boolean(req.entitlements?.admin),
       developer: Boolean(req.entitlements?.developer),
+      learningImporter: Boolean(req.entitlements?.learningImporter),
     },
     billing: {
       hasActiveSubscription: Boolean(

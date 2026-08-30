@@ -129,8 +129,9 @@ function ImportWorkspace({ onImported }) {
   );
 }
 
-export default function AdminLearningPage({ routePath, navigate }) {
+export default function AdminLearningPage({ entitlements, routePath, navigate }) {
   const importMode = routePath === "/admin/learning/import";
+  const isAdmin = entitlements?.features?.admin === true;
   const [resources, setResources] = useState([]);
   const [taxonomy, setTaxonomy] = useState(null);
   const [gaps, setGaps] = useState([]);
@@ -158,7 +159,9 @@ export default function AdminLearningPage({ routePath, navigate }) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!importMode) load();
+  }, [importMode, load]);
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const categoryTags = taxonomy?.categories?.[form.category] || [];
@@ -210,8 +213,11 @@ export default function AdminLearningPage({ routePath, navigate }) {
   if (importMode) {
     return (
       <main className="learning-admin-page">
-        <div className="learning-admin-subnav"><button type="button" onClick={() => navigate("/admin/learning")}>Resource manager</button><button type="button" className="active">JSON import</button></div>
-        <ImportWorkspace onImported={() => load()} />
+        <div className="learning-admin-subnav">
+          {isAdmin ? <button type="button" onClick={() => navigate("/admin/learning")}>Resource manager</button> : null}
+          <button type="button" className="active">JSON import</button>
+        </div>
+        <ImportWorkspace onImported={() => {}} />
       </main>
     );
   }
