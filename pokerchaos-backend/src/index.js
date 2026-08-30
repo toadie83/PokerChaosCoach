@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import {
   getAggressionPrompt,
@@ -23,11 +24,22 @@ import { buildValidatedHandState } from "./handStateValidationService.js";
 import { buildDeterministicIntelligence } from "./deterministicIntelligenceService.js";
 import { attachReviewEvaluation } from "./reviewEvaluationService.js";
 import {
+  CAPABILITY_KEYS,
+  canAccessCapability,
+  createCapabilityGuard,
+  resolveCapabilities,
+} from "./capabilityService.js";
+import {
+  createLearningResource,
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
   deleteTournamentPerformanceSnapshot,
   deleteTournamentUpload,
   ensureAiTrialCredits,
+  findLearningResourceDuplicates,
+  getLearningResourceById,
+  getLearningResourceBySlug,
+  getStudyReport,
   getAiHandReviewsForTournament,
   getMonthlyAiUsage,
   getTournamentUpload,
@@ -37,14 +49,51 @@ import {
   initDatabase,
   insertTournamentPerformanceSnapshot,
   isDatabaseConfigured,
+  listContentGaps,
+  listLearningResources,
+  listStudyQueueItems,
+  listStudyReports,
   listTournamentPerformanceSnapshots,
   listTournamentUploads,
   recordAiUsageEvent,
+  deleteStudyQueueItem,
+  saveStudyQueueItem,
+  seedLearningResources,
+  setLearningResourceStatus,
   upsertAiHandReviews,
   upsertBillingCustomer,
   upsertBillingSubscription,
-  upsertTournamentUpload,
+  updateLearningResource,
+  updateStudyQueueItemStatus,
 } from "./db.js";
+import {
+  requireAdmin,
+  requireLearningImporter,
+  scopedLearningImporterDenial,
+} from "./adminAuthorization.js";
+import { LEARNING_RESOURCE_SEED } from "./studySpots/learningResourceSeed.js";
+import { getStudySpotTaxonomy } from "./studySpots/taxonomy.js";
+import {
+  learningResourceInputFromCanonical,
+  learningResourceValidationDetails,
+  unwrapLearningResourceImport,
+  validateLearningResourceImport,
+  validateLearningResourceInput,
+} from "./studySpots/learningResourceValidation.js";
+import { scoreLearningResource } from "./studySpots/resourceMatcher.js";
+import {
+  detectStudyUploadSite,
+  logStudyTelemetry,
+  telemetryKey,
+} from "./studySpots/telemetry.js";
+import {
+  analyseSavedTournamentForStudy,
+  analyseStudySpotsUpload,
+} from "./studySpots/service.js";
+import {
+  TournamentUploadError,
+  saveTournamentHistory,
+} from "./tournamentUploadService.js";
 
 dotenv.config();
 
@@ -74,11 +123,12 @@ const reviewAiAllowAll =
   String(process.env.REVIEW_AI_ALLOW_ALL || "false")
     .trim()
     .toLowerCase() === "true";
-const coachAllowAll =
-  String(process.env.COACH_ALLOW_ALL || "false")
-    .trim()
-    .toLowerCase() === "true";
-const reviewAiModel = String(process.env.REVIEW_AI_MODEL || "gpt-4.1-mini")
+const reviewAiModel = String(process.env.REVIEW_AI_MODEL || "gpt-5.6-luna")
+  .trim()
+  .toLowerCase();
+const studySpotsAiModel = String(
+  process.env.STUDY_SPOTS_AI_MODEL || "gpt-5.6-luna",
+)
   .trim()
   .toLowerCase();
 const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
@@ -151,6 +201,10 @@ const reviewQaEnabled =
     .toLowerCase() !== "false";
 const reviewQaDevReportDefault =
   String(process.env.REVIEW_QA_DEV_REPORT || "false")
+    .trim()
+    .toLowerCase() === "true";
+const coachAllowAll =
+  String(process.env.COACH_ALLOW_ALL || "false")
     .trim()
     .toLowerCase() === "true";
 const reviewQaMinCoherenceScore = Number(
@@ -278,14 +332,22 @@ const reviewAllowedUserIds = parseUserIdSet(
 const reviewAiAllowedUserIds = parseUserIdSet(
   process.env.REVIEW_AI_ALLOWED_USER_IDS,
 );
-const coachAllowedUserIds = parseUserIdSet(process.env.COACH_ALLOWED_USER_IDS);
+const coachAllowedUserIds = parseUserIdSet(
+  process.env.COACH_ALLOWED_USER_IDS,
+);
 const adminUserIds = parseUserIdSet(process.env.ADMIN_ALLOWED_USER_IDS);
+const learningImportUserIds = parseUserIdSet(
+  process.env.LEARNING_IMPORT_ALLOWED_USER_IDS,
+);
 const reviewAllowedEmails = parseEmailSet(process.env.REVIEW_ALLOWED_EMAILS);
 const reviewAiAllowedEmails = parseEmailSet(
   process.env.REVIEW_AI_ALLOWED_EMAILS,
 );
 const coachAllowedEmails = parseEmailSet(process.env.COACH_ALLOWED_EMAILS);
 const adminAllowedEmails = parseEmailSet(process.env.ADMIN_ALLOWED_EMAILS);
+const learningImportAllowedEmails = parseEmailSet(
+  process.env.LEARNING_IMPORT_ALLOWED_EMAILS,
+);
 const developerQaAllowedEmails = new Set([
   "frosttrev@gmail.com",
   ...parseEmailSet(process.env.DEVELOPER_QA_ALLOWED_EMAILS),
@@ -295,6 +357,7 @@ const shouldLookupUserEmails =
   reviewAiAllowedEmails.size > 0 ||
   coachAllowedEmails.size > 0 ||
   adminAllowedEmails.size > 0 ||
+  learningImportAllowedEmails.size > 0 ||
   developerQaAllowedEmails.size > 0;
 
 function normalizeEmail(value) {
@@ -360,6 +423,9 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     userRole === "developer" ||
     isAdmin ||
     hasAnyMatchingEmail(userEmails, developerQaAllowedEmails);
+  const learningImporter =
+    learningImportUserIds.has(uid) ||
+    hasAnyMatchingEmail(userEmails, learningImportAllowedEmails);
   const review =
     isAdmin ||
     reviewAllowAll ||
@@ -371,8 +437,8 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     reviewAiAllowedUserIds.has(uid) ||
     hasAnyMatchingEmail(userEmails, reviewAiAllowedEmails);
   const coach =
-    isAdmin ||
     coachAllowAll ||
+    isDeveloper ||
     coachAllowedUserIds.has(uid) ||
     hasAnyMatchingEmail(userEmails, coachAllowedEmails);
   return {
@@ -380,6 +446,7 @@ function buildEntitlements(userId, userEmails = [], options = {}) {
     reviewAi,
     coach,
     admin: isAdmin,
+    learningImporter,
     developer: isDeveloper,
     role: userRole || null,
     emails: Array.isArray(userEmails) ? userEmails : [],
@@ -422,7 +489,7 @@ async function resolveBillingAiAccessForUser(userId) {
 function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
   const base = baseEntitlements || {};
   const billing = billingAiAccess || {};
-  return {
+  const merged = {
     ...base,
     reviewAi: Boolean(base.reviewAi || billing.reviewAiGranted),
     billing: {
@@ -431,6 +498,10 @@ function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
       subscription: billing.subscription || null,
       trial: billing.trial || null,
     },
+  };
+  return {
+    ...merged,
+    capabilities: resolveCapabilities(merged),
   };
 }
 
@@ -585,6 +656,18 @@ async function requireAuth(req, res, next) {
     const baseEntitlements = buildEntitlements(userId, userEmails, {
       userRole,
     });
+    if (baseEntitlements.learningImporter && !baseEntitlements.admin) {
+      req.entitlements = {
+        admin: false,
+        learningImporter: true,
+      };
+      req.aiAccess = null;
+      const scopedDenial = scopedLearningImporterDenial(req);
+      if (scopedDenial) {
+        return res.status(scopedDenial.status).json(scopedDenial.payload);
+      }
+      return next();
+    }
     const billingAiAccess = await resolveBillingAiAccessForUser(userId);
     req.entitlements = mergeEntitlementsWithBilling(
       baseEntitlements,
@@ -598,15 +681,16 @@ async function requireAuth(req, res, next) {
   }
 }
 
-function requireFeature(featureKey) {
-  return function featureGuard(req, res, next) {
-    const features = req.entitlements || {};
-    if (features[featureKey]) return next();
-    return res.status(403).json({
-      error: "Feature is not enabled for this account.",
-      requiredFeature: featureKey,
-    });
-  };
+function requireCapability(capabilityKey) {
+  return createCapabilityGuard(capabilityKey, {
+    onDenied: (req, denial) =>
+      logStudyTelemetry("capability_access_denied", {
+        userId: req.auth?.userId,
+        capability: capabilityKey,
+        capabilityState: denial.capabilityState,
+        method: req.method,
+      }),
+  });
 }
 
 const liveActionSchema = z.enum([
@@ -630,10 +714,23 @@ const liveDecisionNodeSchema = z
     relativePosition: z.enum(["ip", "oop", "unknown", "not_applicable"]),
     tableSize: z.number().int().min(2).max(10),
     playersInHand: z.number().int().min(2).max(10),
+    playersLiveAtDecision: z.number().int().min(1).max(10).optional(),
+    playersYetToActSeats: z.array(z.string()).max(9).optional(),
+    playersYetToActCount: z.number().int().min(0).max(9).optional(),
+    playersYetToActStacksKnown: z.boolean().optional(),
     gameType: z.enum(["tournament", "cash"]),
+    bountyMode: z
+      .enum(["none", "unknown", "standard_ko", "progressive_ko"])
+      .catch("none")
+      .optional(),
     anteBB: z.number().nonnegative(),
     potBB: z.number().positive().nullable(),
+    rawPotBB: z.number().positive().nullable().optional(),
+    contestablePotBB: z.number().positive().nullable().optional(),
+    uncalledExcessBB: z.number().nonnegative().optional(),
+    potCorrectionBB: z.number().nonnegative().optional(),
     effectiveStackBB: z.number().positive().nullable(),
+    primaryOpponentEffectiveStackBB: z.number().positive().nullable().optional(),
     startingEffectiveStackBB: z.number().positive().nullable().optional(),
     startingHeroStackBB: z.number().positive().nullable().optional(),
     startingOpponentStackBB: z.number().positive().nullable().optional(),
@@ -644,6 +741,18 @@ const liveDecisionNodeSchema = z
     opponentTotalCommittedBB: z.number().nonnegative().optional(),
     maxHeroTotalToBB: z.number().positive().nullable().optional(),
     maxOpponentTotalToBB: z.number().positive().nullable().optional(),
+    heroMaximumExposureBB: z.number().positive().nullable().optional(),
+    heroExposureBeyondPrimaryOpponentBB: z.number().nonnegative().nullable().optional(),
+    strategicRestrictions: z
+      .array(
+        z.object({
+          action: liveActionSchema,
+          code: z.string(),
+          reason: z.string(),
+        }),
+      )
+      .max(6)
+      .optional(),
     effectiveStackToPotRatio: z.number().nonnegative().nullable().optional(),
     heroStackToPotRatio: z.number().nonnegative().nullable().optional(),
     potSource: z
@@ -657,11 +766,30 @@ const liveDecisionNodeSchema = z
       .optional(),
     spr: z.number().nonnegative().nullable(),
     potOddsPct: z.number().min(0).max(100).nullable(),
+    potOdds: z
+      .object({
+        requiredEquityPct: z.number().min(0).max(100),
+        callAmountBB: z.number().positive(),
+        potBeforeCallBB: z.number().positive(),
+        potAfterCallBB: z.number().positive(),
+      })
+      .nullable()
+      .optional(),
     minimumRaiseToBB: z.number().positive().nullable(),
     minimumBetBB: z.number().positive().nullable(),
     heroCommittedBB: z.number().nonnegative(),
     opponentCommittedBB: z.number().nonnegative(),
     currentBetBB: z.number().nonnegative(),
+    preflopSequence: z
+      .object({
+        kind: z.literal("open_then_3bet"),
+        initialOpenAmountBB: z.number().positive(),
+        initialOpenerSeat: z.string().nullable().optional(),
+        threeBetToBB: z.number().positive(),
+        threeBettorSeat: z.string().nullable().optional(),
+      })
+      .nullable()
+      .optional(),
     facingAction: z
       .object({
         type: z.string(),
@@ -670,6 +798,9 @@ const liveDecisionNodeSchema = z
         toAmountBB: z.number().positive().nullable(),
         callAmountBB: z.number().positive().nullable(),
         allIn: z.boolean(),
+        initialOpenAmountBB: z.number().positive().nullable().optional(),
+        initialOpenerSeat: z.string().nullable().optional(),
+        openerStillActive: z.boolean().optional(),
       })
       .nullable(),
     lastAggressorSeat: z.string().nullable().optional(),
@@ -686,6 +817,21 @@ const livePromptContextSchema = z
     street: z.enum(["preflop", "flop", "turn", "river"]).optional(),
     heroSeat: z.string().optional(),
     tableSize: z.number().int().min(2).max(10).optional(),
+    tournamentStage: z
+      .enum([
+        "auto",
+        "early_reentry",
+        "middle_accumulation",
+        "bubble_pressure",
+        "post_bubble",
+        "late_endgame",
+      ])
+      .catch("auto")
+      .optional(),
+    bountyMode: z
+      .enum(["none", "unknown", "standard_ko", "progressive_ko"])
+      .catch("none")
+      .optional(),
     persona: z.string().optional(),
     heroCards: z.record(z.any()).optional(),
     board: z.record(z.any()).optional(),
@@ -741,6 +887,7 @@ const replayVisionSchema = z
       z.literal(4),
       z.literal(5),
     ]),
+    readHeroStack: z.boolean().optional().default(false),
     knownHeroCards: z.array(replayCardCodeSchema).max(2).optional().default([]),
     knownBoardCards: z.array(replayCardCodeSchema).max(5).optional().default([]),
   })
@@ -784,6 +931,22 @@ const tournamentUploadSchema = z.object({
   tournamentName: z.string().trim().max(160).optional(),
   uploadSource: z.string().trim().min(1).max(40).optional().default("ggpoker"),
   reviewsByHandKey: z.record(z.any()).optional(),
+});
+
+const studySpotsAnalyseSchema = tournamentUploadSchema.omit({
+  reviewsByHandKey: true,
+});
+
+const studyReportIdParamSchema = z.object({
+  reportId: z.string().uuid(),
+});
+
+const studySpotIdParamSchema = z.object({
+  studySpotId: z.string().uuid(),
+});
+
+const studyQueueStatusSchema = z.object({
+  status: z.enum(["to_review", "completed"]),
 });
 
 const tournamentIdParamSchema = z.object({
@@ -955,68 +1118,6 @@ function buildOpponentLookup(opponentSnapshot) {
   return lookup;
 }
 
-function summarizeTournamentHands(
-  allHands,
-  filteredHands,
-  heroName,
-  sortDirection,
-  limit,
-) {
-  const heroFoldedPreflopCount = allHands.filter((hand) =>
-    Boolean(hand?.heroPreflop?.didFold),
-  ).length;
-  const heroEnteredPreflopCount = allHands.filter(
-    (hand) =>
-      Boolean(hand?.heroPreflop?.acted) && !Boolean(hand?.heroPreflop?.didFold),
-  ).length;
-
-  return {
-    heroName,
-    totalHands: allHands.length,
-    filteredHands: filteredHands.length,
-    returnedHands: Math.min(filteredHands.length, limit),
-    heroFoldedPreflopCount,
-    heroEnteredPreflopCount,
-    sort: sortDirection,
-  };
-}
-
-function resolveTournamentPlayedAtEpoch(hands) {
-  const epochs = (Array.isArray(hands) ? hands : [])
-    .map((hand) => Number(hand?.playedAtEpoch))
-    .filter((value) => Number.isFinite(value));
-  if (!epochs.length) return null;
-  return Math.min(...epochs);
-}
-
-function resolveTournamentIdFromHands(hands, requestedTournamentId) {
-  const requested =
-    typeof requestedTournamentId === "string"
-      ? requestedTournamentId.trim()
-      : "";
-  const ids = Array.from(
-    new Set(
-      hands
-        .map((hand) => String(hand?.tournamentId || "").trim())
-        .filter(Boolean),
-    ),
-  );
-
-  if (requested) {
-    return { tournamentId: requested, ids };
-  }
-
-  if (ids.length === 1) {
-    return { tournamentId: ids[0], ids };
-  }
-
-  if (ids.length === 0) {
-    return { tournamentId: "", ids };
-  }
-
-  return { tournamentId: "", ids };
-}
-
 function attachOpponentContextToHand(hand, opponentLookup) {
   const heroName = String(hand?.heroName || "Hero").trim();
   const seats = Array.isArray(hand?.seats) ? hand.seats : [];
@@ -1060,15 +1161,20 @@ function attachOpponentContextToHand(hand, opponentLookup) {
 
 app.get("/me/entitlements", requireAuth, (req, res) => {
   const trial = req.entitlements?.billing?.trial;
+  const capabilities = req.entitlements?.capabilities || resolveCapabilities();
   return res.json({
     userId: req.auth?.userId || null,
     emails: Array.isArray(req.entitlements?.emails)
       ? req.entitlements.emails
       : [],
+    capabilities,
     features: {
-      review: Boolean(req.entitlements?.review),
+      review: canAccessCapability(
+        capabilities,
+        CAPABILITY_KEYS.TOURNAMENT_REVIEW,
+      ),
       reviewAi: Boolean(req.entitlements?.reviewAi),
-      coach: Boolean(req.entitlements?.coach),
+      coach: canAccessCapability(capabilities, CAPABILITY_KEYS.COACH),
       admin: Boolean(req.entitlements?.admin),
       developer: Boolean(req.entitlements?.developer),
     },
@@ -1087,6 +1193,660 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
     },
   });
 });
+
+app.get(
+  "/study-spots/taxonomy",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  (_req, res) => res.json(getStudySpotTaxonomy()),
+);
+
+function databaseRequiredForLearning(res) {
+  if (isDatabaseConfigured()) return false;
+  res.status(503).json({
+    error: "The Learning Library requires a configured database.",
+    code: "DATABASE_UNAVAILABLE",
+  });
+  return true;
+}
+
+function sendLearningWriteFailure(res, error) {
+  if (error?.code === "23505") {
+    return res.status(409).json({
+      error: "A learning resource already uses one of these identifiers.",
+      code: "LEARNING_RESOURCE_DUPLICATE",
+    });
+  }
+  console.error("[pokerchaos-backend] Learning resource write error", error);
+  return res.status(500).json({
+    error: "The learning resource could not be saved.",
+    code: "LEARNING_RESOURCE_SAVE_FAILED",
+  });
+}
+
+async function validateLearningWrite(input, excludeId = null, { importPayload = false } = {}) {
+  const parsed = importPayload
+    ? validateLearningResourceImport(input)
+    : validateLearningResourceInput(unwrapLearningResourceImport(input));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      payload: {
+        error: "Learning resource validation failed.",
+        code: "INVALID_LEARNING_RESOURCE",
+        details: learningResourceValidationDetails(parsed.error),
+      },
+    };
+  }
+  const duplicates = await findLearningResourceDuplicates(parsed.data, excludeId);
+  if (duplicates.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      payload: {
+        error: "Duplicate learning resource identifiers were found.",
+        code: "LEARNING_RESOURCE_DUPLICATE",
+        duplicates,
+      },
+    };
+  }
+  return { ok: true, resource: parsed.data, warnings: parsed.warnings || [] };
+}
+
+app.get("/learn/taxonomy", (_req, res) => res.json(getStudySpotTaxonomy()));
+
+app.get("/learn/resources", async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const resources = await listLearningResources({
+      publishedOnly: true,
+      tag: String(req.query?.tag || "").trim() || null,
+      category: String(req.query?.category || "").trim() || null,
+      resourceType: String(req.query?.resourceType || "").trim() || null,
+      search: String(req.query?.search || "").trim() || null,
+    });
+    return res.json({ resources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Public Learning Library list error", error);
+    return res.status(500).json({
+      error: "The Learning Library could not be loaded.",
+      code: "LEARNING_LIBRARY_LIST_FAILED",
+    });
+  }
+});
+
+app.get("/learn/resources/:slug", async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const slug = String(req.params?.slug || "").trim();
+    const resource = await getLearningResourceBySlug(slug, { publishedOnly: true });
+    if (!resource) {
+      return res.status(404).json({
+        error: "Published lesson not found.",
+        code: "LEARNING_RESOURCE_NOT_FOUND",
+      });
+    }
+    const candidates = await listLearningResources({
+      publishedOnly: true,
+      category: resource.category,
+    });
+    const relatedResources = candidates
+      .filter((candidate) => candidate.id !== resource.id)
+      .map((candidate) => ({
+        candidate,
+        score: scoreLearningResource(
+          {
+            category: resource.category,
+            primaryTag: resource.primaryTag,
+            secondaryTags: resource.secondaryTags,
+            tags: resource.tags,
+            type: resource.studySpotTypes[0] || "interesting_spot",
+            stackDepthTag: resource.stackDepthTags[0] || null,
+            heroPosition: resource.heroPositionTags[0] || "unknown",
+            villainPosition: resource.villainPositionTags[0] || "unknown",
+            opponentType: resource.opponentTypeTags[0] || "unknown",
+          },
+          candidate,
+        ),
+      }))
+      .filter((item) => item.score && (item.score.anyTagMatch || item.score.categoryMatch))
+      .sort((a, b) => b.score.score - a.score.score)
+      .slice(0, 3)
+      .map((item) => item.candidate);
+    return res.json({ resource, relatedResources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Public Learning Library detail error", error);
+    return res.status(500).json({
+      error: "The lesson could not be loaded.",
+      code: "LEARNING_RESOURCE_LOAD_FAILED",
+    });
+  }
+});
+
+app.get("/admin/learning/taxonomy", requireAuth, requireAdmin, (_req, res) => {
+  return res.json(getStudySpotTaxonomy());
+});
+
+app.get("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const resources = await listLearningResources({
+      publishedOnly: false,
+      category: String(req.query?.category || "").trim() || null,
+      resourceType: String(req.query?.resourceType || "").trim() || null,
+      search: String(req.query?.search || "").trim() || null,
+    });
+    return res.json({ resources });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Admin Learning Library list error", error);
+    return res.status(500).json({ error: "Learning resources could not be loaded.", code: "LEARNING_RESOURCE_LIST_FAILED" });
+  }
+});
+
+app.get("/admin/learning/content-gaps", requireAuth, requireAdmin, async (_req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    return res.json({ gaps: await listContentGaps() });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Content gap list error", error);
+    return res.status(500).json({ error: "Content gaps could not be loaded.", code: "CONTENT_GAP_LIST_FAILED" });
+  }
+});
+
+app.get("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  const resource = await getLearningResourceById(String(req.params?.id || "").trim());
+  if (!resource) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+  return res.json({ resource });
+});
+
+app.post("/admin/learning/import/preview", requireAuth, requireLearningImporter, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    return res.json({ valid: true, resource: validation.resource, duplicates: [], warnings: validation.warnings });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/import", requireAuth, requireLearningImporter, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await createLearningResource({
+      ...validation.resource,
+      id: randomUUID(),
+    });
+    return res.status(201).json({ resource, imported: true, warnings: validation.warnings });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const validation = await validateLearningWrite(req.body);
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await createLearningResource({ ...validation.resource, id: randomUUID() });
+    return res.status(201).json({ resource });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.put("/admin/learning/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const id = String(req.params?.id || "").trim();
+    const validation = await validateLearningWrite(req.body, id);
+    if (!validation.ok) return res.status(validation.status).json(validation.payload);
+    const resource = await updateLearningResource({ ...validation.resource, id });
+    if (!resource) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+    return res.json({ resource });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/:id/:action(publish|unpublish)", requireAuth, requireAdmin, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const id = String(req.params?.id || "").trim();
+    const existing = await getLearningResourceById(id);
+    if (!existing) return res.status(404).json({ error: "Learning resource not found.", code: "LEARNING_RESOURCE_NOT_FOUND" });
+    const status = req.params.action === "publish" ? "published" : "draft";
+    if (status === "published") {
+      const parsed = validateLearningResourceInput({
+        ...learningResourceInputFromCanonical(existing),
+        status,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "This resource is not ready to publish.",
+          code: "INVALID_LEARNING_RESOURCE",
+          details: learningResourceValidationDetails(parsed.error),
+        });
+      }
+    }
+    return res.json({ resource: await setLearningResourceStatus(id, status) });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.get(
+  "/learning-resources",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({
+        error: "Learning resources require a configured database.",
+        code: "DATABASE_UNAVAILABLE",
+      });
+    }
+    try {
+      const tag = String(req.query?.tag || "").trim() || null;
+      const requestedUnpublished = String(req.query?.published || "true") === "false";
+      const publishedOnly = !requestedUnpublished || !req.entitlements?.admin;
+      const resources = await listLearningResources({ publishedOnly, tag });
+      return res.json({ resources });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Learning resource list error", error);
+      return res.status(500).json({
+        error: "Failed to list learning resources.",
+        code: "LEARNING_RESOURCE_LIST_FAILED",
+      });
+    }
+  },
+);
+
+app.post(
+  "/study-spots/analyse",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({
+        error: "Study Spots requires a configured database.",
+        code: "DATABASE_UNAVAILABLE",
+      });
+    }
+    const parsed = studySpotsAnalyseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body.",
+        code: "MALFORMED_UPLOAD",
+        details: parsed.error.flatten(),
+      });
+    }
+    const analysisStartedAt = Date.now();
+    const userId = req.auth?.userId || "";
+    logStudyTelemetry("study_spots_upload_started", {
+      userId,
+      uploadSource: parsed.data.uploadSource || "unknown",
+      inputBytes: Buffer.byteLength(parsed.data.historyText, "utf8"),
+      retry: false,
+    });
+    try {
+      const result = await analyseStudySpotsUpload({
+        userId,
+        ...parsed.data,
+        model: studySpotsAiModel,
+      });
+      if (result.usage) {
+        await trackAiUsage({
+          userId,
+          endpoint: "/study-spots/analyse",
+          model: studySpotsAiModel,
+          usage: result.usage,
+          hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+          consumeTrialCredits: false,
+        });
+      }
+      logStudyTelemetry("study_spots_analysis_completed", {
+        userId,
+        handCount: result.report?.handsAnalysed,
+        candidateCount: result.report?.candidateCount,
+        spotCount: result.report?.spotCount,
+        durationMs: Date.now() - analysisStartedAt,
+        pipelineVersion: result.report?.pipelineVersion,
+        model: result.report?.model,
+        promptTokens: result.usage?.prompt_tokens,
+        completionTokens: result.usage?.completion_tokens,
+        totalTokens: result.usage?.total_tokens,
+        retry: false,
+      });
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof TournamentUploadError) {
+        logStudyTelemetry("study_spots_parse_failed", {
+          userId,
+          errorCode: error.code,
+          detectedSite: detectStudyUploadSite(parsed.data.historyText),
+          durationMs: Date.now() - analysisStartedAt,
+        });
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...error.details,
+        });
+      }
+      logStudyTelemetry("study_spots_analysis_failed", {
+        userId,
+        stage: error?.reportId ? "classification" : "persistence",
+        errorCode: "ANALYSIS_FAILED",
+        durationMs: Date.now() - analysisStartedAt,
+        retry: false,
+      });
+      console.error("[pokerchaos-backend] Study Spot analysis error", error);
+      return res.status(502).json({
+        error: "Study Spot analysis failed. Your tournament was saved for retry.",
+        code: "ANALYSIS_FAILED",
+        reportId: error?.reportId || null,
+      });
+    }
+  },
+);
+
+app.get(
+  "/study-spots/reports",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({
+        error: "Study Reports require a configured database.",
+        code: "DATABASE_UNAVAILABLE",
+      });
+    }
+    try {
+      const reports = await listStudyReports(req.auth?.userId || "");
+      return res.json({ reports });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study Report list error", error);
+      return res.status(500).json({
+        error: "Failed to list Study Reports.",
+        code: "REPORT_LIST_FAILED",
+      });
+    }
+  },
+);
+
+app.get(
+  "/study-spots/reports/:reportId",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const parsed = studyReportIdParamSchema.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid report ID.",
+        code: "REPORT_NOT_FOUND",
+      });
+    }
+    try {
+      const report = await getStudyReport(
+        req.auth?.userId || "",
+        parsed.data.reportId,
+      );
+      if (!report) {
+        return res.status(404).json({
+          error: "Study Report not found.",
+          code: "REPORT_NOT_FOUND",
+        });
+      }
+      return res.json({ report });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study Report read error", error);
+      return res.status(500).json({
+        error: "Failed to load Study Report.",
+        code: "REPORT_READ_FAILED",
+      });
+    }
+  },
+);
+
+app.post(
+  "/study-spots/reports/:reportId/retry",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const parsed = studyReportIdParamSchema.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid report ID.",
+        code: "REPORT_NOT_FOUND",
+      });
+    }
+    const analysisStartedAt = Date.now();
+    const userId = req.auth?.userId || "";
+    try {
+      const failedReport = await getStudyReport(
+        userId,
+        parsed.data.reportId,
+      );
+      if (!failedReport) {
+        return res.status(404).json({
+          error: "Study Report not found.",
+          code: "REPORT_NOT_FOUND",
+        });
+      }
+      if (failedReport.status !== "failed") {
+        return res.status(409).json({
+          error: "Only failed Study Reports can be retried.",
+          code: "REPORT_NOT_RETRYABLE",
+        });
+      }
+      const tournament = await getTournamentUpload(
+        userId,
+        failedReport.tournamentId,
+      );
+      if (!tournament) {
+        return res.status(404).json({
+          error: "Saved tournament not found.",
+          code: "TOURNAMENT_NOT_FOUND",
+        });
+      }
+      logStudyTelemetry("study_spots_upload_started", {
+        userId,
+        uploadSource: "saved-tournament",
+        inputBytes: 0,
+        retry: true,
+      });
+      const result = await analyseSavedTournamentForStudy({
+        userId,
+        tournamentId: tournament.tournamentId,
+        compactHands: Array.isArray(tournament.parsedHands)
+          ? tournament.parsedHands
+          : [],
+        model: studySpotsAiModel,
+      });
+      if (result.usage) {
+        await trackAiUsage({
+          userId,
+          endpoint: "/study-spots/retry",
+          model: studySpotsAiModel,
+          usage: result.usage,
+          hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
+          consumeTrialCredits: false,
+        });
+      }
+      logStudyTelemetry("study_spots_analysis_completed", {
+        userId,
+        handCount: result.report?.handsAnalysed,
+        candidateCount: result.report?.candidateCount,
+        spotCount: result.report?.spotCount,
+        durationMs: Date.now() - analysisStartedAt,
+        pipelineVersion: result.report?.pipelineVersion,
+        model: result.report?.model,
+        promptTokens: result.usage?.prompt_tokens,
+        completionTokens: result.usage?.completion_tokens,
+        totalTokens: result.usage?.total_tokens,
+        retry: true,
+      });
+      return res.json(result);
+    } catch (error) {
+      logStudyTelemetry("study_spots_analysis_failed", {
+        userId,
+        stage: "retry",
+        errorCode: "ANALYSIS_FAILED",
+        durationMs: Date.now() - analysisStartedAt,
+        retry: true,
+      });
+      console.error("[pokerchaos-backend] Study Report retry error", error);
+      return res.status(502).json({
+        error: "Study Spot analysis retry failed.",
+        code: "ANALYSIS_FAILED",
+        reportId: error?.reportId || null,
+      });
+    }
+  },
+);
+
+app.get(
+  "/study-queue",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const status = String(req.query?.status || "").trim() || null;
+    if (status && !["to_review", "completed"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid queue status.",
+        code: "INVALID_QUEUE_STATUS",
+      });
+    }
+    try {
+      const items = await listStudyQueueItems(req.auth?.userId || "", status);
+      return res.json({ items });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study queue list error", error);
+      return res.status(500).json({
+        error: "Failed to load My Study.",
+        code: "STUDY_QUEUE_READ_FAILED",
+      });
+    }
+  },
+);
+
+app.put(
+  "/study-queue/:studySpotId",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const parsed = studySpotIdParamSchema.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid Study Spot ID.",
+        code: "STUDY_SPOT_NOT_FOUND",
+      });
+    }
+    try {
+      const item = await saveStudyQueueItem(
+        req.auth?.userId || "",
+        parsed.data.studySpotId,
+      );
+      if (!item) {
+        return res.status(404).json({
+          error: "Study Spot not found.",
+          code: "STUDY_SPOT_NOT_FOUND",
+        });
+      }
+      logStudyTelemetry("study_spot_saved", {
+        userId: req.auth?.userId,
+        spotKey: telemetryKey(parsed.data.studySpotId),
+      });
+      return res.json({ item });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study queue save error", error);
+      return res.status(500).json({
+        error: "Failed to save Study Spot.",
+        code: "STUDY_QUEUE_SAVE_FAILED",
+      });
+    }
+  },
+);
+
+app.patch(
+  "/study-queue/:studySpotId",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const params = studySpotIdParamSchema.safeParse(req.params ?? {});
+    const body = studyQueueStatusSchema.safeParse(req.body ?? {});
+    if (!params.success || !body.success) {
+      return res.status(400).json({
+        error: "Invalid queue update.",
+        code: "INVALID_QUEUE_STATUS",
+      });
+    }
+    try {
+      const item = await updateStudyQueueItemStatus(
+        req.auth?.userId || "",
+        params.data.studySpotId,
+        body.data.status,
+      );
+      if (!item) {
+        return res.status(404).json({
+          error: "Study queue item not found.",
+          code: "STUDY_SPOT_NOT_FOUND",
+        });
+      }
+      if (body.data.status === "completed") {
+        logStudyTelemetry("study_spot_completed", {
+          userId: req.auth?.userId,
+          spotKey: telemetryKey(params.data.studySpotId),
+        });
+      }
+      return res.json({ item });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study queue update error", error);
+      return res.status(500).json({
+        error: "Failed to update Study Spot.",
+        code: "STUDY_QUEUE_UPDATE_FAILED",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/study-queue/:studySpotId",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const parsed = studySpotIdParamSchema.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid Study Spot ID.",
+        code: "STUDY_SPOT_NOT_FOUND",
+      });
+    }
+    try {
+      const deleted = await deleteStudyQueueItem(
+        req.auth?.userId || "",
+        parsed.data.studySpotId,
+      );
+      if (!deleted) {
+        return res.status(404).json({
+          error: "Study queue item not found.",
+          code: "STUDY_SPOT_NOT_FOUND",
+        });
+      }
+      return res.json({ deleted: true });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study queue delete error", error);
+      return res.status(500).json({
+        error: "Failed to remove Study Spot.",
+        code: "STUDY_QUEUE_DELETE_FAILED",
+      });
+    }
+  },
+);
 
 app.get("/me/ai-usage", requireAuth, async (req, res) => {
   if (!isDatabaseConfigured()) {
@@ -1471,6 +2231,7 @@ async function trackAiUsage({
   model,
   usage,
   hasActiveSubscription = false,
+  consumeTrialCredits = true,
 }) {
   const safeUsage = normalizeUsage(usage);
   const costs = calculateUsageCost(safeUsage);
@@ -1486,13 +2247,17 @@ async function trackAiUsage({
     totalCostUsd: costs.totalCostUsd,
   });
   let trial = null;
-  if (enableAiTrial && !hasActiveSubscription) {
+  if (consumeTrialCredits && enableAiTrial && !hasActiveSubscription) {
     trial = await consumeAiTrialTokens(userId, safeUsage.total_tokens);
   }
   return { monthlyUsage, trial };
 }
 
-app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
+app.post(
+  "/prompts",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.COACH),
+  async (req, res) => {
   const parsed = promptSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -1517,12 +2282,13 @@ app.post("/prompts", requireAuth, requireFeature("coach"), async (req, res) => {
       error: "Failed to generate ChaosCoach line. Please try again later.",
     });
   }
-});
+  },
+);
 
 app.post(
   "/replay-vision/cards",
   requireAuth,
-  requireFeature("coach"),
+  requireCapability(CAPABILITY_KEYS.COACH),
   async (req, res) => {
     const parsed = replayVisionSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -1551,7 +2317,7 @@ app.post(
 app.post(
   "/hand-history/parse",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     const parsed = handHistorySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -1609,7 +2375,7 @@ app.post(
 app.post(
   "/performance/tournaments",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1661,7 +2427,7 @@ app.post(
 app.get(
   "/performance/tournaments",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1690,7 +2456,7 @@ app.get(
 app.delete(
   "/performance/tournaments/:tournamentId",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1736,7 +2502,7 @@ app.delete(
 app.post(
   "/tournaments/upload",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1754,81 +2520,15 @@ app.post(
     }
 
     try {
-      const parsedHands = parseHandHistory(parsed.data.historyText, {
-        heroName: parsed.data.heroName,
-      });
-      const allHands = parsedHands.filter(
-        (hand) => String(hand?.gameType || "").toLowerCase() === "tournament",
-      );
-      if (!allHands.length) {
-        return res.status(400).json({
-          error:
-            "No valid tournament hands were found in the upload. Verify the hand history format.",
-        });
-      }
-
-      const { tournamentId, ids } = resolveTournamentIdFromHands(
-        allHands,
-        parsed.data.tournamentId,
-      );
-      if (!tournamentId) {
-        return res.status(400).json({
-          error:
-            "Unable to resolve a single tournament ID from this upload. Provide tournamentId explicitly.",
-          detectedTournamentIds: ids,
-        });
-      }
-
-      let resolvedTournamentId = tournamentId;
-      let tournamentHands = allHands.filter(
-        (hand) => String(hand?.tournamentId || "").trim() === tournamentId,
-      );
-      if (!tournamentHands.length && ids.length === 1) {
-        resolvedTournamentId = ids[0];
-        tournamentHands = allHands.filter(
-          (hand) =>
-            String(hand?.tournamentId || "").trim() === resolvedTournamentId,
-        );
-      }
-      if (!tournamentHands.length) {
-        return res.status(400).json({
-          error: "No hands matched the provided tournamentId in this upload.",
-          tournamentId: resolvedTournamentId,
-          detectedTournamentIds: ids,
-        });
-      }
-
-      const filtered = filterHandsForReview(tournamentHands, {
-        includeOnlyHeroDidNotFoldPreflop: false,
-      });
-      const sorted = sortHands(filtered, "newest");
-      const tournamentPlayedAtEpoch =
-        resolveTournamentPlayedAtEpoch(tournamentHands);
-      const summary = summarizeTournamentHands(
-        tournamentHands,
-        filtered,
-        parsed.data.heroName,
-        "newest",
-        sorted.length,
-      );
-      const opponents = buildOpponentSnapshot(tournamentHands, {
-        heroName: parsed.data.heroName,
-        minHands: 1,
-      });
-      const compactHands = sorted.map(compactHandForApi);
-
-      const saved = await upsertTournamentUpload({
+      const upload = await saveTournamentHistory({
         userId: req.auth?.userId || "",
-        tournamentId: resolvedTournamentId,
-        heroName: parsed.data.heroName,
-        tournamentName: parsed.data.tournamentName,
-        tournamentPlayedAtEpoch,
-        uploadSource: parsed.data.uploadSource,
         historyText: parsed.data.historyText,
-        parsedHands: compactHands,
-        opponentSnapshot: opponents,
-        summary,
+        heroName: parsed.data.heroName,
+        tournamentId: parsed.data.tournamentId,
+        tournamentName: parsed.data.tournamentName,
+        uploadSource: parsed.data.uploadSource,
       });
+      const { compactHands, saved, summary, tournamentId } = upload;
       const suppliedReviewsByHandKey =
         parsed.data.reviewsByHandKey &&
         typeof parsed.data.reviewsByHandKey === "object"
@@ -1850,7 +2550,7 @@ app.post(
         if (Object.keys(filteredReviewsByHandKey).length > 0) {
           await upsertAiHandReviews({
             userId: req.auth?.userId || "",
-            tournamentId: resolvedTournamentId,
+            tournamentId,
             reviewsByHandKey: filteredReviewsByHandKey,
           });
         }
@@ -1866,12 +2566,15 @@ app.post(
           createdAt: saved.createdAt,
         },
         summary,
-        resolvedTournamentId:
-          resolvedTournamentId !== tournamentId
-            ? resolvedTournamentId
-            : undefined,
       });
     } catch (error) {
+      if (error instanceof TournamentUploadError) {
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...error.details,
+        });
+      }
       console.error("[pokerchaos-backend] Tournament upload error", error);
       return res.status(500).json({
         error: "Failed to upload tournament history. Please try again.",
@@ -1883,7 +2586,7 @@ app.post(
 app.get(
   "/tournaments",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1907,7 +2610,7 @@ app.get(
 app.get(
   "/tournaments/:tournamentId",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -1966,7 +2669,7 @@ app.get(
 app.delete(
   "/tournaments/:tournamentId",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -2011,7 +2714,7 @@ app.delete(
 app.post(
   "/tournaments/:tournamentId/delete",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(500).json({
@@ -2056,7 +2759,7 @@ app.post(
 app.post(
   "/hand-history/review",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   requireReviewAi,
   async (req, res) => {
     const selectedHandsRaw = Array.isArray(req.body?.selectedHands)
@@ -2205,7 +2908,7 @@ app.post(
 app.post(
   "/hand-history/summary-review",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   requireReviewAi,
   async (req, res) => {
     const parsed = summaryReviewSchema.safeParse(req.body ?? {});
@@ -2274,7 +2977,7 @@ app.post(
 app.post(
   "/hand-history/icm-review",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   requireReviewAi,
   async (req, res) => {
     const parsed = icmReviewSchema.safeParse(req.body ?? {});
@@ -2343,7 +3046,7 @@ app.post(
 app.post(
   "/hand-history/blind-defense-review",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   requireReviewAi,
   async (req, res) => {
     const parsed = blindDefenseReviewSchema.safeParse(req.body ?? {});
@@ -2412,7 +3115,7 @@ app.post(
 app.post(
   "/hand-history/table-hint",
   requireAuth,
-  requireFeature("review"),
+  requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
   requireReviewAi,
   async (req, res) => {
     const parsed = tableHintSchema.safeParse(req.body ?? {});
@@ -2513,6 +3216,7 @@ async function boot() {
   if (isDatabaseConfigured()) {
     try {
       await initDatabase();
+      await seedLearningResources(LEARNING_RESOURCE_SEED);
       console.log("[pokerchaos-backend] Postgres initialized.");
     } catch (error) {
       console.error(

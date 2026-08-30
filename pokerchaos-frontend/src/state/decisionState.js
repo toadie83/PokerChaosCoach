@@ -183,6 +183,39 @@ export function postflopSeatOrder(tableSize = 8) {
   return ["SB", "BB", ...seats.filter((seat) => seat !== "SB" && seat !== "BB")];
 }
 
+export function preflopPlayersYetToAct(state = {}) {
+  if (String(state.street || "preflop").toLowerCase() !== "preflop") return [];
+  const decisionKind = String(state.decisionKind || "").toLowerCase();
+  if (
+    ![
+      "unopened",
+      "limped",
+      "facing_open",
+      "facing_open_callers",
+      "facing_open_and_3bet",
+    ].includes(
+      decisionKind,
+    )
+  ) {
+    return [];
+  }
+  const seats = seatsForTableSize(Number(state.tableSize || 8));
+  const heroSeat = String(state.heroSeat || "").toUpperCase();
+  const heroIndex = seats.indexOf(heroSeat);
+  if (heroIndex < 0) return [];
+  return seats.slice(heroIndex + 1);
+}
+
+function isUnambiguousPreflopStackOffHand(heroCards = {}) {
+  const cards = [heroCards?.card1, heroCards?.card2]
+    .map((card) => String(card || "").trim().toUpperCase())
+    .filter((card) => /^[AKQJT2-9][SHDC]$/.test(card));
+  if (cards.length !== 2) return false;
+  const ranks = cards.map((card) => card[0]);
+  if (ranks[0] === ranks[1]) return ["A", "K", "Q"].includes(ranks[0]);
+  return ranks.includes("A") && ranks.includes("K");
+}
+
 export function deriveRelativePosition(state = {}) {
   const explicit = String(state.heroRelativePosition || "auto").toLowerCase();
   if (explicit === "ip" || explicit === "oop") return explicit;
@@ -211,6 +244,7 @@ export function legalActionsForDecision(kind, state = {}) {
     case "facing_open_callers":
       return ["fold", "call", "3-bet", "jam"];
     case "facing_3bet":
+    case "facing_open_and_3bet":
       return ["fold", "call", "4-bet", "jam"];
     case "facing_4bet":
       return ["fold", "call", "jam"];
@@ -523,7 +557,9 @@ export function minimumRaiseToForDecision(state = {}, facingAction = state.facin
   const priorState = facingRowIndex >= 0
     ? { ...state, history: rows.filter((_, index) => index !== facingRowIndex) }
     : state;
-  const priorBetBB = streetCommitments(priorState).currentBetBB;
+  const priorBetBB =
+    finitePositiveOrNull(facingAction.initialOpenAmountBB) ||
+    streetCommitments(priorState).currentBetBB;
   const raiseIncrementBB = Number((targetBB - priorBetBB).toFixed(2));
   if (raiseIncrementBB <= 0) return null;
   return Number((targetBB + raiseIncrementBB).toFixed(2));
@@ -543,7 +579,7 @@ export function buildDecisionNode(state = {}) {
           ).toFixed(2),
         )
       : null;
-  const potBB =
+  const rawPotBB =
     finitePositiveOrNull(state.estimatedPotBB) ||
     finitePositiveOrNull(state.potSizes?.total) ||
     forcedPreflopPotBB;
@@ -559,8 +595,42 @@ export function buildDecisionNode(state = {}) {
   const commitments = streetCommitments(state);
   const callAmountBB = amountToCallForFacingAction(state, facing);
   const minimumRaiseToBB = minimumRaiseToForDecision(state, facing);
+  const heroMaximumCurrentStreetToBB =
+    stackState.heroStackBehindBB !== null
+      ? Number(
+          (
+            commitments.heroCommittedBB + stackState.heroStackBehindBB
+          ).toFixed(2),
+        )
+      : null;
+  const uncalledExcessBB =
+    facing && heroMaximumCurrentStreetToBB !== null
+      ? Number(
+          Math.max(
+            0,
+            commitments.opponentCommittedBB - heroMaximumCurrentStreetToBB,
+          ).toFixed(2),
+        )
+      : 0;
+  const potCorrectionBB =
+    rawPotBB &&
+    uncalledExcessBB > 0 &&
+    rawPotBB >= commitments.opponentCommittedBB
+      ? Math.min(rawPotBB, uncalledExcessBB)
+      : 0;
+  const potBB = rawPotBB
+    ? Number(Math.max(0, rawPotBB - potCorrectionBB).toFixed(2)) || null
+    : null;
   const potOddsPct = potBB && callAmountBB
     ? Number(((callAmountBB / (potBB + callAmountBB)) * 100).toFixed(1))
+    : null;
+  const potOdds = potOddsPct !== null
+    ? {
+        requiredEquityPct: potOddsPct,
+        callAmountBB,
+        potBeforeCallBB: potBB,
+        potAfterCallBB: Number((potBB + callAmountBB).toFixed(2)),
+      }
     : null;
   const spr = potBB && effectiveStackBB
     ? Number((effectiveStackBB / potBB).toFixed(2))
@@ -587,6 +657,40 @@ export function buildDecisionNode(state = {}) {
           ).toFixed(2),
         )
       : null;
+  const playersYetToActSeats = preflopPlayersYetToAct(state);
+  const playersYetToActCount = playersYetToActSeats.length;
+  const activeActorsBeforeSeatsBehind =
+    String(state.decisionKind || "").toLowerCase() ===
+    "facing_open_and_3bet"
+      ? 3
+      : state.facingAction
+        ? 2
+        : 1;
+  const playersLiveAtDecision = Math.max(
+    Math.max(2, Number(state.playersInHand || 2)),
+    playersYetToActCount + activeActorsBeforeSeatsBehind,
+  );
+  const heroExposureBeyondPrimaryOpponentBB =
+    maxHeroTotalToBB !== null && maxOpponentTotalToBB !== null
+      ? Number(Math.max(0, maxHeroTotalToBB - maxOpponentTotalToBB).toFixed(2))
+      : null;
+  const primaryOpponentExposureRatio =
+    maxHeroTotalToBB !== null && maxOpponentTotalToBB !== null
+      ? Number((maxHeroTotalToBB / maxOpponentTotalToBB).toFixed(2))
+      : null;
+  const overjamPlayersBehindRisk =
+    (state.street || "preflop") === "preflop" &&
+    ["facing_open", "facing_open_callers"].includes(
+      String(state.decisionKind || "").toLowerCase(),
+    ) &&
+    playersYetToActCount > 0 &&
+    maxHeroTotalToBB !== null &&
+    maxOpponentTotalToBB !== null &&
+    maxHeroTotalToBB >= 30 &&
+    (heroExposureBeyondPrimaryOpponentBB >= 15 ||
+      primaryOpponentExposureRatio >= 2) &&
+    !Boolean(facing?.allIn) &&
+    !isUnambiguousPreflopStackOffHand(state.heroCards);
   const facingTargetBB = finitePositiveOrNull(
     facing?.toAmountBB ?? facing?.amountBB,
   );
@@ -605,6 +709,7 @@ export function buildDecisionNode(state = {}) {
     ) {
       return false;
     }
+    if (action === "jam" && overjamPlayersBehindRisk) return false;
     if (maxHeroTotalToBB === null || action === "jam") return true;
     const minimumTarget =
       action === "open"
@@ -630,6 +735,13 @@ export function buildDecisionNode(state = {}) {
   if (Number(state.playersInHand || 2) > 2) {
     missingInformation.push("remaining_player_positions");
   }
+  if (playersYetToActCount > 0) {
+    missingInformation.push("players_yet_to_act_stack_sizes");
+  }
+  if (String(state.decisionKind || "").toLowerCase() === "facing_open_and_3bet") {
+    if (!facing?.initialOpenerSeat) missingInformation.push("initial_opener_seat");
+    missingInformation.push("initial_opener_stack_bb");
+  }
   const requiredBoardCount = {
     flop: 3,
     turn: 4,
@@ -644,6 +756,24 @@ export function buildDecisionNode(state = {}) {
     missingInformation.push("facing_amount_bb");
   }
 
+  const strategicRestrictions = [];
+  if (overjamPlayersBehindRisk) {
+    strategicRestrictions.push({
+      action: "jam",
+      code: "short_opener_players_behind_overjam",
+      reason:
+        "The primary opponent's short stack does not cap Hero's exposure while unacted players with unknown stacks remain behind.",
+    });
+  }
+  if (String(state.decisionKind || "").toLowerCase() === "facing_open_and_3bet") {
+    strategicRestrictions.push({
+      action: "jam",
+      code: "cold_3bet_two_villain_exposure",
+      reason:
+        "The initial opener remains active behind the separate 3-bettor, and any unacted seats behind Hero can also continue; assess Hero's full exposure against every live range.",
+    });
+  }
+
   return {
     street: state.street || "preflop",
     decisionKind: state.decisionKind || null,
@@ -652,10 +782,20 @@ export function buildDecisionNode(state = {}) {
     relativePosition: deriveRelativePosition(state),
     tableSize: Number(state.tableSize || 8),
     playersInHand: Math.max(2, Number(state.playersInHand || 2)),
+    playersLiveAtDecision,
+    playersYetToActSeats,
+    playersYetToActCount,
     gameType: state.gameType || "tournament",
+    bountyMode:
+      state.gameType === "cash" ? "none" : state.bountyMode || "none",
     anteBB,
     potBB,
+    rawPotBB,
+    contestablePotBB: potBB,
+    uncalledExcessBB,
+    potCorrectionBB,
     effectiveStackBB,
+    primaryOpponentEffectiveStackBB: effectiveStackBB,
     startingEffectiveStackBB: stackState.startingEffectiveStackBB,
     startingHeroStackBB: stackState.startingHeroStackBB,
     startingOpponentStackBB: stackState.startingOpponentStackBB,
@@ -666,6 +806,10 @@ export function buildDecisionNode(state = {}) {
     opponentTotalCommittedBB: stackState.opponentTotalCommittedBB,
     maxHeroTotalToBB,
     maxOpponentTotalToBB,
+    heroMaximumExposureBB: maxHeroTotalToBB,
+    heroExposureBeyondPrimaryOpponentBB,
+    playersYetToActStacksKnown: playersYetToActCount === 0,
+    strategicRestrictions,
     effectiveStackToPotRatio: spr,
     heroStackToPotRatio:
       potBB && stackState.heroStackBehindBB !== null
@@ -682,12 +826,17 @@ export function buildDecisionNode(state = {}) {
           : "unknown",
     spr,
     potOddsPct,
+    potOdds,
     minimumRaiseToBB,
     minimumBetBB:
       Array.isArray(state.legalActions) && state.legalActions.includes("bet") ? 1 : null,
     heroCommittedBB: commitments.heroCommittedBB,
     opponentCommittedBB: commitments.opponentCommittedBB,
     currentBetBB: commitments.currentBetBB,
+    preflopSequence:
+      state.preflopSequence && typeof state.preflopSequence === "object"
+        ? { ...state.preflopSequence }
+        : null,
     facingAction: facing
       ? {
           type: String(facing.type || "unknown"),
@@ -696,6 +845,11 @@ export function buildDecisionNode(state = {}) {
           toAmountBB: finitePositiveOrNull(facing.toAmountBB),
           callAmountBB,
           allIn: Boolean(facing.allIn),
+          initialOpenAmountBB: finitePositiveOrNull(
+            facing.initialOpenAmountBB,
+          ),
+          initialOpenerSeat: facing.initialOpenerSeat || null,
+          openerStillActive: Boolean(facing.openerStillActive),
         }
       : null,
     lastAggressorSeat: state.lastAggressorSeat || null,
@@ -795,7 +949,18 @@ export function assumedHeroEventFromRecommendation(recommendation, state = {}) {
       : {}),
     recommendation: normalizedRecommendation,
     assumed: true,
+    assumedDecisionKey: decisionKeyForAssumedAction(state),
   };
+}
+
+export function decisionKeyForAssumedAction(state = {}) {
+  return [
+    state.street || "preflop",
+    state.lastEvent || "decision",
+    state.decisionKind || "unknown",
+    Array.isArray(state.history) ? state.history.length : 0,
+    state.nextActor || "hero",
+  ].join(":");
 }
 
 export function compareRecommendation(

@@ -10,6 +10,26 @@ This project mirrors the SickDayGPT split frontend/backend structure and convent
 
 ## Getting Started
 
+### Quick start (all services)
+
+Start the frontend, livestream, and backend together from the repository root:
+
+```bash
+npm run dev
+```
+
+Press `Ctrl+C` to stop all three processes.
+
+Before the first run, install the application dependencies in each folder if
+you have not already done so:
+
+```bash
+npm --prefix pokerchaos-frontend install
+npm --prefix pokerchaos-backend install
+```
+
+### Start services separately
+
 1. Backend
 
 - Copy `pokerchaos-backend` to your new project
@@ -74,3 +94,5 @@ Backend feature access is configured by env vars:
 - `REVIEW_ALLOWED_EMAILS`: comma-separated email addresses with review access.
 - `COACH_ALLOWED_EMAILS`: comma-separated email addresses with coach access.
 - `ADMIN_ALLOWED_EMAILS`: comma-separated email addresses with access to all features.
+- `LEARNING_IMPORT_ALLOWED_USER_IDS`: comma-separated Clerk user IDs restricted to learning-resource preview and import.
+- `LEARNING_IMPORT_ALLOWED_EMAILS`: comma-separated Clerk emails restricted to learning-resource preview and import.

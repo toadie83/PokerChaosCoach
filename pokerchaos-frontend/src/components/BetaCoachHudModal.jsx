@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import CoachStateReceipt from "./CoachStateReceipt.jsx";
 
 const SUIT_SYMBOLS = {
   s: "♠",
@@ -55,7 +56,12 @@ function PlayingCard({ card, label, onClick, compact = false }) {
 }
 
 function formatActionAmount(entry) {
-  const amount = Number(entry?.toAmountBB ?? entry?.amountBB);
+  const isCall = String(entry?.action || "").toLowerCase() === "call";
+  const amount = Number(
+    isCall
+      ? entry?.amountBB ?? entry?.toAmountBB
+      : entry?.toAmountBB ?? entry?.amountBB,
+  );
   if (Number.isFinite(amount) && amount > 0) return `${amount} BB`;
   if (entry?.sizing?.kind === "percent") return `${entry.sizing.value}% pot`;
   if (entry?.sizing?.kind === "multiple") return `${entry.sizing.value}x`;
@@ -114,6 +120,7 @@ export default function BetaCoachHudModal({
   effectiveStack,
   potTotal,
   spr,
+  potOdds,
   sizingNote,
   replayVisionStatus,
   decisionMoments = [],
@@ -127,6 +134,12 @@ export default function BetaCoachHudModal({
   onEditRiver,
   onOpenStacks,
   onClearActions,
+  onUndoAction,
+  canUndo = false,
+  bountyMode = "none",
+  bountyModeOptions = [],
+  onBountyModeChange,
+  showBountyControl = false,
 }) {
   const closeButtonRef = useRef(null);
 
@@ -157,6 +170,10 @@ export default function BetaCoachHudModal({
     () => new Set(decisionMoments.map((moment) => moment.street)),
     [decisionMoments],
   );
+  const selectedBountyOption =
+    bountyModeOptions.find((option) => option.code === bountyMode) ||
+    bountyModeOptions[0] ||
+    null;
 
   if (!open) return null;
 
@@ -233,6 +250,27 @@ export default function BetaCoachHudModal({
               </select>
               <span aria-hidden="true">⌄</span>
             </label>
+            {showBountyControl ? (
+              <label
+                className={`beta-coach-status-chip beta-coach-street-control beta-coach-bounty-control${
+                  bountyMode !== "none" ? " is-active" : ""
+                }`}
+                title={selectedBountyOption?.description || "Bounty tournament format"}
+              >
+                <select
+                  aria-label="Bounty tournament format"
+                  value={bountyMode}
+                  onChange={(event) => onBountyModeChange?.(event.target.value)}
+                >
+                  {bountyModeOptions.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.shortLabel || option.label}
+                    </option>
+                  ))}
+                </select>
+                <span aria-hidden="true">&#9662;</span>
+              </label>
+            ) : null}
             <span className={`beta-coach-status-chip is-vision${visionActive ? " is-active" : ""}`}>
               <span className="beta-coach-live-dot" aria-hidden="true" />
               {replayVisionStatus === "reading"
@@ -288,7 +326,7 @@ export default function BetaCoachHudModal({
               </div>
             </div>
 
-            <div className="beta-coach-stats">
+            <div className={`beta-coach-stats${potOdds ? " has-pot-odds" : ""}`}>
               <label className="beta-coach-stat is-control">
                 <span>Position</span>
                 <select
@@ -339,6 +377,18 @@ export default function BetaCoachHudModal({
                 <span>SPR</span>
                 <strong>{spr || "—"}</strong>
               </div>
+              {potOdds ? (
+                <div
+                  className="beta-coach-stat is-pot-odds"
+                  title="Minimum raw equity required by the current price, before range, ICM, and exploit adjustments"
+                >
+                  <span>Pot odds</span>
+                  <strong>{potOdds.requiredEquityPct}% needed</strong>
+                  <small>
+                    Call {potOdds.callAmountBB} → {potOdds.potAfterCallBB} BB
+                  </small>
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -404,6 +454,15 @@ export default function BetaCoachHudModal({
                         ))}
                       </ul>
                     </details>
+                  ) : null}
+                  {coach?.decision_receipt ? (
+                    <CoachStateReceipt
+                      compact
+                      receipt={coach.decision_receipt}
+                      onEditCards={onEditHero}
+                      onEditStacks={onOpenStacks}
+                      onUndoAction={onUndoAction}
+                    />
                   ) : null}
                 </>
               ) : (
@@ -492,6 +551,15 @@ export default function BetaCoachHudModal({
                   onClick={onSaveDecisionMoment}
                 >
                   <span aria-hidden="true">＋</span> Save moment
+                </button>
+                <button
+                  type="button"
+                  className="beta-coach-text-button"
+                  onClick={onUndoAction}
+                  disabled={!canUndo || loading}
+                  title="Undo the latest entered action"
+                >
+                  Undo
                 </button>
                 {history.length ? (
                   <button type="button" className="beta-coach-text-button" onClick={onClearActions}>

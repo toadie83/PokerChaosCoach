@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import CoachStateReceipt from "./CoachStateReceipt.jsx";
 
 function truncate(text, limit = 120) {
   if (!text) return "";
@@ -16,6 +17,7 @@ export default function DecisionCard({
   coach,
   isLoading,
   handComplete,
+  canAdvanceStreet = false,
   onNextStreet,
   onResetHand,
   sizingNote,
@@ -25,6 +27,9 @@ export default function DecisionCard({
   alternativeSizes = [],
   onSelectAlternativeSize,
   comparison,
+  onEditCards,
+  onEditStacks,
+  onUndoAction,
 }) {
   const [expanded, setExpanded] = useState(false);
   const action = coach?.hero_action ? String(coach.hero_action).toUpperCase() : null;
@@ -39,11 +44,12 @@ export default function DecisionCard({
   const alternativeSizing = coach?.alternative_sizing ?? "";
   const hasDetails = flavor && flavor.length > 0;
   const summary = useMemo(() => truncate(flavor), [flavor]);
+  const isEmpty = !isLoading && !action;
 
   // const showAlternative = Array.isArray(alternativeSizes) && alternativeSizes.length > 0;
 
   return (
-    <div className="decision-card">
+    <div className={`decision-card${isEmpty ? " is-empty" : ""}`} aria-live="polite">
       <div className="decision-card-header">
         <div className="decision-headline">
           {isLoading ? (
@@ -54,55 +60,68 @@ export default function DecisionCard({
               {sizing ? <span className="decision-sizing">{sizing}</span> : null}
             </>
           ) : (
-            <span className="decision-placeholder">Trigger an event to get guidance.</span>
+            <span className="decision-placeholder">
+              Choose the action before Hero for guidance.
+            </span>
           )}
         </div>
-        <div className="decision-cta">
-          {handComplete ? (
-            <button className="primary" onClick={onResetHand}>
-              Start Next Hand
-            </button>
-          ) : (
-            <button className="primary" onClick={onNextStreet} disabled={!onNextStreet}>
-              Next Street
-            </button>
-          )}
+        <div className="decision-card-controls">
+          {statusBadges.length > 0 ? (
+            <div className="decision-badges">
+              {statusBadges.map((badge) => {
+                const key = `${badge.label}-${badge.value ?? ""}`;
+                const content = (
+                  <>
+                    {badge.icon ? <span className="badge-icon">{badge.icon}</span> : null}
+                    <span className="badge-label">{badge.label}</span>
+                    {badge.value ? <span className="badge-value">{badge.value}</span> : null}
+                  </>
+                );
+                const clickable = typeof badge.onClick === "function";
+                const variantClass = badge.variant ? ` ${badge.variant}` : "";
+                if (clickable) {
+                  return (
+                    <button
+                      type="button"
+                      key={key}
+                      className={`badge badge-button clickable${variantClass}`}
+                      onClick={badge.onClick}
+                      title={badge.title}
+                    >
+                      {content}
+                    </button>
+                  );
+                }
+                return (
+                  <span
+                    key={key}
+                    className={`badge${variantClass}`}
+                    title={badge.title}
+                  >
+                    {content}
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
+          <div className="decision-cta">
+            {handComplete ? (
+              <button type="button" className="primary" onClick={onResetHand}>
+                Start Next Hand
+              </button>
+            ) : canAdvanceStreet ? (
+              <button
+                type="button"
+                className="primary"
+                onClick={onNextStreet}
+                disabled={!onNextStreet}
+              >
+                Next Street
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
-
-      {statusBadges.length > 0 ? (
-        <div className="decision-badges">
-          {statusBadges.map((badge) => {
-            const key = `${badge.label}-${badge.value ?? ""}`;
-            const content = (
-              <>
-                {badge.icon ? <span className="badge-icon">{badge.icon}</span> : null}
-                <span className="badge-label">{badge.label}</span>
-                {badge.value ? <span className="badge-value">{badge.value}</span> : null}
-              </>
-            );
-            const clickable = typeof badge.onClick === "function";
-            const variantClass = badge.variant ? ` ${badge.variant}` : "";
-            if (clickable) {
-              return (
-                <button
-                  type="button"
-                  key={key}
-                  className={`badge badge-button clickable${variantClass}`}
-                  onClick={badge.onClick}
-                >
-                  {content}
-                </button>
-              );
-            }
-            return (
-              <span key={key} className={`badge${variantClass}`}>
-                {content}
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
 
       {isLoading ? null : (
         <>
@@ -147,6 +166,15 @@ export default function DecisionCard({
             <p className="decision-note">
               <span className="badge muted">Sizing</span> {sizingNote}
             </p>
+          ) : null}
+
+          {action && coach?.decision_receipt ? (
+            <CoachStateReceipt
+              receipt={coach.decision_receipt}
+              onEditCards={onEditCards}
+              onEditStacks={onEditStacks}
+              onUndoAction={onUndoAction}
+            />
           ) : null}
 
           {comparison?.actualAction ? (

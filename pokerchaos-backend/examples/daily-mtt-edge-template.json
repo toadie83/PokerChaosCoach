@@ -1,0 +1,39 @@
+{
+  "externalId": "daily-mtt-edge-template-001",
+  "series": "Daily MTT Edge",
+  "lessonNumber": 1,
+  "slug": "defend-the-big-blind-with-a-plan",
+  "title": "Defend the Big Blind With a Plan",
+  "shortTitle": "Big Blind Defence",
+  "description": "Use price, position, and stack depth to build a disciplined big blind defending range.",
+  "resourceType": "quick_lesson",
+  "category": "preflop",
+  "primaryTag": "bb-defence",
+  "secondaryTags": ["short-stack"],
+  "stackDepthTags": ["15-25", "25-40"],
+  "heroPositionTags": ["BB"],
+  "villainPositionTags": ["CO", "BTN", "SB"],
+  "opponentTypeTags": [],
+  "studySpotTypes": ["close_decision", "recurring_pattern"],
+  "body": "Start with the price you are being offered, then account for the opener's position, range, and the effective stack. A marginal hand can be a profitable defend against a wide button range while remaining a clear fold against an early-position open.",
+  "exampleSpot": "At 24 BB effective, Hero is in the big blind facing a 2.1 BB button open. The late-position range and immediate price support defending more hands than against an early-position open.",
+  "mistake": "Using one fixed big blind range without adjusting for opener position, sizing, or effective stack.",
+  "betterPlay": "Build the decision from pot odds and range interaction, then tighten or widen for the actual opener and stack depth.",
+  "whenToUse": [
+    "Heads-up against a late-position open",
+    "When antes improve the price",
+    "When the effective stack allows postflop play"
+  ],
+  "whenNotToUse": [
+    "Against a tight early-position range",
+    "When action behind can reopen",
+    "When the stack creates a cleaner reshove-or-fold decision"
+  ],
+  "takeaway": "Big blind defence is a price-and-range decision, not a fixed hand chart.",
+  "status": "draft",
+  "publishedAt": null,
+  "instagramCaption": "",
+  "instagramUrl": "",
+  "sourceUrl": "",
+  "priority": 70
+}

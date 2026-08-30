@@ -123,6 +123,60 @@ test("passes structurally valid low-confidence reads for first-pass acceptance",
   assert.equal(lowConfidence.manualReviewSuggested, true);
 });
 
+test("normalizes an independently confirmed start-of-hand Hero stack", () => {
+  const result = normalizeReplayCardRecognition(
+    {
+      heroCards: ["Kc", "Qh"],
+      boardCards: [],
+      confidence: "high",
+      heroStackBB: 67.6,
+      stackConfidence: "high",
+    },
+    0,
+    { readHeroStack: true },
+  );
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.heroStackBehindBB, 67.6);
+  assert.equal(result.stackConfidence, "high");
+});
+
+test("an unclear optional stack never rejects otherwise valid cards", () => {
+  const result = normalizeReplayCardRecognition(
+    {
+      heroCards: ["Kc", "Qh"],
+      boardCards: [],
+      confidence: "high",
+      heroStackBB: 67.8,
+      stackConfidence: "low",
+    },
+    0,
+    { readHeroStack: true },
+  );
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.confidence, "high");
+  assert.equal(result.heroStackBehindBB, null);
+  assert.equal(result.stackConfidence, "low");
+});
+
+test("stack fields are ignored when optional stack vision is excluded", () => {
+  const result = normalizeReplayCardRecognition(
+    {
+      heroCards: ["Kc", "Qh"],
+      boardCards: [],
+      confidence: "high",
+      heroStackBB: 67.6,
+      stackConfidence: "high",
+    },
+    0,
+  );
+
+  assert.equal(result.recognized, true);
+  assert.equal(Object.hasOwn(result, "heroStackBehindBB"), false);
+  assert.equal(Object.hasOwn(result, "stackConfidence"), false);
+});
+
 test("Hero visibility guidance treats a clear partial card top as a complete read", () => {
   const guidance = __replayVisionTestables.replayHeroVisibilityGuidance;
   assert.match(guidance, /partial, angled, overlapping/i);

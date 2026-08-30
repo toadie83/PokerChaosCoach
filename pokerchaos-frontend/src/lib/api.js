@@ -78,13 +78,14 @@ export async function pingHealth({ timeoutMs = 4000 } = {}) {
   }
 }
 
-export async function postJson(path, data) {
+export async function postJson(path, data, overrides = {}) {
   return requestJson(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(data ?? {})
+    body: JSON.stringify(data ?? {}),
+    ...overrides,
   });
 }
 

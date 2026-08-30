@@ -2,6 +2,22 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { applyEvent, initialState } from "./machine.js";
 import { buildStackState, reopenAssumedFoldForVision } from "./decisionState.js";
 import { previousSeatForNextHand } from "./seatUtils.js";
+import {
+  DEFAULT_COACH_MODEL,
+  LEGACY_DEFAULT_COACH_MODEL,
+  MODEL_DEFAULT_MIGRATION_KEY,
+  MODEL_DEFAULT_MIGRATION_VERSION,
+} from "../config/modelConfig.js";
+import {
+  DEFAULT_TOURNAMENT_STAGE,
+  TOURNAMENT_STAGE_STORAGE_KEY,
+  normalizeTournamentStage,
+} from "../config/tournamentStageConfig.js";
+import {
+  BOUNTY_MODE_STORAGE_KEY,
+  DEFAULT_BOUNTY_MODE,
+  normalizeBountyMode,
+} from "../config/bountyTournamentConfig.js";
 
 const CARD_CODE_PATTERN = /^[AKQJT2-9][shdc]$/i;
 
@@ -34,6 +50,80 @@ function streetForBoardCount(count) {
   return "preflop";
 }
 
+export function detectedCardsChangeDecisionState(state = {}, detection = {}) {
+  if (detection?.newHandDetected) return true;
+
+  const detectedHero = {
+    card1: normalizeCard(detection?.heroCards?.card1),
+    card2: normalizeCard(detection?.heroCards?.card2),
+  };
+  const currentHero = {
+    card1: normalizeCard(state?.heroCards?.card1),
+    card2: normalizeCard(state?.heroCards?.card2),
+  };
+  if (
+    detectedHero.card1 !== currentHero.card1 ||
+    detectedHero.card2 !== currentHero.card2
+  ) {
+    return true;
+  }
+
+  const detectedBoard = sanitizeBoard(detection?.board);
+  const currentBoard = sanitizeBoard(state?.board);
+  const detectedCards = [
+    ...detectedBoard.flop,
+    detectedBoard.turn,
+    detectedBoard.river,
+  ];
+  const currentCards = [
+    ...currentBoard.flop,
+    currentBoard.turn,
+    currentBoard.river,
+  ];
+  if (detectedCards.some((card, index) => card !== currentCards[index])) {
+    return true;
+  }
+
+  return Boolean(
+    state?.handComplete &&
+      !state?.lastEventAssumed &&
+      visibleBoardCount(detectedBoard) === 0,
+  );
+}
+
+export function applyDetectedHeroStack(state, detection) {
+  const stackConfidence = String(detection?.stackConfidence || "").toLowerCase();
+  const detectedBehindBB = Number(detection?.heroStackBehindBB);
+  if (
+    !["medium", "high"].includes(stackConfidence) ||
+    !Number.isFinite(detectedBehindBB) ||
+    detectedBehindBB <= 0 ||
+    detectedBehindBB > 10000
+  ) {
+    return state;
+  }
+
+  const stackState = buildStackState(state);
+  const committedAtBB = stackState.heroTotalCommittedBB;
+  const inferredStartingStackBB = Number(
+    (detectedBehindBB + committedAtBB).toFixed(2),
+  );
+  return {
+    ...state,
+    heroStackBB: inferredStartingStackBB,
+    stackRemainingOverrides: {
+      ...(state.stackRemainingOverrides || {}),
+      hero: {
+        remainingBB: Number(detectedBehindBB.toFixed(2)),
+        committedAtBB,
+      },
+    },
+    visionHeroStackBehindBB: Number(detectedBehindBB.toFixed(2)),
+    visionStackConfidence: stackConfidence,
+    visionStackUpdatedAt: Date.now(),
+  };
+}
+
 function loadInitialState() {
   const base = {
     ...initialState,
@@ -50,9 +140,30 @@ function loadInitialState() {
       const savedStyle = localStorage.getItem("pcc_style");
       if (savedStyle) base.style = savedStyle;
       const savedPersona = localStorage.getItem("pcc_persona");
-      if (savedPersona) base.persona = savedPersona;
+      if (savedPersona) {
+        base.persona = savedPersona;
+        if (savedPersona === "cash_game_crusher") {
+          base.gameType = "cash";
+          base.anteBB = 0;
+          base.tableSize = 6;
+        }
+      }
       const savedModel = localStorage.getItem("pcc_model");
-      if (savedModel) base.model = savedModel;
+      const modelDefaultMigration = localStorage.getItem(
+        MODEL_DEFAULT_MIGRATION_KEY,
+      );
+      const shouldMigrateLegacyDefault =
+        savedModel === LEGACY_DEFAULT_COACH_MODEL &&
+        modelDefaultMigration !== MODEL_DEFAULT_MIGRATION_VERSION;
+      if (savedModel && !shouldMigrateLegacyDefault) {
+        base.model = savedModel;
+      } else if (shouldMigrateLegacyDefault) {
+        base.model = DEFAULT_COACH_MODEL;
+      }
+      localStorage.setItem(
+        MODEL_DEFAULT_MIGRATION_KEY,
+        MODEL_DEFAULT_MIGRATION_VERSION,
+      );
       const savedCards = localStorage.getItem("pcc_hero_cards");
       if (savedCards) {
         try {
@@ -77,6 +188,16 @@ function loadInitialState() {
       if (savedVillainType) base.villainType = savedVillainType;
       const savedStakeTier = localStorage.getItem("pcc_stake_tier");
       if (savedStakeTier) base.stakeTier = savedStakeTier;
+      const savedTournamentStage = localStorage.getItem(
+        TOURNAMENT_STAGE_STORAGE_KEY,
+      );
+      if (savedTournamentStage) {
+        base.tournamentStage = normalizeTournamentStage(savedTournamentStage);
+      }
+      const savedBountyMode = localStorage.getItem(BOUNTY_MODE_STORAGE_KEY);
+      if (savedBountyMode && base.gameType === "tournament") {
+        base.bountyMode = normalizeBountyMode(savedBountyMode);
+      }
       const savedPotSizes = localStorage.getItem("pcc_pot_sizes");
       if (
         savedPotSizes &&
@@ -103,11 +224,29 @@ function snapshotState(state) {
   }
 }
 
+export function popUndoSnapshot(
+  history = [],
+  currentState,
+  { skipAssumedAction = false } = {},
+) {
+  if (!Array.isArray(history) || !history.length) return currentState;
+  let previous = history.pop();
+  if (skipAssumedAction && currentState?.lastEventAssumed && history.length) {
+    previous = history.pop();
+  }
+  return previous || currentState;
+}
+
 export function prepareRestoredGameState(snapshot) {
   const restored = snapshotState(snapshot || {});
   return {
     ...initialState,
     ...restored,
+    tournamentStage: normalizeTournamentStage(restored.tournamentStage),
+    bountyMode:
+      restored.gameType === "cash"
+        ? DEFAULT_BOUNTY_MODE
+        : normalizeBountyMode(restored.bountyMode),
     heroCards: {
       card1: normalizeCard(restored.heroCards?.card1),
       card2: normalizeCard(restored.heroCards?.card2)
@@ -138,6 +277,14 @@ function persistRestoredFields(state) {
     localStorage.setItem("pcc_villain_stack_bb", String(state.villainStackBB ?? ""));
     localStorage.setItem("pcc_villain_type", String(state.villainType || ""));
     localStorage.setItem("pcc_stake_tier", String(state.stakeTier || ""));
+    localStorage.setItem(
+      TOURNAMENT_STAGE_STORAGE_KEY,
+      normalizeTournamentStage(state.tournamentStage),
+    );
+    localStorage.setItem(
+      BOUNTY_MODE_STORAGE_KEY,
+      normalizeBountyMode(state.bountyMode),
+    );
     localStorage.setItem("pcc_pot_sizes", String(state.potSizes?.total ?? ""));
   } catch {}
 }
@@ -259,6 +406,33 @@ export function useGameState() {
       }));
       return;
     }
+    if (key === "tournamentStage") {
+      const normalizedStage = normalizeTournamentStage(value);
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(TOURNAMENT_STAGE_STORAGE_KEY, normalizedStage);
+        }
+      } catch {}
+      setState((s) => ({
+        ...s,
+        tournamentStage: normalizedStage,
+      }));
+      return;
+    }
+    if (key === "bountyMode") {
+      const normalizedMode = normalizeBountyMode(value);
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(BOUNTY_MODE_STORAGE_KEY, normalizedMode);
+        }
+      } catch {}
+      setState((s) => ({
+        ...s,
+        bountyMode:
+          s.gameType === "cash" ? DEFAULT_BOUNTY_MODE : normalizedMode,
+      }));
+      return;
+    }
     if (key === "remainingStacks") {
       const normalizeRemaining = (raw) => {
         if (raw === null || raw === undefined || raw === "") return null;
@@ -305,10 +479,7 @@ export function useGameState() {
   const dispatch = useCallback((event) => {
     if (event === "undo") {
       setState((s) => {
-        const history = historyRef.current;
-        if (!history.length) return s;
-        const previous = history.pop();
-        return previous || s;
+        return popUndoSnapshot(historyRef.current, s);
       });
       return;
     }
@@ -334,8 +505,15 @@ export function useGameState() {
       facingAction: null,
       legalActions: [],
       lastRecommendation: null,
-      lastComparison: null
+      lastComparison: null,
+      lastAssumedDecisionKey: null
     }));
+  }, []);
+
+  const undoLastUserAction = useCallback(() => {
+    setState((s) =>
+      popUndoSnapshot(historyRef.current, s, { skipAssumedAction: true }),
+    );
   }, []);
 
   const restoreSnapshot = useCallback((snapshot) => {
@@ -411,17 +589,19 @@ export function useGameState() {
       };
 
       if (newHand) {
-        return {
+        const nextHandState = {
           ...initialState,
           heroSeat: nextHeroSeat,
           tableSize: s.tableSize,
           style: s.style,
           openSize: s.openSize,
           persona: s.persona,
-          heroRelativePosition: s.heroRelativePosition,
-          opponentSeat: s.opponentSeat,
+          heroRelativePosition: "auto",
+          opponentSeat: "",
           playersInHand: 2,
           gameType: s.gameType,
+          tournamentStage: normalizeTournamentStage(s.tournamentStage),
+          bountyMode: normalizeBountyMode(s.bountyMode),
           anteBB: s.anteBB,
           heroStackBB: s.heroStackBB,
           villainStackBB: s.villainStackBB,
@@ -433,13 +613,16 @@ export function useGameState() {
           ...visionFields,
           potSizes: { total: null }
         };
+        return boardCount === 0
+          ? applyDetectedHeroStack(nextHandState, detection)
+          : nextHandState;
       }
 
       const continuedState = nextStreet !== (s.street || "preflop")
         ? reopenAssumedFoldForVision(s)
         : s;
 
-      return {
+      const nextState = {
         ...continuedState,
         ...visionFields,
         ...(nextStreet !== (s.street || "preflop")
@@ -463,6 +646,9 @@ export function useGameState() {
             }
           : {})
       };
+      return boardCount === 0
+        ? applyDetectedHeroStack(nextState, detection)
+        : nextState;
     });
     return true;
   }, []);
@@ -472,16 +658,23 @@ export function useGameState() {
       state,
       setField,
       dispatch,
+      canUndo: historyRef.current.length > 0,
+      undoLastUserAction,
       clearActions,
       restoreSnapshot,
       commitDetectedCards,
       reset: () => {
+        historyRef.current = [];
         try {
           if (typeof localStorage !== "undefined") {
             localStorage.setItem("pcc_pot_sizes", "");
             localStorage.setItem(
               "pcc_hero_cards",
               JSON.stringify({ card1: null, card2: null })
+            );
+            localStorage.setItem(
+              TOURNAMENT_STAGE_STORAGE_KEY,
+              DEFAULT_TOURNAMENT_STAGE,
             );
           }
         } catch {}
@@ -491,10 +684,15 @@ export function useGameState() {
           style: s.style,
           openSize: s.openSize,
           persona: s.persona,
-          heroRelativePosition: s.heroRelativePosition,
-          opponentSeat: s.opponentSeat,
+          heroRelativePosition: "auto",
+          opponentSeat: "",
           playersInHand: 2,
           gameType: s.gameType,
+          tournamentStage: DEFAULT_TOURNAMENT_STAGE,
+          bountyMode:
+            s.gameType === "cash"
+              ? DEFAULT_BOUNTY_MODE
+              : normalizeBountyMode(s.bountyMode),
           anteBB: s.anteBB,
           board: {
             flop: [...(initialState.board?.flop || [null, null, null])],
@@ -510,7 +708,15 @@ export function useGameState() {
         }));
       }
     }),
-    [state, setField, dispatch, clearActions, restoreSnapshot, commitDetectedCards]
+    [
+      state,
+      setField,
+      dispatch,
+      undoLastUserAction,
+      clearActions,
+      restoreSnapshot,
+      commitDetectedCards,
+    ]
   );
 
   return value;

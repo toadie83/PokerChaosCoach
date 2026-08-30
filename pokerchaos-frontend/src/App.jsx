@@ -6,6 +6,7 @@ import ChaosHud from "./components/ChaosHud.jsx";
 import CardSelectorModal from "./components/CardSelectorModal.jsx";
 import DecisionCard from "./components/DecisionCard.jsx";
 import HistoryStrip from "./components/HistoryStrip.jsx";
+import RecentHandsHistory from "./components/RecentHandsHistory.jsx";
 import PlayHandModal from "./components/PlayHandModal.jsx";
 import HeroVoiceCardInput from "./components/HeroVoiceCardInput";
 import FlopCardInput from "./components/FlopCardInput.jsx";
@@ -13,16 +14,50 @@ import SingleBoardCardInput from "./components/SingleBoardCardInput.jsx";
 import StackDepthModal from "./components/StackDepthModal.jsx";
 import ReplayVisionPanel from "./components/ReplayVisionPanel.jsx";
 import BetaCoachHudModal from "./components/BetaCoachHudModal.jsx";
-import { useGameState } from "./state/useGameState.js";
-import { summarizeForAI, getAvailableActions } from "./state/machine.js";
+import {
+  detectedCardsChangeDecisionState,
+  useGameState,
+} from "./state/useGameState.js";
+import {
+  DEFAULT_TOURNAMENT_ANTE_BB,
+  summarizeForAI,
+  getAvailableActions,
+} from "./state/machine.js";
 import { getChaosMood } from "./state/chaosMeter.js";
 import { computeSizingNote } from "./lib/sizing.js";
+import { buildCoachStateReceipt } from "./lib/coachStateReceipt.js";
+import { getQuickOpenSnapshot } from "./lib/quickOpenRange.js";
+import {
+  clearStreetCoachHistoryFrom,
+  rememberStreetCoach,
+} from "./lib/streetCoachHistory.js";
+import {
+  buildRecentHandEntry,
+  loadRecentHands,
+  mergeRecentHand,
+  persistRecentHands,
+} from "./lib/recentHandHistory.js";
 import { seatsForTableSize } from "./state/seatUtils.js";
 import {
   buildDecisionNode,
   buildStackState,
   assumedHeroEventFromRecommendation,
 } from "./state/decisionState.js";
+import {
+  COACH_MODEL_OPTIONS,
+  DEFAULT_COACH_MODEL,
+} from "./config/modelConfig.js";
+import {
+  TOURNAMENT_STAGE_OPTIONS,
+  getTournamentStageMeta,
+  normalizeTournamentStage,
+} from "./config/tournamentStageConfig.js";
+import {
+  BOUNTY_MODE_OPTIONS,
+  getBountyModeMeta,
+  isBountyTournament,
+  normalizeBountyMode,
+} from "./config/bountyTournamentConfig.js";
 
 const HERO_CARD_SLOTS = [
   { key: "card1", label: "Card 1" },
@@ -67,12 +102,16 @@ export default function App() {
     state,
     setField,
     dispatch,
+    canUndo,
+    undoLastUserAction,
     clearActions,
     restoreSnapshot,
     commitDetectedCards,
     reset,
   } = useGameState();
   const [coach, setCoach] = useState(null);
+  const [coachByStreet, setCoachByStreet] = useState({});
+  const [recentHands, setRecentHands] = useState(loadRecentHands);
   const [loading, setLoading] = useState(false);
   const [cardSelectorConfig, setCardSelectorConfig] = useState(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -81,20 +120,19 @@ export default function App() {
   const decisionMomentCounterRef = useRef(0);
   const previousDecisionStateRef = useRef(null);
   const restoringDecisionMomentRef = useRef(false);
-  const [compactMode, setCompactMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      const saved = window.localStorage?.getItem("pcc_compact_mode");
-      return saved === "true";
-    } catch {
-      return false;
-    }
-  });
   const [autoSaveHands, setAutoSaveHands] = useState(() => {
     if (typeof window === "undefined") return true;
     try {
       const saved = window.localStorage?.getItem("pcc_auto_save_hands");
       return saved !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const [showQuickRanges, setShowQuickRanges] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return window.localStorage?.getItem("pcc_show_quick_ranges") !== "false";
     } catch {
       return true;
     }
@@ -148,17 +186,21 @@ export default function App() {
     setField("heroSeat", "");
     setField("heroCards", { card1: null, card2: null });
     setField("heroRelativePosition", "auto");
+    setField("opponentSeat", "");
     setPlayHandOpen(true);
   }, [setField]);
 
   const handleReplayCardsDetected = useCallback(
     (detection) => {
+      const cardsChanged = detectedCardsChangeDecisionState(state, detection);
       if (commitDetectedCards(detection, { autoRotateSeat })) {
-        setCoach(null);
-        setPreviewSizing(null);
+        if (cardsChanged) {
+          setCoach(null);
+          setPreviewSizing(null);
+        }
       }
     },
-    [commitDetectedCards, autoRotateSeat],
+    [commitDetectedCards, autoRotateSeat, state],
   );
 
   const openStackModal = useCallback(() => {
@@ -198,16 +240,18 @@ export default function App() {
   useEffect(() => {
     try {
       if (typeof localStorage !== "undefined") {
-        localStorage.setItem(
-          "pcc_compact_mode",
-          compactMode ? "true" : "false",
-        );
+        localStorage.setItem("pcc_compact_mode", "true");
       }
     } catch {}
     if (typeof document !== "undefined") {
-      document.body.classList.toggle("compact-mode", compactMode);
+      document.body.classList.add("compact-mode");
     }
-  }, [compactMode]);
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.classList.remove("compact-mode");
+      }
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -224,6 +268,17 @@ export default function App() {
     try {
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(
+          "pcc_show_quick_ranges",
+          showQuickRanges ? "true" : "false",
+        );
+      }
+    } catch {}
+  }, [showQuickRanges]);
+
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(
           "pcc_auto_rotate_seat",
           autoRotateSeat ? "true" : "false",
         );
@@ -231,8 +286,31 @@ export default function App() {
     } catch {}
   }, [autoRotateSeat]);
 
+  useEffect(() => {
+    persistRecentHands(recentHands);
+  }, [recentHands]);
+
+  const archiveCoachHand = useCallback(
+    (sourceState, sourceCoachByStreet, sourceCoach) => {
+      const entry = buildRecentHandEntry({
+        state: sourceState,
+        coachByStreet: sourceCoachByStreet,
+        latestCoach: sourceCoach,
+      });
+      if (!entry) return false;
+      setRecentHands((current) => mergeRecentHand(current, entry));
+      return true;
+    },
+    [],
+  );
+
+  const handleClearRecentHands = useCallback(() => {
+    setRecentHands([]);
+  }, []);
+
   const handleReset = useCallback(() => {
     setCoach(null);
+    setCoachByStreet({});
     setDecisionMoments([]);
     setCardSelectorConfig(null);
     setStackModalOpen(false);
@@ -241,9 +319,30 @@ export default function App() {
 
   const handleClearActions = useCallback(() => {
     setCoach(null);
+    setCoachByStreet({});
     setCardSelectorConfig(null);
     clearActions();
   }, [clearActions]);
+
+  const handleUndoAction = useCallback(() => {
+    const street = state.street || "preflop";
+    setCoach(null);
+    setCoachByStreet((current) => clearStreetCoachHistoryFrom(current, street));
+    setPreviewSizing(null);
+    setActionAmountConfig(null);
+    undoLastUserAction();
+  }, [state.street, undoLastUserAction]);
+
+  const handleBountyModeChange = useCallback(
+    (nextMode) => {
+      setCoach(null);
+      setCoachByStreet((current) =>
+        clearStreetCoachHistoryFrom(current, state.street || "preflop"),
+      );
+      setField("bountyMode", nextMode);
+    },
+    [setField, state.street],
+  );
 
   const handleResetPreserveSeat = useCallback(() => {
     const currentSeat = state.heroSeat || "";
@@ -300,6 +399,7 @@ export default function App() {
         } catch {}
         if (evt === "reset_hand") {
           setDecisionMoments([]);
+          setCoachByStreet({});
           try {
             setField("potSizes", { total: null });
           } catch {}
@@ -322,6 +422,7 @@ export default function App() {
         "limped_to_me",
         "opened_to_me",
         "multiple_villains_opened",
+        "open_and_3bet_to_me",
         "button_steal",
         "faced_3bet",
         "faced_4bet",
@@ -406,7 +507,7 @@ export default function App() {
 
   useEffect(() => {
     const previous = previousDecisionStateRef.current;
-    const current = { state, coach };
+    const current = { state, coach, coachByStreet };
     if (!previous) {
       previousDecisionStateRef.current = current;
       return;
@@ -442,11 +543,28 @@ export default function App() {
         previousStreetIndex > currentStreetIndex ||
         previousHero !== currentHero);
     if (looksLikeNewHand) {
+      archiveCoachHand(
+        previous.state,
+        previous.coachByStreet,
+        previous.coach,
+      );
       setDecisionMoments([]);
+      setCoachByStreet({});
     }
 
     previousDecisionStateRef.current = current;
-  }, [state, coach, storeDecisionMoment]);
+  }, [
+    state,
+    coach,
+    coachByStreet,
+    storeDecisionMoment,
+    archiveCoachHand,
+  ]);
+
+  useEffect(() => {
+    if (!state.handComplete || state.lastEventAssumed) return;
+    archiveCoachHand(state, coachByStreet, coach);
+  }, [state, coachByStreet, coach, archiveCoachHand]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -493,7 +611,14 @@ export default function App() {
           setCoach({
             hero_action: "...",
             sizing: "",
+            sizing_bb: null,
             flavor_text: prompt,
+            confidence: "low",
+            reasoning: "Hero cards are required to place this combo inside the selected persona's range.",
+            assumptions: ["hero_cards_missing"],
+            alternative_action: null,
+            alternative_sizing: null,
+            legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
           });
           setLoading(false);
         }
@@ -507,8 +632,16 @@ export default function App() {
             setCoach({
               hero_action: "...",
               sizing: "",
+              sizing_bb: null,
               flavor_text:
                 "Set hero stack in BB for Short-Stack Ninja guidance.",
+              confidence: "low",
+              reasoning:
+                "Effective stack depth is required to distinguish jam, raise, call, and fold thresholds.",
+              assumptions: ["effective_stack_missing"],
+              alternative_action: null,
+              alternative_sizing: null,
+              legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
             });
             setLoading(false);
           }
@@ -519,12 +652,37 @@ export default function App() {
       setLoading(true);
       try {
         const payload = summarizeForAI(state);
+        const decisionReceipt = buildCoachStateReceipt(payload);
         const res = await requestChaosLine(payload);
         if (!isCancelled) {
-          const assumedHeroEvent = assumedHeroEventFromRecommendation(res, state);
+          const responseWithReceipt = {
+            ...res,
+            decision_receipt: decisionReceipt,
+          };
+          const assumedHeroEvent = assumedHeroEventFromRecommendation(
+            responseWithReceipt,
+            state,
+          );
           const acceptedRecommendation =
-            assumedHeroEvent?.recommendation || res;
+            assumedHeroEvent?.recommendation || responseWithReceipt;
           setCoach(acceptedRecommendation);
+          setCoachByStreet((current) =>
+            rememberStreetCoach(
+              current,
+              state.street || "preflop",
+              acceptedRecommendation,
+              {
+                persona: state.persona,
+                model: state.model,
+                tournamentStage:
+                  state.gameType === "tournament" &&
+                  state.persona !== "cash_game_crusher"
+                    ? state.tournamentStage || "auto"
+                    : "",
+                potOdds: payload.context?.decisionNode?.potOdds || null,
+              },
+            ),
+          );
           if (assumedHeroEvent) {
             dispatch(assumedHeroEvent);
           }
@@ -586,11 +744,46 @@ export default function App() {
 
   const persona = state.persona || "replay_analyst";
   const stakeTier = state.stakeTier || "unknown";
+  const tournamentStage = normalizeTournamentStage(state.tournamentStage);
+  const tournamentStageMeta = getTournamentStageMeta(tournamentStage);
+  const showTournamentStageSelector =
+    state.gameType === "tournament" && persona !== "cash_game_crusher";
+  const bountyMode = showTournamentStageSelector
+    ? normalizeBountyMode(state.bountyMode)
+    : "none";
+  const bountyModeMeta = getBountyModeMeta(bountyMode);
+  const bountyEnabled = isBountyTournament(bountyMode);
   const heroCards = state.heroCards || { card1: null, card2: null };
   const heroCardsReady = Boolean(heroCards.card1 && heroCards.card2);
   const heroHandLabel = heroCardsReady
     ? `${heroCards.card1} ${heroCards.card2}`
     : "Not set";
+  const quickOpenSnapshot = useMemo(
+    () => {
+      if (!showQuickRanges) return null;
+      return getQuickOpenSnapshot({
+        heroCards,
+        heroSeat: state.heroSeat,
+        tableSize: state.tableSize,
+        gameType: persona === "cash_game_crusher" ? "cash" : state.gameType,
+        heroStackBB: state.heroStackBB,
+        tournamentStage,
+        bountyMode,
+      });
+    },
+    [
+      showQuickRanges,
+      heroCards.card1,
+      heroCards.card2,
+      state.heroSeat,
+      state.tableSize,
+      state.gameType,
+      state.heroStackBB,
+      tournamentStage,
+      bountyMode,
+      persona,
+    ],
+  );
   const personaNeedsCards =
     persona === "replay_analyst" ||
     persona === "range_professor" ||
@@ -674,6 +867,9 @@ export default function App() {
         river: prevBoard.river,
       });
       setCoach(null);
+      setCoachByStreet((current) =>
+        clearStreetCoachHistoryFrom(current, "flop"),
+      );
     },
     [setField, state.board],
   );
@@ -699,6 +895,9 @@ export default function App() {
         river: prevBoard.river,
       });
       setCoach(null);
+      setCoachByStreet((current) =>
+        clearStreetCoachHistoryFrom(current, "turn"),
+      );
     },
     [setField, state.board],
   );
@@ -724,6 +923,9 @@ export default function App() {
         river: sanitized,
       });
       setCoach(null);
+      setCoachByStreet((current) =>
+        clearStreetCoachHistoryFrom(current, "river"),
+      );
     },
     [setField, state.board],
   );
@@ -853,6 +1055,12 @@ export default function App() {
   const decisionMath = useMemo(() => buildDecisionNode(state), [state]);
   const effectiveStack = stackState.effectiveStackBehindBB ?? "";
   const potTotal = decisionMath.potBB;
+  const latestStreetPotOdds = coachByStreet[state.street]?.potOdds || null;
+  const livePotOdds =
+    decisionMath.potOdds ||
+    (!loading && coach?.hero_action && coach.hero_action !== "..."
+      ? latestStreetPotOdds
+      : null);
   const potOverrideActive =
     typeof state.potSizes?.total === "number" &&
     Number.isFinite(state.potSizes.total) &&
@@ -944,12 +1152,8 @@ export default function App() {
     { code: "maniac", label: "Aggro Maniac" },
     { code: "fishy", label: "Loose-Passive" },
   ];
-  const model = state.model || "gpt-4.1-mini";
-  const modelOptions = [
-    { code: "gpt-4.1", label: "GPT-4.1" },
-    { code: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
-    { code: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
-  ];
+  const model = state.model || DEFAULT_COACH_MODEL;
+  const modelOptions = COACH_MODEL_OPTIONS;
   const stakeTierOptions = [
     {
       code: "unknown",
@@ -994,8 +1198,8 @@ export default function App() {
   }, [seats.join("|"), state.opponentSeat]);
 
   const actions = useMemo(
-    () => getAvailableActions(state, !!coach),
-    [state, coach],
+    () => getAvailableActions(state),
+    [state],
   );
   const actionStageLabel = useMemo(() => {
     if (state.handComplete) return "Hand complete";
@@ -1018,46 +1222,10 @@ export default function App() {
   const showStyleSelector = persona === "chaos_shark";
 
   const aiSnapshot = useMemo(() => summarizeForAI(state), [state]);
-  const branchLabel = useMemo(() => {
-    const raw = aiSnapshot?.context?.branch;
-    if (!raw) return null;
-    return raw
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  }, [aiSnapshot]);
-
   const spr = decisionMath.spr !== null ? Number(decisionMath.spr).toFixed(1) : null;
 
   const statusBadges = useMemo(() => {
-    const badges = [];
-    if (personaMeta?.label) {
-      badges.push({
-        label: "Persona",
-        value: personaMeta.label,
-        variant: "persona",
-      });
-    }
-    badges.push({
-      label: "Seat",
-      value: state.heroSeat ? state.heroSeat.toUpperCase() : "?",
-    });
-    if (branchLabel) {
-      badges.push({ label: "Branch", value: branchLabel });
-    }
-    badges.push({
-      label: "Table",
-      value: `${state.tableSize}-max`,
-    });
-    badges.push({
-      label: "Street",
-      value: state.street.toUpperCase(),
-    });
-    badges.push({
-      label: "Villain",
-      value: villainType.replace(/_/g, "-"),
-    });
-    badges.push({
+    const badges = [{
       label: "Behind",
       value:
         effectiveStack !== null && effectiveStack !== undefined && effectiveStack !== ""
@@ -1065,17 +1233,41 @@ export default function App() {
           : "Set stacks",
       variant: "interactive",
       onClick: openStackModal,
-    });
+    }];
+    if (livePotOdds) {
+      badges.push({
+        label: "Pot odds",
+        value: `${livePotOdds.requiredEquityPct}% needed`,
+        variant: "pot-odds",
+        title: `Call ${livePotOdds.callAmountBB} BB to make a ${livePotOdds.potAfterCallBB} BB pot. This is the raw equity needed before range, ICM, and exploit adjustments.`,
+      });
+    }
+    if (showTournamentStageSelector && tournamentStage !== "auto") {
+      badges.push({
+        label: "Stage",
+        value: tournamentStageMeta.shortLabel,
+        variant: "stage",
+      });
+    }
+    if (bountyEnabled) {
+      badges.push({
+        label: "Bounty",
+        value: `${bountyModeMeta.shortLabel} · qualitative`,
+        variant: "bounty",
+        title:
+          "Bounty amounts are not supplied, so Coach applies a conservative coverage-aware adjustment without changing raw pot odds.",
+      });
+    }
     return badges;
   }, [
-    personaMeta?.label,
-    state.heroSeat,
-    branchLabel,
-    state.tableSize,
-    state.street,
-    villainType,
     effectiveStack,
+    livePotOdds,
     openStackModal,
+    showTournamentStageSelector,
+    tournamentStage,
+    tournamentStageMeta.shortLabel,
+    bountyEnabled,
+    bountyModeMeta.shortLabel,
   ]);
 
   const ticker = useMemo(() => {
@@ -1167,7 +1359,7 @@ export default function App() {
       }
       if (event.code === "KeyZ") {
         event.preventDefault();
-        dispatch("undo");
+        handleUndoAction();
       }
     };
     window.addEventListener("keydown", handler);
@@ -1176,7 +1368,7 @@ export default function App() {
     actions,
     alternativeSizes,
     onAction,
-    dispatch,
+    handleUndoAction,
     handleAlternativeSizeSelect,
   ]);
 
@@ -1195,12 +1387,9 @@ export default function App() {
   const riverDisplay = formatCard(state.board?.river);
   return (
     <>
-      <div className={`wrap coach-wrap ${compactMode ? "wrap-compact" : ""}`}>
+      <div className="wrap coach-wrap wrap-compact">
         <div className="panel">
           <div className="panel-heading">
-            <div>
-              <h1 className="title"></h1>
-            </div>
             <div className="panel-heading-actions">
               {/* 
               # removed for now - may bring back as a separate guided mode in the future
@@ -1214,13 +1403,26 @@ export default function App() {
               </button> */}
               <button
                 type="button"
-                className={`pill-toggle header-action-btn beta-hud-trigger ${
+                className={`pill-toggle header-action-btn header-icon-btn beta-hud-trigger ${
                   betaHudOpen ? "active" : ""
                 }`}
                 onClick={() => setBetaHudOpen(true)}
-                title="Preview the redesigned Coach decision workspace"
+                title="Open Coach HUD"
+                aria-label="Open Coach HUD"
               >
-                Coach HUD <span className="beta-hud-trigger-badge">Beta</span>
+                <svg
+                  className="beta-hud-trigger-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="3" />
+                  <path d="M7 9h10M7 13h4M7 16h7" />
+                </svg>
               </button>
               <button
                 type="button"
@@ -1249,23 +1451,6 @@ export default function App() {
                     )
                   : "Watch replay"}
               </button>
-              <button
-                type="button"
-                className={`pill-toggle header-action-btn ${
-                  compactMode ? "active" : ""
-                }`}
-                onClick={() => setCompactMode((value) => !value)}
-                title="Toggle compact density"
-              >
-                Compact
-              </button>
-              <button
-                type="button"
-                className="pill-toggle header-action-btn"
-                onClick={() => setSetupOpen((value) => !value)}
-              >
-                {setupOpen ? "Hide setup" : "Game setup"}
-              </button>
               <div className="panel-heading-selectors">
                 <label
                   className="header-select-control"
@@ -1281,7 +1466,18 @@ export default function App() {
                     onChange={(e) => {
                       const next = e.target.value;
                       setCoach(null);
+                      setCoachByStreet({});
                       setField("persona", next);
+                      if (next === "cash_game_crusher") {
+                        setField("gameType", "cash");
+                        setField("bountyMode", "none");
+                        setField("anteBB", 0);
+                        setField("tableSize", 6);
+                      } else if (next === "short_stack_ninja") {
+                        setField("gameType", "tournament");
+                        setField("anteBB", DEFAULT_TOURNAMENT_ANTE_BB);
+                        setField("tableSize", 8);
+                      }
                       if (
                         (next === "replay_analyst" ||
                           next === "range_professor" ||
@@ -1314,6 +1510,48 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                {showTournamentStageSelector ? (
+                  <label
+                    className="header-select-control header-stage-control"
+                    title={tournamentStageMeta.description}
+                  >
+                    <span className="header-select-label">Stage</span>
+                    <select
+                      aria-label="Approximate tournament stage"
+                      value={tournamentStage}
+                      onChange={(event) =>
+                        setField("tournamentStage", event.target.value)
+                      }
+                    >
+                      {TOURNAMENT_STAGE_OPTIONS.map((option) => (
+                        <option key={option.code} value={option.code}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {showTournamentStageSelector ? (
+                  <label
+                    className="header-select-control header-bounty-control"
+                    title={bountyModeMeta.description}
+                  >
+                    <span className="header-select-label">Bounty</span>
+                    <select
+                      aria-label="Bounty tournament format"
+                      value={bountyMode}
+                      onChange={(event) =>
+                        handleBountyModeChange(event.target.value)
+                      }
+                    >
+                      {BOUNTY_MODE_OPTIONS.map((option) => (
+                        <option key={option.code} value={option.code}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1378,6 +1616,25 @@ export default function App() {
                     </option>
                   ))}
               </select>
+              <span className="pill-label">Stack</span>
+              <select
+                className="decision-context-select opponent-stack-select"
+                value={villainStackRangeCode}
+                onChange={(event) => {
+                  const option = villainStackRanges.find(
+                    (item) => item.code === event.target.value,
+                  );
+                  setField("villainStackBB", option?.value ?? null);
+                }}
+                aria-label="Opponent starting stack in big blinds"
+                title="Set the opponent's starting stack for this hand"
+              >
+                {villainStackRanges.map((range) => (
+                  <option key={range.code || "unknown"} value={range.code}>
+                    {range.label}
+                  </option>
+                ))}
+              </select>
               <span className="pill-label">Players</span>
               <div className="seat-ring" aria-label="Players remaining in hand">
                 {[2, 3, 4].map((count) => (
@@ -1428,6 +1685,26 @@ export default function App() {
               <span className="card-pill-label">Hero</span>
               <span className="card-pill-value">{heroHandLabel}</span>
             </button>
+            {quickOpenSnapshot ? (
+              <div
+                className="quick-open-snapshot"
+                data-tone={quickOpenSnapshot.tone}
+                role="status"
+                aria-live="polite"
+                title={`${quickOpenSnapshot.explanation} Unopened-pot snapshot only; no action is recorded.`}
+              >
+                <span className="quick-open-snapshot-label">
+                  {quickOpenSnapshot.heading}
+                </span>
+                <strong>{quickOpenSnapshot.label}</strong>
+                <span className="quick-open-snapshot-hand">
+                  {quickOpenSnapshot.handCode} · {quickOpenSnapshot.seat}
+                </span>
+                <small>
+                  If folded to you · {quickOpenSnapshot.baselineLabel}
+                </small>
+              </div>
+            ) : null}
             <button
               type="button"
               className="card-pill"
@@ -1476,14 +1753,48 @@ export default function App() {
                 placeholder="0"
               />
               {spr ? <span className="badge spr">SPR {spr}</span> : null}
+              {livePotOdds ? (
+                <span
+                  className="badge pot-odds"
+                  title={`Call ${livePotOdds.callAmountBB} BB to make a ${livePotOdds.potAfterCallBB} BB pot`}
+                >
+                  Pot odds {livePotOdds.requiredEquityPct}%
+                </span>
+              ) : null}
             </div>
           </div>
 
           {/* --- PRIMARY ACTIONS (moved up) --- */}
           <div className="actions-block actions-top">
             <div className="action-stage-header">
-              <span className="pill-label">Decision</span>
-              <strong>{actionStageLabel}</strong>
+              <div className="action-stage-title">
+                <span className="pill-label">Decision</span>
+                <strong>{actionStageLabel}</strong>
+              </div>
+              <div className="decision-action-controls">
+                <button
+                  type="button"
+                  className="decision-undo-btn"
+                  onClick={handleUndoAction}
+                  disabled={!canUndo || loading}
+                  title="Undo the latest entered action (Z)"
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className="decision-clear-btn"
+                  onClick={handleClearActions}
+                  disabled={
+                    !coach &&
+                    state.history.length === 0 &&
+                    state.previousActions.length === 0
+                  }
+                  title="Clear recorded actions"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
             <ActionButtons
               actions={actions}
@@ -1503,6 +1814,7 @@ export default function App() {
             coach={coach}
             isLoading={loading}
             handComplete={state.handComplete}
+            canAdvanceStreet={state.nextActor === "await_street"}
             onNextStreet={() => onAction("next_street")}
             onResetHand={() => onAction("reset_hand")}
             sizingNote={sizingNote}
@@ -1512,30 +1824,34 @@ export default function App() {
             alternativeSizes={alternativeSizes}
             onSelectAlternativeSize={handleAlternativeSizeSelect}
             comparison={state.lastComparison}
+            onEditCards={openHeroCardSelector}
+            onEditStacks={openStackModal}
+            onUndoAction={handleUndoAction}
           />
 
-          <HistoryStrip history={state.history} heroSeat={state.heroSeat} />
+          <HistoryStrip
+            history={state.history}
+            heroSeat={state.heroSeat}
+            currentStreet={state.street}
+            coachByStreet={coachByStreet}
+          />
 
-          {/* --- SECONDARY ACTIONS (stay below guidance/history) --- */}
-          <div className="actions-block actions-bottom">
-            <div className="secondary-actions">
-              <button
-                type="button"
-                className="link-btn"
-                onClick={handleClearActions}
-              >
-                Clear actions
-              </button>
-            </div>
-          </div>
+          <RecentHandsHistory
+            hands={recentHands}
+            onClear={handleClearRecentHands}
+          />
 
           <button
             type="button"
             className="drawer-toggle"
             onClick={() => setSetupOpen((value) => !value)}
+            aria-expanded={setupOpen}
           >
             <span>{setupOpen ? "Hide advanced setup" : "Advanced setup"}</span>
-            <span className="chevron">{setupOpen ? "?" : "?"}</span>
+            <span
+              className={`chevron${setupOpen ? " open" : ""}`}
+              aria-hidden="true"
+            />
           </button>
 
           {setupOpen ? (
@@ -1570,28 +1886,6 @@ export default function App() {
                     </span>
                   ) : null}
                 </div>
-                <div className="drawer-row">
-                  <label className="pill-label" htmlFor="villainStack">
-                    Villain stack
-                  </label>
-                  <select
-                    id="villainStack"
-                    value={villainStackRangeCode}
-                    onChange={(e) => {
-                      const code = e.target.value;
-                      const option = villainStackRanges.find(
-                        (item) => item.code === code,
-                      );
-                      setField("villainStackBB", option?.value || null);
-                    }}
-                  >
-                    {villainStackRanges.map((range) => (
-                      <option key={range.code || "unknown"} value={range.code}>
-                        {range.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               <div className="drawer-section">
@@ -1607,7 +1901,18 @@ export default function App() {
                         key={code}
                         type="button"
                         className={`chip ${state.gameType === code ? "active" : ""}`}
-                        onClick={() => setField("gameType", code)}
+                        onClick={() => {
+                          setField("gameType", code);
+                          if (code === "cash") {
+                            setField("bountyMode", "none");
+                          }
+                          setField(
+                            "anteBB",
+                            code === "tournament"
+                              ? DEFAULT_TOURNAMENT_ANTE_BB
+                              : 0,
+                          );
+                        }}
                       >
                         {label}
                       </button>
@@ -1685,7 +1990,10 @@ export default function App() {
                   <div className="pill-control">
                     <select
                       value={model}
-                      onChange={(e) => setField("model", e.target.value)}
+                      onChange={(e) => {
+                        setCoach(null);
+                        setField("model", e.target.value);
+                      }}
                     >
                       {modelOptions.map((option) => (
                         <option key={option.code} value={option.code}>
@@ -1708,6 +2016,21 @@ export default function App() {
                   <span className="drawer-hint">
                     Saves and closes the card picker after the final required
                     rank+suit is selected.
+                  </span>
+                </div>
+                <div className="drawer-row">
+                  <span className="pill-label">Range snapshot</span>
+                  <button
+                    type="button"
+                    className={`pill-toggle ${showQuickRanges ? "active" : ""}`}
+                    onClick={() => setShowQuickRanges((value) => !value)}
+                    aria-pressed={showQuickRanges}
+                    title="Show or hide approximate unopened-pot range guidance beside Hero cards"
+                  >
+                    Quick ranges {showQuickRanges ? "on" : "off"}
+                  </button>
+                  <span className="drawer-hint">
+                    Shows an unrecorded 6-max cash or 8-max MTT first-in snapshot.
                   </span>
                 </div>
               </div>
@@ -1799,6 +2122,7 @@ export default function App() {
         effectiveStack={effectiveStack}
         potTotal={potTotal}
         spr={spr}
+        potOdds={livePotOdds}
         sizingNote={sizingNote}
         replayVisionStatus={replayVisionStatus}
         decisionMoments={decisionMoments}
@@ -1812,13 +2136,20 @@ export default function App() {
         onEditRiver={() => openRiverCardSelector(state.board?.river)}
         onOpenStacks={openStackModal}
         onClearActions={handleClearActions}
+        onUndoAction={handleUndoAction}
+        canUndo={canUndo}
+        bountyMode={bountyMode}
+        bountyModeOptions={BOUNTY_MODE_OPTIONS}
+        onBountyModeChange={handleBountyModeChange}
+        showBountyControl={showTournamentStageSelector}
       />
       <ActionAmountModal
         config={actionAmountConfig}
         onCancel={() => setActionAmountConfig(null)}
-        onConfirm={(amountBB) =>
+        onConfirm={(amountBB, additionalValues = {}) =>
           onAction({
             ...actionAmountConfig,
+            ...additionalValues,
             amountBB,
             toAmountBB: amountBB,
           })

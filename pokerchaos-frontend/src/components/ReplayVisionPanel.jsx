@@ -6,6 +6,7 @@ import {
 } from "../vision/replayVisionLogic.js";
 
 const REGION_STORAGE_KEY = "pcc_gg_replay_regions_v2";
+const AUTO_UPDATE_STACK_STORAGE_KEY = "pcc_replay_vision_auto_stack";
 const SAMPLE_INTERVAL_MS = 500;
 const REQUIRED_STABLE_SAMPLES = 3;
 const STABLE_FRAME_DIFFERENCE = 5;
@@ -16,6 +17,7 @@ const HERO_SETTLE_DELAY_MS = 1000;
 const RECOGNITION_RETRY_COOLDOWN_MS = 6000;
 const BOARD_ANALYSIS_WIDTH = 600;
 const HERO_ANALYSIS_WIDTH = 480;
+const HERO_STACK_ANALYSIS_WIDTH = 420;
 
 const BOARD_CARD_RECTS = Array.from({ length: 5 }, (_, index) => ({
   x: index * 0.2,
@@ -50,10 +52,22 @@ function loadSavedRegions() {
   try {
     const parsed = JSON.parse(localStorage.getItem(REGION_STORAGE_KEY) || "null");
     if (validRegion(parsed?.hero) && validRegion(parsed?.board)) {
-      return parsed;
+      return {
+        hero: parsed.hero,
+        board: parsed.board,
+        stack: validRegion(parsed?.stack) ? parsed.stack : null,
+      };
     }
   } catch {}
   return null;
+}
+
+function loadAutoUpdateHeroStack() {
+  try {
+    return localStorage.getItem(AUTO_UPDATE_STACK_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
 }
 
 function storeRegions(regions) {
@@ -192,7 +206,13 @@ function captureRegion(video, region, canvas, outputWidth) {
   return context.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-function inspectReplayFrame(video, regions, heroCanvas, boardCanvas) {
+function inspectReplayFrame(
+  video,
+  regions,
+  heroCanvas,
+  boardCanvas,
+  heroStackCanvas,
+) {
   if (
     !video?.videoWidth ||
     !video?.videoHeight ||
@@ -213,6 +233,14 @@ function inspectReplayFrame(video, regions, heroCanvas, boardCanvas) {
     boardCanvas,
     BOARD_ANALYSIS_WIDTH,
   );
+  const heroStackImageData = validRegion(regions.stack)
+    ? captureRegion(
+        video,
+        regions.stack,
+        heroStackCanvas,
+        HERO_STACK_ANALYSIS_WIDTH,
+      )
+    : null;
   const heroPresence = HERO_CARD_RECTS.map(
     (rect) => whiteRatio(heroImageData, rect) > 0.16,
   );
@@ -236,8 +264,10 @@ function inspectReplayFrame(video, regions, heroCanvas, boardCanvas) {
   return {
     heroCanvas,
     boardCanvas,
+    heroStackCanvas,
     heroImageData,
     boardImageData,
+    heroStackImageData,
     heroSharpness: heroCornerSharpness(heroImageData),
     heroFingerprint,
     boardFingerprint,
@@ -335,10 +365,10 @@ function canvasFromImageData(imageData, fallbackCanvas) {
   return canvas;
 }
 
-function buildHeroRecognitionImage(sample) {
+function buildHeroRecognitionImage(sample, { readHeroStack = false } = {}) {
   const output = document.createElement("canvas");
   output.width = 800;
-  output.height = 520;
+  output.height = readHeroStack ? 680 : 520;
   const context = output.getContext("2d");
   context.fillStyle = "#101215";
   context.fillRect(0, 0, output.width, output.height);
@@ -361,6 +391,21 @@ function buildHeroRecognitionImage(sample) {
     { x: 0.42, y: 0, width: 0.46, height: 0.68 },
     { x: 412, y: 52, width: 358, height: 440 },
   );
+  if (readHeroStack && sample.heroStackImageData) {
+    context.fillStyle = "#ffffff";
+    context.font = "700 22px Arial, sans-serif";
+    context.fillText("HERO STACK - CHIPS BEHIND IN BB", 30, 554);
+    const stackSource = canvasFromImageData(
+      sample.heroStackImageData,
+      sample.heroStackCanvas,
+    );
+    drawContained(context, stackSource, {
+      x: 30,
+      y: 570,
+      width: 740,
+      height: 90,
+    });
+  }
   return output.toDataURL("image/png");
 }
 
@@ -386,10 +431,11 @@ function buildBoardRecognitionImage(sample) {
   return output.toDataURL("image/png");
 }
 
-function buildRecognitionPayload(sample) {
+function buildRecognitionPayload(sample, { readHeroStack = false } = {}) {
   return {
     boardImageDataUrl: buildBoardRecognitionImage(sample),
-    heroImageDataUrl: buildHeroRecognitionImage(sample),
+    heroImageDataUrl: buildHeroRecognitionImage(sample, { readHeroStack }),
+    ...(readHeroStack ? { readHeroStack: true } : {}),
   };
 }
 
@@ -460,7 +506,11 @@ function formatDetection(detection) {
   ]
     .filter(Boolean)
     .join(" ");
-  return board ? `${hero} · ${board}` : hero;
+  const cards = board ? `${hero} · ${board}` : hero;
+  const stack = Number(detection.heroStackBehindBB);
+  return Number.isFinite(stack) && stack > 0
+    ? `${cards} · ${stack} BB behind`
+    : cards;
 }
 
 export default function ReplayVisionPanel({
@@ -474,8 +524,10 @@ export default function ReplayVisionPanel({
   const previewCanvasRef = useRef(null);
   const heroRegionPreviewRef = useRef(null);
   const boardRegionPreviewRef = useRef(null);
+  const heroStackRegionPreviewRef = useRef(null);
   const heroAnalysisCanvasRef = useRef(document.createElement("canvas"));
   const boardAnalysisCanvasRef = useRef(document.createElement("canvas"));
+  const heroStackAnalysisCanvasRef = useRef(document.createElement("canvas"));
   const candidateRef = useRef(null);
   const committedSampleRef = useRef(null);
   const committedDetectionRef = useRef(null);
@@ -496,9 +548,21 @@ export default function ReplayVisionPanel({
   const [calibrationTarget, setCalibrationTarget] = useState(null);
   const [calibrationStart, setCalibrationStart] = useState(null);
   const [message, setMessage] = useState(
-    "Share the PokerCraft tab, then mark Hero and board card regions once.",
+    "Share the PokerCraft tab, then mark the enabled vision regions once.",
   );
   const [lastDetection, setLastDetection] = useState(null);
+  const [autoUpdateHeroStack, setAutoUpdateHeroStack] = useState(
+    loadAutoUpdateHeroStack,
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        AUTO_UPDATE_STACK_STORAGE_KEY,
+        autoUpdateHeroStack ? "true" : "false",
+      );
+    } catch {}
+  }, [autoUpdateHeroStack]);
 
   useEffect(() => {
     onCardsDetectedRef.current = onCardsDetected;
@@ -517,6 +581,31 @@ export default function ReplayVisionPanel({
     setStatus(nextStatus);
     onStatusChangeRef.current?.(nextStatus);
   }, []);
+
+  const activateRegions = useCallback(
+    (nextRegions, nextMessage) => {
+      const normalizedRegions = {
+        hero: nextRegions.hero,
+        board: nextRegions.board,
+        stack: validRegion(nextRegions.stack) ? nextRegions.stack : null,
+      };
+      storeRegions(normalizedRegions);
+      setRegions(normalizedRegions);
+      setCalibrationDraft(null);
+      setCalibrationTarget(null);
+      setCalibrationStart(null);
+      candidateRef.current = null;
+      committedSampleRef.current = null;
+      committedDetectionRef.current = null;
+      newHandArmedRef.current = false;
+      emptyTableSamplesRef.current = 0;
+      heroVisibleSinceRef.current = 0;
+      heroSettleBaselineRef.current = null;
+      setMessage(nextMessage);
+      reportStatus("watching");
+    },
+    [reportStatus],
+  );
 
   const stopCapture = useCallback(() => {
     setStream((current) => {
@@ -575,10 +664,23 @@ export default function ReplayVisionPanel({
       heroSettleBaselineRef.current = null;
       setStream(nextStream);
       if (regions) {
-        setMessage("Watching Hero and community-card regions.");
-        reportStatus("watching");
+        if (autoUpdateHeroStack && !validRegion(regions.stack)) {
+          setCalibrationDraft({ ...regions, stack: null });
+          setCalibrationTarget("stack");
+          setMessage(
+            "Stack setup: mark only Hero's numeric BB value, including the BB suffix.",
+          );
+          reportStatus("calibrating");
+        } else {
+          setMessage(
+            autoUpdateHeroStack
+              ? "Watching cards and Hero's start-of-hand stack."
+              : "Watching Hero and community-card regions.",
+          );
+          reportStatus("watching");
+        }
       } else {
-        setCalibrationDraft({ hero: null, board: null });
+        setCalibrationDraft({ hero: null, board: null, stack: null });
         setCalibrationTarget("hero");
         setMessage("Hero setup: mark both visible white card tops and their upper-left rank/suit corners; exclude the avatar and name plate when possible.");
         reportStatus("calibrating");
@@ -592,15 +694,68 @@ export default function ReplayVisionPanel({
         reportStatus("error");
       }
     }
-  }, [regions, reportStatus, stopCapture]);
+  }, [autoUpdateHeroStack, regions, reportStatus, stopCapture]);
 
   const beginCalibration = useCallback(() => {
     setCalibrationStart(null);
-    setCalibrationDraft({ hero: null, board: null });
+    setCalibrationDraft({ hero: null, board: null, stack: null });
     setCalibrationTarget("hero");
     setMessage("Hero setup: mark both visible white card tops and their upper-left rank/suit corners; exclude the avatar and name plate when possible.");
     reportStatus("calibrating");
   }, [reportStatus]);
+
+  const beginStackCalibration = useCallback(() => {
+    if (!stream || !validRegion(regions?.hero) || !validRegion(regions?.board)) {
+      return;
+    }
+    setCalibrationStart(null);
+    setCalibrationDraft({ ...regions, stack: null });
+    setCalibrationTarget("stack");
+    setMessage(
+      "Stack setup: mark only Hero's numeric BB value, including the BB suffix.",
+    );
+    reportStatus("calibrating");
+  }, [regions, reportStatus, stream]);
+
+  const handleAutoUpdateHeroStackChange = useCallback(
+    (enabled) => {
+      setAutoUpdateHeroStack(enabled);
+      if (!stream) return;
+      if (enabled) {
+        if (!validRegion(regions?.stack)) {
+          beginStackCalibration();
+        } else {
+          setMessage("Hero stack auto-update enabled for new-hand reads.");
+        }
+        return;
+      }
+      if (
+        statusRef.current === "calibrating" &&
+        calibrationTarget === "stack" &&
+        validRegion(calibrationDraft?.hero) &&
+        validRegion(calibrationDraft?.board)
+      ) {
+        activateRegions(
+          {
+            hero: calibrationDraft.hero,
+            board: calibrationDraft.board,
+            stack: null,
+          },
+          "Hero stack auto-update excluded. Watching cards only.",
+        );
+      } else {
+        setMessage("Hero stack auto-update excluded. Stack pixels will not be sent.");
+      }
+    },
+    [
+      activateRegions,
+      beginStackCalibration,
+      calibrationDraft,
+      calibrationTarget,
+      regions,
+      stream,
+    ],
+  );
 
   const handlePreviewClick = useCallback(
     (event) => {
@@ -613,11 +768,13 @@ export default function ReplayVisionPanel({
       if (!calibrationTarget) return;
       if (!calibrationStart) {
         setCalibrationStart(point);
-        setMessage(
+        const oppositeCornerMessage =
           calibrationTarget === "hero"
             ? "Hero setup: now click the opposite corner around both visible white card tops."
-            : "Board setup: now click the opposite corner of the full five-card lane.",
-        );
+            : calibrationTarget === "board"
+              ? "Board setup: now click the opposite corner of the full five-card lane."
+              : "Stack setup: now click the opposite corner around the numeric value and BB suffix.";
+        setMessage(oppositeCornerMessage);
         return;
       }
       const nextRegion = boundedRegion(calibrationStart, point);
@@ -628,36 +785,60 @@ export default function ReplayVisionPanel({
       }
       setCalibrationStart(null);
       if (calibrationTarget === "hero") {
-        setCalibrationDraft({ hero: nextRegion, board: null });
+        setCalibrationDraft({ hero: nextRegion, board: null, stack: null });
         setCalibrationTarget("board");
         setMessage("Board setup: scrub to a board (five cards if possible), then mark the full five-card lane—not just the visible cards.");
         return;
       }
-      const nextRegions = {
-        hero: calibrationDraft?.hero,
-        board: nextRegion,
-      };
-      if (!validRegion(nextRegions.hero)) {
-        setCalibrationDraft({ hero: null, board: null });
-        setCalibrationTarget("hero");
-        setMessage("Hero region was lost. Mark both visible white card tops, including each upper-left rank and suit.");
+      if (calibrationTarget === "board") {
+        const nextDraft = {
+          hero: calibrationDraft?.hero,
+          board: nextRegion,
+          stack: null,
+        };
+        if (!validRegion(nextDraft.hero)) {
+          setCalibrationDraft({ hero: null, board: null, stack: null });
+          setCalibrationTarget("hero");
+          setMessage("Hero region was lost. Mark both visible white card tops, including each upper-left rank and suit.");
+          return;
+        }
+        if (autoUpdateHeroStack) {
+          setCalibrationDraft(nextDraft);
+          setCalibrationTarget("stack");
+          setMessage(
+            "Stack setup: mark only Hero's numeric BB value, including the BB suffix.",
+          );
+          return;
+        }
+        activateRegions(
+          nextDraft,
+          "Card regions saved. Watching Hero and community cards.",
+        );
         return;
       }
-      storeRegions(nextRegions);
-      setRegions(nextRegions);
-      setCalibrationDraft(null);
-      setCalibrationTarget(null);
-      candidateRef.current = null;
-      committedSampleRef.current = null;
-      committedDetectionRef.current = null;
-      newHandArmedRef.current = false;
-      emptyTableSamplesRef.current = 0;
-      heroVisibleSinceRef.current = 0;
-      heroSettleBaselineRef.current = null;
-      setMessage("Card regions saved. Watching Hero and community cards.");
-      reportStatus("watching");
+      const nextRegions = {
+        hero: calibrationDraft?.hero,
+        board: calibrationDraft?.board,
+        stack: nextRegion,
+      };
+      if (!validRegion(nextRegions.hero) || !validRegion(nextRegions.board)) {
+        setCalibrationDraft({ hero: null, board: null, stack: null });
+        setCalibrationTarget("hero");
+        setMessage("Card regions were lost. Mark both visible Hero card tops again.");
+        return;
+      }
+      activateRegions(
+        nextRegions,
+        "Card and Hero-stack regions saved. Watching for the next hand.",
+      );
     },
-    [calibrationDraft, calibrationStart, calibrationTarget, reportStatus],
+    [
+      activateRegions,
+      autoUpdateHeroStack,
+      calibrationDraft,
+      calibrationStart,
+      calibrationTarget,
+    ],
   );
 
   useEffect(() => {
@@ -694,6 +875,17 @@ export default function ReplayVisionPanel({
           "HERO (2 cards)",
           2,
         );
+        if (autoUpdateHeroStack) {
+          drawRegionGuide(
+            context,
+            displayedRegions?.stack,
+            previewWidth,
+            previewHeight,
+            "#f59e0b",
+            "HERO STACK (BB)",
+            1,
+          );
+        }
         drawRegionPreview(
           video,
           displayedRegions?.hero,
@@ -706,6 +898,14 @@ export default function ReplayVisionPanel({
           boardRegionPreviewRef.current,
           600,
         );
+        if (autoUpdateHeroStack) {
+          drawRegionPreview(
+            video,
+            displayedRegions?.stack,
+            heroStackRegionPreviewRef.current,
+            420,
+          );
+        }
         if (calibrationStart) {
           context.fillStyle = "#fbbf24";
           context.beginPath();
@@ -723,7 +923,14 @@ export default function ReplayVisionPanel({
     };
     drawPreview();
     return () => cancelAnimationFrame(animationFrame);
-  }, [open, stream, regions, calibrationDraft, calibrationStart]);
+  }, [
+    open,
+    stream,
+    regions,
+    calibrationDraft,
+    calibrationStart,
+    autoUpdateHeroStack,
+  ]);
 
   const recognizeStableFrame = useCallback(
     async (sample, { manualCorrection = false } = {}) => {
@@ -751,7 +958,14 @@ export default function ReplayVisionPanel({
         const knownCards = manualCorrection || newHandDetected || !previousDetection
           ? { heroCards: [], boardCards: [] }
           : replayDetectionCards(previousDetection);
-        const recognitionPayload = buildRecognitionPayload(sample);
+        const readHeroStack =
+          autoUpdateHeroStack &&
+          sample.expectedBoardCount === 0 &&
+          Boolean(sample.heroStackImageData) &&
+          (newHandDetected || !previousDetection || manualCorrection);
+        const recognitionPayload = buildRecognitionPayload(sample, {
+          readHeroStack,
+        });
         const result = await requestReplayCardRecognition({
           ...recognitionPayload,
           expectedBoardCount: sample.expectedBoardCount,
@@ -782,7 +996,10 @@ export default function ReplayVisionPanel({
             newHandArmedRef.current = false;
             emptyTableSamplesRef.current = 0;
           }
-          if (!manualCorrection || correctionChangedCards) {
+          const includesConfirmedStack =
+            Number.isFinite(Number(result.heroStackBehindBB)) &&
+            Number(result.heroStackBehindBB) > 0;
+          if (!manualCorrection || correctionChangedCards || includesConfirmedStack) {
             onCardsDetectedRef.current?.({
               ...result,
               newHandDetected,
@@ -807,7 +1024,7 @@ export default function ReplayVisionPanel({
         reportStatus("watching");
       }
     },
-    [reportStatus],
+    [autoUpdateHeroStack, reportStatus],
   );
 
   const handleManualRescan = useCallback(() => {
@@ -817,6 +1034,7 @@ export default function ReplayVisionPanel({
       regions,
       heroAnalysisCanvasRef.current,
       boardAnalysisCanvasRef.current,
+      heroStackAnalysisCanvasRef.current,
     );
     if (!freshSample?.eligible) {
       setMessage("Rescan needs both Hero cards and a complete visible street in the calibrated regions.");
@@ -847,6 +1065,7 @@ export default function ReplayVisionPanel({
         regions,
         heroAnalysisCanvasRef.current,
         boardAnalysisCanvasRef.current,
+        heroStackAnalysisCanvasRef.current,
       );
       const now = Date.now();
       let heroCardsSettled = false;
@@ -961,11 +1180,56 @@ export default function ReplayVisionPanel({
               </button>
             </header>
             <div className="modal-body replay-vision-body">
+              <section className="replay-vision-options" aria-label="Vision options">
+                <div className="replay-vision-options-heading">
+                  <div>
+                    <strong>Vision options</strong>
+                    <span>Card recognition remains enabled while watching.</span>
+                  </div>
+                  <span className="replay-vision-option-state">Cards on</span>
+                </div>
+                <label className="replay-vision-option-row">
+                  <span>
+                    <strong>Auto-update Hero stack</strong>
+                    <small>
+                      Read the BB value once at the start of each hand. Turn this off
+                      to exclude stack pixels and the stack field from vision requests.
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={autoUpdateHeroStack}
+                    onChange={(event) =>
+                      handleAutoUpdateHeroStackChange(event.target.checked)
+                    }
+                  />
+                </label>
+                {stream && autoUpdateHeroStack ? (
+                  <div className="replay-vision-stack-option-status">
+                    <span>
+                      {validRegion(regions?.stack)
+                        ? "Stack region ready"
+                        : "Stack region needs calibration"}
+                    </span>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={beginStackCalibration}
+                      disabled={status === "reading"}
+                    >
+                      {validRegion(regions?.stack)
+                        ? "Recalibrate stack"
+                        : "Set stack region"}
+                    </button>
+                  </div>
+                ) : null}
+              </section>
               {!stream ? (
                 <div className="replay-vision-intro">
                   <p>
                     Coach watches a shared PokerCraft replay and updates Hero, flop,
-                    turn, and river cards after they remain stable on screen.
+                    turn, and river cards after they remain stable on screen. Hero's
+                    BB stack can also update at the beginning of each hand.
                   </p>
                   <button type="button" onClick={startCapture} disabled={status === "starting"}>
                     {status === "starting" ? "Opening share picker…" : "Share PokerCraft tab"}
@@ -989,6 +1253,13 @@ export default function ReplayVisionPanel({
                       <figcaption>Exact board input</figcaption>
                       <canvas ref={boardRegionPreviewRef} />
                     </figure>
+                    {autoUpdateHeroStack &&
+                    validRegion((calibrationDraft || regions)?.stack) ? (
+                      <figure>
+                        <figcaption>Exact Hero stack input</figcaption>
+                        <canvas ref={heroStackRegionPreviewRef} />
+                      </figure>
+                    ) : null}
                   </div>
                   <div className="replay-vision-actions">
                     <button
@@ -1000,7 +1271,7 @@ export default function ReplayVisionPanel({
                       {status === "reading" ? "Reading cards…" : "Rescan cards"}
                     </button>
                     <button type="button" className="pill-toggle" onClick={beginCalibration}>
-                      Recalibrate card regions
+                      Recalibrate regions
                     </button>
                     <button type="button" className="pill-toggle" onClick={stopCapture}>
                       Stop watching
@@ -1014,20 +1285,29 @@ export default function ReplayVisionPanel({
               {status === "calibrating" ? (
                 <p className="replay-vision-privacy">
                   Green should contain both visible Hero card tops and rank/suit corners, with as little avatar or name plate as practical. Blue must
-                  span all five possible board-card slots. Resize or zoom PokerCraft
-                  however you like before marking them.
+                  span all five possible board-card slots.
+                  {autoUpdateHeroStack
+                    ? " Orange should tightly contain only Hero's numeric stack and BB suffix."
+                    : ""}{" "}
+                  Resize or zoom PokerCraft however you like before marking the regions.
                 </p>
               ) : null}
               {lastDetection?.recognized ? (
                 <div className="replay-vision-result">
                   <strong>Last confirmed</strong>
                   <span>{formatDetection(lastDetection)}</span>
-                  <span>{lastDetection.confidence} confidence</span>
+                  <span>
+                    {lastDetection.confidence} cards
+                    {lastDetection.heroStackBehindBB
+                      ? ` · ${lastDetection.stackConfidence} stack`
+                      : ""}
+                  </span>
                 </div>
               ) : null}
               <p className="replay-vision-privacy">
-                Only the marked Hero and board regions are sent when the local
-                watcher detects a stable card change. Opponent cards are excluded.
+                Only the enabled, marked regions are sent when the local watcher
+                detects a stable card change. Hero stack is requested only on a
+                preflop new-hand read; opponent cards are always excluded.
               </p>
             </div>
           </section>

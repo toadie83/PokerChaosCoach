@@ -9,6 +9,8 @@ import {
 } from "../src/components/marketing/articleCatalog.js";
 import { TRUST_PAGE_CATALOG } from "../src/components/marketing/trustCatalog.js";
 
+const LEARNING_LIBRARY_PATH = "/learn";
+
 function buildUrlNode(urlPath) {
   return [
     "  <url>",
@@ -31,6 +33,7 @@ function buildSitemapXml() {
   const uniquePaths = Array.from(
     new Set([
       ...INDEXED_CORE_PATHS,
+      LEARNING_LIBRARY_PATH,
       ...publishedTrustPaths,
       ...articlesHubPaths,
       ...publishedArticlePaths,

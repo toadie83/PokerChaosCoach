@@ -32,6 +32,11 @@ export const LEARNING_DROPDOWN_SECTIONS = [
     title: "Learn by Topic",
     items: [
       {
+        href: "/learn",
+        label: "Learning Library",
+        description: "Quick Lessons matched directly to Study Spots.",
+      },
+      {
         href: "/mtt-hand-review-software",
         label: "MTT Hand Review",
         description: "Structured tournament review workflows.",
@@ -58,7 +63,7 @@ export const LEARNING_DROPDOWN_SECTIONS = [
       },
       {
         href: "/articles",
-        label: "Learning Library",
+        label: "Poker Articles",
         description: "Published workflows, guides, and review systems.",
       },
     ],

@@ -58,9 +58,104 @@ export function isDatabaseConfigured() {
   return Boolean(getPool());
 }
 
+export async function closeDatabase() {
+  if (pool) await pool.end();
+  pool = null;
+  poolInitialized = false;
+}
+
 export async function initDatabase() {
   const resolvedPool = getPool();
   if (!resolvedPool) return;
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS learning_resources (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      stack_depth_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      opponent_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      content_type TEXT NOT NULL,
+      url TEXT NOT NULL UNIQUE,
+      published BOOLEAN NOT NULL DEFAULT FALSE,
+      publish_date DATE,
+      priority INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS learning_resources_published_category_idx
+    ON learning_resources (published, category, priority DESC);
+  `);
+
+  await resolvedPool.query(`
+    ALTER TABLE learning_resources
+      ADD COLUMN IF NOT EXISTS external_id TEXT,
+      ADD COLUMN IF NOT EXISTS series TEXT,
+      ADD COLUMN IF NOT EXISTS lesson_number INTEGER,
+      ADD COLUMN IF NOT EXISTS short_title TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS primary_tag TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS secondary_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS hero_position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS villain_position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS opponent_type_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS study_spot_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS body TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS example_spot TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS mistake TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS better_play TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS when_to_use JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS when_not_to_use JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS takeaway TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS instagram_caption TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS instagram_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT '';
+  `);
+
+  await resolvedPool.query(`
+    UPDATE learning_resources
+    SET
+      status = CASE WHEN published THEN 'published' ELSE 'draft' END,
+      published_at = COALESCE(published_at, publish_date::TIMESTAMPTZ),
+      primary_tag = CASE
+        WHEN primary_tag = '' AND jsonb_array_length(tags) > 0 THEN tags->>0
+        ELSE primary_tag
+      END,
+      hero_position_tags = CASE
+        WHEN hero_position_tags = '[]'::jsonb THEN position_tags
+        ELSE hero_position_tags
+      END,
+      opponent_type_tags = CASE
+        WHEN opponent_type_tags = '[]'::jsonb THEN opponent_tags
+        ELSE opponent_type_tags
+      END,
+      source_url = CASE WHEN source_url = '' THEN url ELSE source_url END;
+  `);
+
+  await resolvedPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS learning_resources_external_id_uidx
+    ON learning_resources (external_id)
+    WHERE external_id IS NOT NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS learning_resources_series_lesson_uidx
+    ON learning_resources (series, lesson_number)
+    WHERE series IS NOT NULL AND lesson_number IS NOT NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS learning_resources_status_category_idx
+    ON learning_resources (status, category, priority DESC);
+  `);
 
   await resolvedPool.query(`
     CREATE TABLE IF NOT EXISTS tournament_uploads (
@@ -93,6 +188,136 @@ export async function initDatabase() {
   await resolvedPool.query(`
     CREATE INDEX IF NOT EXISTS tournament_uploads_user_played_at_idx
     ON tournament_uploads (user_id, tournament_played_at DESC, updated_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      tournament_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      hands_analysed INTEGER NOT NULL DEFAULT 0,
+      candidate_count INTEGER NOT NULL DEFAULT 0,
+      spot_count INTEGER NOT NULL DEFAULT 0,
+      pipeline_version TEXT NOT NULL,
+      model TEXT,
+      error_code TEXT,
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      UNIQUE (id, user_id),
+      FOREIGN KEY (user_id, tournament_id)
+        REFERENCES tournament_uploads (user_id, tournament_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_reports_user_created_idx
+    ON study_reports (user_id, created_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_spots (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      primary_hand_key TEXT NOT NULL,
+      example_hand_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+      type TEXT NOT NULL,
+      category TEXT NOT NULL,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      why_study_this TEXT NOT NULL,
+      confidence NUMERIC(5, 4) NOT NULL,
+      rank_score NUMERIC(5, 4) NOT NULL,
+      rank INTEGER NOT NULL,
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      stack_depth_bb NUMERIC(8, 2),
+      stack_depth_tag TEXT,
+      hero_position TEXT NOT NULL DEFAULT 'unknown',
+      villain_position TEXT NOT NULL DEFAULT 'unknown',
+      opponent_type TEXT NOT NULL DEFAULT 'unknown',
+      hand_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      resource_matches JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (report_id, rank),
+      FOREIGN KEY (report_id, user_id)
+        REFERENCES study_reports (id, user_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_spots_report_rank_idx
+    ON study_spots (report_id, rank ASC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_spots_user_category_idx
+    ON study_spots (user_id, category, created_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_queue_items (
+      user_id TEXT NOT NULL,
+      study_spot_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'to_review',
+      saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      PRIMARY KEY (user_id, study_spot_id),
+      FOREIGN KEY (study_spot_id)
+        REFERENCES study_spots (id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_queue_user_status_idx
+    ON study_queue_items (user_id, status, saved_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS content_gap_occurrences (
+      study_spot_id TEXT NOT NULL,
+      report_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (study_spot_id, tag),
+      FOREIGN KEY (study_spot_id)
+        REFERENCES study_spots (id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (report_id, user_id)
+        REFERENCES study_reports (id, user_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS content_gap_tag_seen_idx
+    ON content_gap_occurrences (tag, last_seen DESC);
+  `);
+
+  await resolvedPool.query(`
+    ALTER TABLE content_gap_occurrences
+      ADD COLUMN IF NOT EXISTS primary_tag TEXT,
+      ADD COLUMN IF NOT EXISTS study_spot_type TEXT;
+  `);
+
+  await resolvedPool.query(`
+    UPDATE content_gap_occurrences
+    SET
+      primary_tag = COALESCE(primary_tag, tag),
+      study_spot_type = COALESCE(study_spot_type, 'interesting_spot')
+    WHERE primary_tag IS NULL OR study_spot_type IS NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS content_gap_primary_type_seen_idx
+    ON content_gap_occurrences (primary_tag, study_spot_type, last_seen DESC);
   `);
 
   await resolvedPool.query(`
@@ -478,6 +703,330 @@ export async function deleteTournamentUpload(userId, tournamentId) {
     [userId, tournamentId]
   );
   return Number(result.rowCount) > 0;
+}
+
+function toLearningResourcePayload(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    externalId: row.external_id || null,
+    series: row.series || null,
+    lessonNumber: row.lesson_number === null ? null : Number(row.lesson_number),
+    slug: row.slug,
+    canonicalPath: `/learn/${row.slug}`,
+    title: row.title,
+    shortTitle: row.short_title || "",
+    description: row.description,
+    category: row.category,
+    primaryTag: row.primary_tag || row.tags?.[0] || "",
+    secondaryTags: Array.isArray(row.secondary_tags)
+      ? row.secondary_tags
+      : Array.isArray(row.tags) ? row.tags.slice(1) : [],
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    stackDepthTags: Array.isArray(row.stack_depth_tags)
+      ? row.stack_depth_tags
+      : [],
+    heroPositionTags: Array.isArray(row.hero_position_tags)
+      ? row.hero_position_tags
+      : [],
+    villainPositionTags: Array.isArray(row.villain_position_tags)
+      ? row.villain_position_tags
+      : [],
+    opponentTypeTags: Array.isArray(row.opponent_type_tags)
+      ? row.opponent_type_tags
+      : [],
+    studySpotTypes: Array.isArray(row.study_spot_types)
+      ? row.study_spot_types
+      : [],
+    positionTags: Array.isArray(row.hero_position_tags)
+      ? row.hero_position_tags
+      : Array.isArray(row.position_tags) ? row.position_tags : [],
+    opponentTags: Array.isArray(row.opponent_type_tags)
+      ? row.opponent_type_tags
+      : Array.isArray(row.opponent_tags) ? row.opponent_tags : [],
+    resourceType: row.content_type,
+    contentType: row.content_type,
+    body: row.body || "",
+    exampleSpot: row.example_spot || "",
+    mistake: row.mistake || "",
+    betterPlay: row.better_play || "",
+    whenToUse: Array.isArray(row.when_to_use) ? row.when_to_use : [],
+    whenNotToUse: Array.isArray(row.when_not_to_use) ? row.when_not_to_use : [],
+    takeaway: row.takeaway || "",
+    status: row.status || (row.published ? "published" : "draft"),
+    published: (row.status || (row.published ? "published" : "draft")) === "published",
+    publishedAt: row.published_at || row.publish_date || null,
+    publishDate: row.published_at || row.publish_date || null,
+    instagramCaption: row.instagram_caption || "",
+    instagramUrl: row.instagram_url || "",
+    sourceUrl: row.source_url || "",
+    url: `/learn/${row.slug}`,
+    priority: Number(row.priority) || 0,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function learningResourceWriteValues(resource) {
+  const published = resource.status === "published";
+  const publishedAt = published
+    ? resource.publishedAt || new Date().toISOString()
+    : null;
+  const canonicalPath = `/learn/${resource.slug}`;
+  return [
+    resource.id,
+    resource.externalId || null,
+    resource.series || null,
+    resource.lessonNumber || null,
+    resource.slug,
+    resource.title,
+    resource.shortTitle || "",
+    resource.description,
+    resource.category,
+    resource.primaryTag,
+    toJsonbParam(resource.secondaryTags, []),
+    toJsonbParam(resource.tags, []),
+    toJsonbParam(resource.stackDepthTags, []),
+    toJsonbParam(resource.heroPositionTags, []),
+    toJsonbParam(resource.villainPositionTags, []),
+    toJsonbParam(resource.opponentTypeTags, []),
+    toJsonbParam(resource.studySpotTypes, []),
+    resource.resourceType,
+    resource.body || "",
+    resource.exampleSpot || "",
+    resource.mistake || "",
+    resource.betterPlay || "",
+    toJsonbParam(resource.whenToUse, []),
+    toJsonbParam(resource.whenNotToUse, []),
+    resource.takeaway || "",
+    resource.status,
+    published,
+    publishedAt,
+    resource.instagramCaption || "",
+    resource.instagramUrl || "",
+    resource.sourceUrl || "",
+    canonicalPath,
+    Number(resource.priority) || 0,
+  ];
+}
+
+async function writeLearningResource(client, resource, conflictTarget) {
+  const conflictColumn = conflictTarget === "slug" ? "slug" : "id";
+  const result = await client.query(
+    `
+      INSERT INTO learning_resources (
+        id, external_id, series, lesson_number, slug, title, short_title,
+        description, category, primary_tag, secondary_tags, tags,
+        stack_depth_tags, hero_position_tags, villain_position_tags,
+        opponent_type_tags, study_spot_types, position_tags, opponent_tags,
+        content_type, body, example_spot, mistake, better_play, when_to_use,
+        when_not_to_use, takeaway, status, published, published_at,
+        publish_date, instagram_caption, instagram_url, source_url, url, priority
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+        $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb,
+        $14::jsonb, $16::jsonb, $18, $19, $20, $21, $22, $23::jsonb,
+        $24::jsonb, $25, $26, $27, $28, $28::timestamptz::date, $29, $30,
+        $31, $32, $33
+      )
+      ON CONFLICT (${conflictColumn})
+      DO UPDATE SET
+        external_id = EXCLUDED.external_id,
+        series = EXCLUDED.series,
+        lesson_number = EXCLUDED.lesson_number,
+        slug = EXCLUDED.slug,
+        title = EXCLUDED.title,
+        short_title = EXCLUDED.short_title,
+        description = EXCLUDED.description,
+        category = EXCLUDED.category,
+        primary_tag = EXCLUDED.primary_tag,
+        secondary_tags = EXCLUDED.secondary_tags,
+        tags = EXCLUDED.tags,
+        stack_depth_tags = EXCLUDED.stack_depth_tags,
+        hero_position_tags = EXCLUDED.hero_position_tags,
+        villain_position_tags = EXCLUDED.villain_position_tags,
+        opponent_type_tags = EXCLUDED.opponent_type_tags,
+        study_spot_types = EXCLUDED.study_spot_types,
+        position_tags = EXCLUDED.position_tags,
+        opponent_tags = EXCLUDED.opponent_tags,
+        content_type = EXCLUDED.content_type,
+        body = EXCLUDED.body,
+        example_spot = EXCLUDED.example_spot,
+        mistake = EXCLUDED.mistake,
+        better_play = EXCLUDED.better_play,
+        when_to_use = EXCLUDED.when_to_use,
+        when_not_to_use = EXCLUDED.when_not_to_use,
+        takeaway = EXCLUDED.takeaway,
+        status = EXCLUDED.status,
+        published = EXCLUDED.published,
+        published_at = EXCLUDED.published_at,
+        publish_date = EXCLUDED.publish_date,
+        instagram_caption = EXCLUDED.instagram_caption,
+        instagram_url = EXCLUDED.instagram_url,
+        source_url = EXCLUDED.source_url,
+        url = EXCLUDED.url,
+        priority = EXCLUDED.priority,
+        updated_at = NOW()
+      RETURNING *;
+    `,
+    learningResourceWriteValues(resource),
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function seedLearningResources(resources) {
+  const resolvedPool = getRequiredPool();
+  const items = Array.isArray(resources) ? resources : [];
+  if (items.length === 0) return [];
+  const client = await resolvedPool.connect();
+  const seeded = [];
+  try {
+    await client.query("BEGIN");
+    for (const resource of items) {
+      seeded.push(await writeLearningResource(client, resource, "slug"));
+    }
+    await client.query("COMMIT");
+    return seeded;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listLearningResources({
+  publishedOnly = true,
+  tag = null,
+  category = null,
+  resourceType = null,
+  search = null,
+} = {}) {
+  const resolvedPool = getRequiredPool();
+  const filters = [];
+  const values = [];
+  if (publishedOnly) filters.push("status = 'published'");
+  if (tag) {
+    values.push(JSON.stringify([String(tag)]));
+    filters.push(`tags @> $${values.length}::jsonb`);
+  }
+  if (category) {
+    values.push(String(category));
+    filters.push(`category = $${values.length}`);
+  }
+  if (resourceType) {
+    values.push(String(resourceType));
+    filters.push(`content_type = $${values.length}`);
+  }
+  if (search) {
+    values.push(`%${String(search).trim()}%`);
+    filters.push(`(title ILIKE $${values.length} OR description ILIKE $${values.length})`);
+  }
+  const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+  const result = await resolvedPool.query(
+    `
+      SELECT *
+      FROM learning_resources
+      ${where}
+      ORDER BY priority DESC, published_at DESC NULLS LAST, title ASC;
+    `,
+    values,
+  );
+  return result.rows.map(toLearningResourcePayload);
+}
+
+export async function getLearningResourceById(id, { publishedOnly = false } = {}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `SELECT * FROM learning_resources
+     WHERE id = $1 ${publishedOnly ? "AND status = 'published'" : ""}
+     LIMIT 1;`,
+    [id],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function getLearningResourceBySlug(slug, { publishedOnly = true } = {}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `SELECT * FROM learning_resources
+     WHERE slug = $1 ${publishedOnly ? "AND status = 'published'" : ""}
+     LIMIT 1;`,
+    [slug],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function findLearningResourceDuplicates(resource, excludeId = null) {
+  const resolvedPool = getRequiredPool();
+  const values = [resource.slug, resource.externalId || null, resource.series || null, resource.lessonNumber || null];
+  let exclusion = "";
+  if (excludeId) {
+    values.push(excludeId);
+    exclusion = `AND id <> $${values.length}`;
+  }
+  const result = await resolvedPool.query(
+    `
+      SELECT id, slug, external_id, series, lesson_number
+      FROM learning_resources
+      WHERE (
+        slug = $1
+        OR ($2::text IS NOT NULL AND external_id = $2)
+        OR ($3::text IS NOT NULL AND $4::integer IS NOT NULL AND series = $3 AND lesson_number = $4)
+      )
+      ${exclusion};
+    `,
+    values,
+  );
+  const duplicates = [];
+  for (const row of result.rows) {
+    if (row.slug === resource.slug) duplicates.push({ field: "slug", value: resource.slug, resourceId: row.id });
+    if (resource.externalId && row.external_id === resource.externalId) duplicates.push({ field: "externalId", value: resource.externalId, resourceId: row.id });
+    if (resource.series && resource.lessonNumber && row.series === resource.series && Number(row.lesson_number) === resource.lessonNumber) {
+      duplicates.push({ field: "lessonNumber", value: `${resource.series} #${resource.lessonNumber}`, resourceId: row.id });
+    }
+  }
+  return duplicates;
+}
+
+export async function createLearningResource(resource) {
+  return writeLearningResource(getRequiredPool(), resource, "id");
+}
+
+export async function updateLearningResource(resource) {
+  const existing = await getLearningResourceById(resource.id);
+  if (!existing) return null;
+  return writeLearningResource(getRequiredPool(), resource, "id");
+}
+
+export async function setLearningResourceStatus(id, status) {
+  const resolvedPool = getRequiredPool();
+  const published = status === "published";
+  const result = await resolvedPool.query(
+    `
+      UPDATE learning_resources
+      SET
+        status = $2,
+        published = $3,
+        published_at = CASE WHEN $3 THEN COALESCE(published_at, NOW()) ELSE NULL END,
+        publish_date = CASE WHEN $3 THEN COALESCE(publish_date, CURRENT_DATE) ELSE NULL END,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *;
+    `,
+    [id, status, published],
+  );
+  return toLearningResourcePayload(result.rows[0]);
+}
+
+export async function deleteLearningResource(id) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    "DELETE FROM learning_resources WHERE id = $1 RETURNING id;",
+    [id],
+  );
+  return Boolean(result.rows[0]);
 }
 
 function toPerformanceSnapshotPayload(row) {
@@ -1158,4 +1707,416 @@ export async function getUserBillingAiAccess(userId) {
     trial,
     reviewAiGranted: hasActiveSubscription || (trial?.remainingTokens || 0) > 0,
   };
+}
+
+function toStudySpotPayload(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reportId: row.report_id,
+    primaryHandKey: row.primary_hand_key,
+    exampleHandKeys: Array.isArray(row.example_hand_keys)
+      ? row.example_hand_keys
+      : [],
+    type: row.type,
+    category: row.category,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    title: row.title,
+    summary: row.summary,
+    whyStudyThis: row.why_study_this,
+    confidence: Number(row.confidence) || 0,
+    rankScore: Number(row.rank_score) || 0,
+    rank: Number(row.rank) || 0,
+    occurrenceCount: Number(row.occurrence_count) || 1,
+    stackDepthBb:
+      row.stack_depth_bb === null ? null : Number(row.stack_depth_bb),
+    stackDepthTag: row.stack_depth_tag || null,
+    heroPosition: row.hero_position || "unknown",
+    villainPosition: row.villain_position || "unknown",
+    opponentType: row.opponent_type || "unknown",
+    handContext:
+      row.hand_context && typeof row.hand_context === "object"
+        ? row.hand_context
+        : {},
+    resourceMatches: Array.isArray(row.resource_matches)
+      ? row.resource_matches
+      : [],
+    createdAt: row.created_at || null,
+  };
+}
+
+function toStudyReportPayload(row, spots = []) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name || null,
+    status: row.status,
+    handsAnalysed: Number(row.hands_analysed) || 0,
+    candidateCount: Number(row.candidate_count) || 0,
+    spotCount: Number(row.spot_count) || 0,
+    pipelineVersion: row.pipeline_version,
+    model: row.model || null,
+    errorCode: row.error_code || null,
+    errorMessage: row.error_message || null,
+    createdAt: row.created_at || null,
+    completedAt: row.completed_at || null,
+    spots,
+  };
+}
+
+export async function createStudyReport({
+  id,
+  userId,
+  tournamentId,
+  handsAnalysed,
+  candidateCount,
+  pipelineVersion,
+  model = null,
+}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      INSERT INTO study_reports (
+        id,
+        user_id,
+        tournament_id,
+        status,
+        hands_analysed,
+        candidate_count,
+        pipeline_version,
+        model
+      )
+      VALUES ($1, $2, $3, 'analysing', $4, $5, $6, $7)
+      RETURNING *;
+    `,
+    [
+      id,
+      userId,
+      tournamentId,
+      Number(handsAnalysed) || 0,
+      Number(candidateCount) || 0,
+      pipelineVersion,
+      model,
+    ],
+  );
+  return toStudyReportPayload(result.rows[0]);
+}
+
+export async function completeStudyReport({ id, userId, spots }) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const reportResult = await client.query(
+      `
+        SELECT *
+        FROM study_reports
+        WHERE id = $1 AND user_id = $2 AND status = 'analysing'
+        FOR UPDATE;
+      `,
+      [id, userId],
+    );
+    if (!reportResult.rows[0]) {
+      const error = new Error("Analysing Study Report not found.");
+      error.code = "REPORT_NOT_FOUND";
+      throw error;
+    }
+
+    for (const spot of Array.isArray(spots) ? spots : []) {
+      await client.query(
+        `
+          INSERT INTO study_spots (
+            id,
+            report_id,
+            user_id,
+            primary_hand_key,
+            example_hand_keys,
+            type,
+            category,
+            tags,
+            title,
+            summary,
+            why_study_this,
+            confidence,
+            rank_score,
+            rank,
+            occurrence_count,
+            stack_depth_bb,
+            stack_depth_tag,
+            hero_position,
+            villain_position,
+            opponent_type,
+            hand_context,
+            resource_matches
+          )
+          VALUES (
+            $1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9, $10, $11,
+            $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb,
+            $22::jsonb
+          );
+        `,
+        [
+          spot.id,
+          id,
+          userId,
+          spot.primaryHandKey,
+          toJsonbParam(spot.exampleHandKeys, []),
+          spot.type,
+          spot.category,
+          toJsonbParam(spot.tags, []),
+          spot.title,
+          spot.summary,
+          spot.whyStudyThis,
+          Number(spot.confidence) || 0,
+          Number(spot.rankScore) || 0,
+          Number(spot.rank) || 0,
+          Number(spot.occurrenceCount) || 1,
+          spot.stackDepthBb ?? null,
+          spot.stackDepthTag || null,
+          spot.heroPosition || "unknown",
+          spot.villainPosition || "unknown",
+          spot.opponentType || "unknown",
+          toJsonbParam(spot.handContext, {}),
+          toJsonbParam(spot.resourceMatches, []),
+        ],
+      );
+
+      if (!Array.isArray(spot.resourceMatches) || spot.resourceMatches.length === 0) {
+        const tags = Array.isArray(spot.tags) ? spot.tags : [];
+        const gapTag = String(spot.contentGapTag || tags.at(-1) || spot.category).trim();
+        if (gapTag) {
+          await client.query(
+            `
+              INSERT INTO content_gap_occurrences (
+                study_spot_id,
+                report_id,
+                user_id,
+                tag,
+                primary_tag,
+                study_spot_type
+              )
+              VALUES ($1, $2, $3, $4, $4, $5)
+              ON CONFLICT (study_spot_id, tag)
+              DO UPDATE SET
+                primary_tag = EXCLUDED.primary_tag,
+                study_spot_type = EXCLUDED.study_spot_type,
+                last_seen = NOW();
+            `,
+            [spot.id, id, userId, gapTag, spot.type || "interesting_spot"],
+          );
+        }
+      }
+    }
+
+    const completed = await client.query(
+      `
+        UPDATE study_reports
+        SET
+          status = 'complete',
+          spot_count = $3,
+          error_code = NULL,
+          error_message = NULL,
+          completed_at = NOW()
+        WHERE id = $1 AND user_id = $2
+        RETURNING *;
+      `,
+      [id, userId, Array.isArray(spots) ? spots.length : 0],
+    );
+    await client.query("COMMIT");
+    return toStudyReportPayload(completed.rows[0], spots);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function failStudyReport({
+  id,
+  userId,
+  errorCode = "ANALYSIS_FAILED",
+  errorMessage = "Study Spot analysis failed.",
+}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      UPDATE study_reports
+      SET
+        status = 'failed',
+        error_code = $3,
+        error_message = $4,
+        completed_at = NOW()
+      WHERE id = $1 AND user_id = $2 AND status = 'analysing'
+      RETURNING *;
+    `,
+    [id, userId, errorCode, errorMessage],
+  );
+  return toStudyReportPayload(result.rows[0]);
+}
+
+export async function getStudyReport(userId, reportId) {
+  const resolvedPool = getRequiredPool();
+  const reportResult = await resolvedPool.query(
+    `
+      SELECT r.*, t.tournament_name
+      FROM study_reports r
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE r.id = $1 AND r.user_id = $2
+      LIMIT 1;
+    `,
+    [reportId, userId],
+  );
+  if (!reportResult.rows[0]) return null;
+  const spotsResult = await resolvedPool.query(
+    `
+      SELECT *
+      FROM study_spots
+      WHERE report_id = $1 AND user_id = $2
+      ORDER BY rank ASC;
+    `,
+    [reportId, userId],
+  );
+  return toStudyReportPayload(
+    reportResult.rows[0],
+    spotsResult.rows.map(toStudySpotPayload),
+  );
+}
+
+export async function listStudyReports(userId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      SELECT r.*, t.tournament_name
+      FROM study_reports r
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE r.user_id = $1
+      ORDER BY r.created_at DESC;
+    `,
+    [userId],
+  );
+  return result.rows.map((row) => toStudyReportPayload(row));
+}
+
+export async function saveStudyQueueItem(userId, studySpotId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      INSERT INTO study_queue_items (user_id, study_spot_id, status)
+      SELECT $1, s.id, 'to_review'
+      FROM study_spots s
+      WHERE s.id = $2 AND s.user_id = $1
+      ON CONFLICT (user_id, study_spot_id)
+      DO UPDATE SET status = 'to_review', completed_at = NULL
+      RETURNING user_id, study_spot_id, status, saved_at, completed_at;
+    `,
+    [userId, studySpotId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    studySpotId: row.study_spot_id,
+    status: row.status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function updateStudyQueueItemStatus(userId, studySpotId, status) {
+  const resolvedPool = getRequiredPool();
+  const completedAt = status === "completed" ? new Date() : null;
+  const result = await resolvedPool.query(
+    `
+      UPDATE study_queue_items
+      SET status = $3, completed_at = $4
+      WHERE user_id = $1 AND study_spot_id = $2
+      RETURNING user_id, study_spot_id, status, saved_at, completed_at;
+    `,
+    [userId, studySpotId, status, completedAt],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    studySpotId: row.study_spot_id,
+    status: row.status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function deleteStudyQueueItem(userId, studySpotId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      DELETE FROM study_queue_items
+      WHERE user_id = $1 AND study_spot_id = $2
+      RETURNING study_spot_id;
+    `,
+    [userId, studySpotId],
+  );
+  return Boolean(result.rows[0]);
+}
+
+export async function listStudyQueueItems(userId, status = null) {
+  const resolvedPool = getRequiredPool();
+  const values = [userId];
+  const statusFilter = status ? "AND q.status = $2" : "";
+  if (status) values.push(status);
+  const result = await resolvedPool.query(
+    `
+      SELECT
+        q.status AS queue_status,
+        q.saved_at,
+        q.completed_at,
+        s.*,
+        r.tournament_id,
+        t.tournament_name
+      FROM study_queue_items q
+      JOIN study_spots s ON s.id = q.study_spot_id AND s.user_id = q.user_id
+      JOIN study_reports r ON r.id = s.report_id AND r.user_id = q.user_id
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE q.user_id = $1 ${statusFilter}
+      ORDER BY q.saved_at DESC;
+    `,
+    values,
+  );
+  return result.rows.map((row) => ({
+    ...toStudySpotPayload(row),
+    queueStatus: row.queue_status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name || null,
+  }));
+}
+
+export async function listContentGaps() {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(`
+    SELECT
+      COALESCE(primary_tag, tag) AS primary_tag,
+      COALESCE(study_spot_type, 'interesting_spot') AS study_spot_type,
+      COUNT(*)::INTEGER AS occurrence_count,
+      (ARRAY_AGG(study_spot_id ORDER BY last_seen DESC))[1:10] AS example_spot_ids,
+      MIN(first_seen) AS first_seen,
+      MAX(last_seen) AS last_seen
+    FROM content_gap_occurrences
+    GROUP BY COALESCE(primary_tag, tag), COALESCE(study_spot_type, 'interesting_spot')
+    ORDER BY occurrence_count DESC, last_seen DESC;
+  `);
+  return result.rows.map((row) => ({
+    primaryTag: row.primary_tag,
+    tag: row.primary_tag,
+    studySpotType: row.study_spot_type,
+    occurrenceCount: Number(row.occurrence_count) || 0,
+    exampleSpotIds: Array.isArray(row.example_spot_ids)
+      ? row.example_spot_ids
+      : [],
+    firstSeen: row.first_seen || null,
+    lastSeen: row.last_seen || null,
+  }));
 }
