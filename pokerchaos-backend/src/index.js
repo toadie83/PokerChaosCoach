@@ -78,9 +78,12 @@ import {
   learningResourceInputFromCanonical,
   learningResourceValidationDetails,
   unwrapLearningResourceImport,
-  validateLearningResourceImport,
   validateLearningResourceInput,
 } from "./studySpots/learningResourceValidation.js";
+import {
+  previewLearningResourceImportRequest,
+  saveLearningResourceImportRequest,
+} from "./studySpots/learningImportWorkflow.js";
 import { scoreLearningResource } from "./studySpots/resourceMatcher.js";
 import {
   detectStudyUploadSite,
@@ -1270,10 +1273,8 @@ function sendLearningWriteFailure(res, error) {
   });
 }
 
-async function validateLearningWrite(input, excludeId = null, { importPayload = false } = {}) {
-  const parsed = importPayload
-    ? validateLearningResourceImport(input)
-    : validateLearningResourceInput(unwrapLearningResourceImport(input));
+async function validateLearningWrite(input, excludeId = null) {
+  const parsed = validateLearningResourceInput(unwrapLearningResourceImport(input));
   if (!parsed.success) {
     return {
       ok: false,
@@ -1410,7 +1411,9 @@ app.get("/admin/learning/:id", requireAuth, requireLearningManager, async (req, 
 app.post("/admin/learning/import/preview", requireAuth, requireLearningImporter, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
-    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
+    const validation = await previewLearningResourceImportRequest(req.body, {
+      findDuplicates: (resource) => findLearningResourceDuplicates(resource),
+    });
     if (!validation.ok) return res.status(validation.status).json(validation.payload);
     return res.json({ valid: true, resource: validation.resource, duplicates: [], warnings: validation.warnings });
   } catch (error) {
@@ -1421,13 +1424,13 @@ app.post("/admin/learning/import/preview", requireAuth, requireLearningImporter,
 app.post("/admin/learning/import", requireAuth, requireLearningImporter, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
-    const validation = await validateLearningWrite(req.body, null, { importPayload: true });
-    if (!validation.ok) return res.status(validation.status).json(validation.payload);
-    const resource = await createLearningResource({
-      ...validation.resource,
-      id: randomUUID(),
+    const result = await saveLearningResourceImportRequest(req.body, {
+      findDuplicates: (resource) => findLearningResourceDuplicates(resource),
+      createResource: createLearningResource,
+      createId: randomUUID,
     });
-    return res.status(201).json({ resource, imported: true, warnings: validation.warnings });
+    if (!result.ok) return res.status(result.status).json(result.payload);
+    return res.status(result.status).json(result.payload);
   } catch (error) {
     return sendLearningWriteFailure(res, error);
   }

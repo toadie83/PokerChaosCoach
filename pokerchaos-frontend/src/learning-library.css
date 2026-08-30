@@ -496,6 +496,67 @@
   padding-top: var(--spacing-5);
 }
 
+.learning-import-modes {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: var(--spacing-4);
+  padding: 3px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.learning-import-modes button {
+  min-height: 38px;
+  padding-inline: 14px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.learning-import-modes button.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.learning-import-file-panel {
+  display: grid;
+  gap: var(--spacing-4);
+  min-height: 260px;
+  align-content: start;
+  padding-block: var(--spacing-3);
+}
+
+.learning-import-identity {
+  margin: 0;
+  border-top: 1px solid var(--border-primary);
+}
+
+.learning-import-identity > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: var(--spacing-3);
+  padding-block: 10px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.learning-import-identity dt {
+  color: var(--text-muted);
+  font-size: var(--font-small-size);
+  font-weight: 700;
+}
+
+.learning-import-identity dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
 .learning-import-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);

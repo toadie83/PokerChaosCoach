@@ -58,12 +58,16 @@ export async function requestAdminContentGaps() {
   return getJson("/admin/learning/content-gaps");
 }
 
-export async function requestPreviewLearningImport(resource) {
-  return postJson("/admin/learning/import/preview", { resource });
+function learningImportRequest(payload) {
+  return payload?.importDocument ? payload : { resource: payload };
 }
 
-export async function requestImportLearningResource(resource) {
-  return postJson("/admin/learning/import", { resource });
+export async function requestPreviewLearningImport(payload) {
+  return postJson("/admin/learning/import/preview", learningImportRequest(payload));
+}
+
+export async function requestImportLearningResource(payload) {
+  return postJson("/admin/learning/import", learningImportRequest(payload));
 }
 
 export async function requestCreateLearningResource(resource) {
