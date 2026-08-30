@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   requestAdminContentGaps,
@@ -12,6 +12,7 @@ import {
 } from "../api/aiService.js";
 import {
   emptyLearningResource,
+  filterAdminLearningResources,
   learningLabel,
   learningResourceInput,
 } from "../lib/learningPresentation.js";
@@ -20,6 +21,7 @@ import {
   learningImportIdentityFromText,
   validateLearningImportFile,
 } from "../lib/learningImportClient.js";
+import LearningLessonContent from "./learning/LearningLessonContent.jsx";
 
 function arrayFromLines(value) {
   return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -51,17 +53,56 @@ function ChoiceList({ label, options, value, onChange }) {
 }
 
 function ResourcePreview({ resource }) {
+  return <LearningLessonContent resource={resource} showLibraryLink={false} className="learning-admin-preview" />;
+}
+
+function LearningResourcePreviewModal({ resource, onClose }) {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "Tab") {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    closeButtonRef.current?.focus();
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose, resource.id]);
+
   return (
-    <article className="learning-admin-preview">
-      <p>{learningLabel(resource.category)} / {learningLabel(resource.resourceType)}</p>
-      <h2>{resource.title || "Untitled lesson"}</h2>
-      <p>{resource.description || "Add a short summary."}</p>
-      <section><h3>Core lesson</h3><p>{resource.body || "No lesson body yet."}</p></section>
-      {resource.exampleSpot ? <section><h3>Example spot</h3><p>{resource.exampleSpot}</p></section> : null}
-      {resource.mistake ? <section><h3>Common mistake</h3><p>{resource.mistake}</p></section> : null}
-      {resource.betterPlay ? <section><h3>Better play</h3><p>{resource.betterPlay}</p></section> : null}
-      {resource.takeaway ? <section><h3>Takeaway</h3><p>{resource.takeaway}</p></section> : null}
-    </article>
+    <div className="modal-backdrop learning-admin-preview-backdrop" onClick={onClose}>
+      <section
+        className="modal learning-admin-preview-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="learning-preview-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-header learning-admin-preview-modal-header">
+          <div>
+            <p>Lesson preview</p>
+            <h2 className="modal-title" id="learning-preview-title">{resource.title}</h2>
+          </div>
+          <button ref={closeButtonRef} type="button" className="learning-admin-modal-close" onClick={onClose}>Close</button>
+        </header>
+        <div className="modal-body learning-admin-preview-modal-body">
+          <p className="learning-admin-preview-status">Previewing {learningLabel(resource.status)} content</p>
+          <LearningLessonContent resource={resource} showLibraryLink={false} />
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -215,6 +256,10 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(emptyLearningResource());
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewResource, setPreviewResource] = useState(null);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryCategory, setLibraryCategory] = useState("all");
+  const [libraryStatus, setLibraryStatus] = useState("all");
   const [status, setStatus] = useState("loading");
   const [message, setMessage] = useState("");
 
@@ -246,6 +291,19 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
     () => Array.from(new Set(Object.values(taxonomy?.categories || {}).flat())),
     [taxonomy],
   );
+  const libraryCategories = useMemo(
+    () => Array.from(new Set(resources.map((resource) => resource.category).filter(Boolean))).sort(),
+    [resources],
+  );
+  const visibleResources = useMemo(
+    () => filterAdminLearningResources(resources, {
+      query: libraryQuery,
+      category: libraryCategory,
+      status: libraryStatus,
+    }),
+    [libraryCategory, libraryQuery, libraryStatus, resources],
+  );
+  const closeResourcePreview = useCallback(() => setPreviewResource(null), []);
 
   const selectResource = (resource) => {
     setSelectedId(resource.id);
@@ -308,13 +366,47 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
       {message ? <p className={status === "error" ? "learning-admin-error" : "learning-admin-success"}>{message}</p> : null}
       <div className="learning-admin-layout">
         <aside className="learning-admin-list">
-          <div className="learning-admin-list-heading"><h2>Library</h2><span>{resources.length}</span></div>
-          {resources.map((resource) => (
-            <div className={`learning-admin-list-item ${selectedId === resource.id ? "active" : ""}`} key={resource.id}>
-              <button type="button" onClick={() => selectResource(resource)}><strong>{resource.title}</strong><span>{learningLabel(resource.category)} / {resource.status}</span></button>
-              <button type="button" className="learning-admin-publish" onClick={() => changePublication(resource)}>{resource.status === "published" ? "Unpublish" : "Publish"}</button>
+          <div className="learning-admin-list-heading"><h2>Library</h2><span aria-live="polite">{visibleResources.length} / {resources.length}</span></div>
+          <div className="learning-admin-list-tools">
+            <label>
+              <span>Search lessons</span>
+              <input
+                type="search"
+                value={libraryQuery}
+                onChange={(event) => setLibraryQuery(event.target.value)}
+                placeholder="Title, slug or external ID"
+              />
+            </label>
+            <div>
+              <label>
+                <span>Category</span>
+                <select value={libraryCategory} onChange={(event) => setLibraryCategory(event.target.value)}>
+                  <option value="all">All categories</option>
+                  {libraryCategories.map((category) => <option value={category} key={category}>{learningLabel(category)}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Status</span>
+                <select value={libraryStatus} onChange={(event) => setLibraryStatus(event.target.value)}>
+                  <option value="all">All statuses</option>
+                  <option value="published">Published</option>
+                  <option value="draft">Draft</option>
+                </select>
+              </label>
             </div>
-          ))}
+          </div>
+          <div className="learning-admin-list-results">
+            {visibleResources.map((resource) => (
+              <div className={`learning-admin-list-item ${selectedId === resource.id ? "active" : ""}`} key={resource.id}>
+                <button type="button" onClick={() => selectResource(resource)}><strong>{resource.title}</strong><span>{learningLabel(resource.category)} / {resource.status}</span></button>
+                <div className="learning-admin-list-actions">
+                  <button type="button" className="learning-admin-preview-button" onClick={() => setPreviewResource(resource)}>Preview</button>
+                  <button type="button" className="learning-admin-publish" onClick={() => changePublication(resource)}>{resource.status === "published" ? "Unpublish" : "Publish"}</button>
+                </div>
+              </div>
+            ))}
+            {status !== "loading" && visibleResources.length === 0 ? <p className="learning-admin-empty">No lessons match these filters.</p> : null}
+          </div>
         </aside>
 
         <section className="learning-admin-editor">
@@ -359,6 +451,7 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
           {gaps.length === 0 ? <p>No unmatched Study Spot topics yet.</p> : null}
         </aside>
       </div>
+      {previewResource ? <LearningResourcePreviewModal resource={previewResource} onClose={closeResourcePreview} /> : null}
     </main>
   );
 }

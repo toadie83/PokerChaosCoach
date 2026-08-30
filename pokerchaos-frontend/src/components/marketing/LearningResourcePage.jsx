@@ -3,17 +3,8 @@ import { useEffect, useState } from "react";
 import { requestLearningResource } from "../../api/aiService.js";
 import { learningLabel, learningResourceSlugFromPath } from "../../lib/learningPresentation.js";
 import { setLearningPageMeta } from "../../lib/learningPageMeta.js";
+import LearningLessonContent from "../learning/LearningLessonContent.jsx";
 import MarketingSiteShell from "./MarketingSiteShell.jsx";
-
-function LessonSection({ title, children, tone = "" }) {
-  if (!children || (Array.isArray(children) && children.length === 0)) return null;
-  return (
-    <section className={`learning-lesson-section ${tone ? `learning-lesson-section--${tone}` : ""}`}>
-      <h2>{title}</h2>
-      {Array.isArray(children) ? <ul>{children.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{children}</p>}
-    </section>
-  );
-}
 
 export default function LearningResourcePage({ routePath = window.location.pathname }) {
   const slug = learningResourceSlugFromPath(routePath);
@@ -61,27 +52,8 @@ export default function LearningResourcePage({ routePath = window.location.pathn
   const resource = payload.resource;
   return (
     <MarketingSiteShell currentPath="/learn">
-      <article className="learning-lesson-page">
-        <header className="learning-lesson-header">
-          <a href="/learn">Learning Library</a>
-          <p>{learningLabel(resource.category)} / {learningLabel(resource.resourceType)}</p>
-          <h1>{resource.title}</h1>
-          <p className="learning-lesson-summary">{resource.description}</p>
-          <div className="learning-card-tags">
-            {[resource.primaryTag, ...(resource.secondaryTags || [])].filter(Boolean).map((tag) => <span key={tag}>{learningLabel(tag)}</span>)}
-          </div>
-        </header>
-
-        <div className="learning-lesson-body">
-          <LessonSection title="Core lesson">{resource.body}</LessonSection>
-          <LessonSection title="Example spot">{resource.exampleSpot}</LessonSection>
-          <LessonSection title="Common mistake" tone="warning">{resource.mistake}</LessonSection>
-          <LessonSection title="Better play" tone="success">{resource.betterPlay}</LessonSection>
-          <LessonSection title="When to use it">{resource.whenToUse}</LessonSection>
-          <LessonSection title="When not to use it">{resource.whenNotToUse}</LessonSection>
-          <LessonSection title="Takeaway" tone="takeaway">{resource.takeaway}</LessonSection>
-        </div>
-
+      <div className="learning-lesson-page">
+        <LearningLessonContent resource={resource} />
         {(payload.relatedResources || []).length > 0 ? (
           <section className="learning-related">
             <h2>Related lessons</h2>
@@ -96,7 +68,7 @@ export default function LearningResourcePage({ routePath = window.location.pathn
             </div>
           </section>
         ) : null}
-      </article>
+      </div>
     </MarketingSiteShell>
   );
 }

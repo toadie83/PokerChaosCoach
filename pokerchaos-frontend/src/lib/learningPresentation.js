@@ -16,6 +16,33 @@ export function groupLearningResources(resources) {
   return Array.from(grouped.entries());
 }
 
+export function filterAdminLearningResources(
+  resources,
+  { query = "", category = "all", status = "all" } = {},
+) {
+  const normalizedQuery = String(query).trim().toLowerCase();
+
+  return (Array.isArray(resources) ? resources : []).filter((resource) => {
+    if (category !== "all" && resource?.category !== category) return false;
+    if (status !== "all" && resource?.status !== status) return false;
+    if (!normalizedQuery) return true;
+
+    const searchable = [
+      resource?.title,
+      resource?.shortTitle,
+      resource?.slug,
+      resource?.externalId,
+      resource?.series,
+      resource?.lessonNumber,
+    ]
+      .filter((value) => value !== null && value !== undefined)
+      .join(" ")
+      .toLowerCase();
+
+    return searchable.includes(normalizedQuery);
+  });
+}
+
 export function learningResourceSlugFromPath(pathname) {
   const segments = String(pathname || "").split("/").filter(Boolean);
   return segments[0] === "learn" && segments.length === 2 ? segments[1] : "";

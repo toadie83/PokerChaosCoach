@@ -114,6 +114,7 @@
 .learning-admin-subnav button,
 .learning-admin-actions button,
 .learning-admin-editor-heading button,
+.learning-admin-preview-button,
 .learning-admin-publish {
   min-height: 40px;
   padding: 0 14px;
@@ -357,7 +358,7 @@
 
 .learning-admin-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 260px;
+  grid-template-columns: 320px minmax(0, 1fr) 260px;
   gap: var(--spacing-5);
   padding-top: var(--spacing-5);
 }
@@ -365,6 +366,58 @@
 .learning-admin-list,
 .learning-gap-panel {
   min-width: 0;
+}
+
+.learning-admin-list-tools {
+  display: grid;
+  gap: var(--spacing-3);
+  padding-bottom: var(--spacing-3);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.learning-admin-list-tools > label,
+.learning-admin-list-tools > div > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-small-size);
+  font-weight: 650;
+}
+
+.learning-admin-list-tools > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-2);
+}
+
+.learning-admin-list-tools input,
+.learning-admin-list-tools select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font: inherit;
+  letter-spacing: 0;
+}
+
+.learning-admin-list-tools input:focus,
+.learning-admin-list-tools select:focus {
+  border-color: var(--accent-primary);
+  outline: 0;
+  box-shadow: var(--ring-focus);
+}
+
+.learning-admin-list-results {
+  max-height: clamp(320px, calc(100vh - 330px), 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .learning-admin-list-item {
@@ -404,11 +457,21 @@
   font-size: var(--font-small-size);
 }
 
+.learning-admin-list-actions {
+  display: grid;
+  gap: 6px;
+  align-self: center;
+}
+
+.learning-admin-preview-button,
 .learning-admin-publish {
   min-height: 32px;
   padding-inline: 8px;
-  align-self: center;
   font-size: var(--font-small-size);
+}
+
+.learning-admin-publish {
+  color: var(--text-primary);
 }
 
 .learning-admin-editor {
@@ -479,6 +542,61 @@
 .learning-admin-preview section {
   padding-block: var(--spacing-4);
   border-bottom: 1px solid var(--border-primary);
+}
+
+.learning-admin-preview-backdrop {
+  padding: var(--spacing-5);
+  backdrop-filter: blur(4px);
+}
+
+.learning-admin-preview-modal {
+  width: min(980px, 100%);
+  max-width: 980px;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.learning-admin-preview-modal-header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.learning-admin-preview-modal-header > div {
+  min-width: 0;
+}
+
+.learning-admin-preview-modal-header p,
+.learning-admin-preview-status {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: var(--font-small-size);
+  font-weight: 650;
+}
+
+.learning-admin-preview-modal-header h2 {
+  overflow-wrap: anywhere;
+}
+
+.learning-admin-modal-close {
+  min-height: 38px;
+  padding-inline: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.learning-admin-preview-modal-body {
+  padding: var(--spacing-4) var(--spacing-6) var(--spacing-6);
+  overscroll-behavior: contain;
+}
+
+.learning-admin-preview-modal .learning-lesson-header {
+  max-width: 820px;
 }
 
 .learning-gap-item {
@@ -575,7 +693,7 @@
 
 @media (max-width: 1100px) {
   .learning-admin-layout {
-    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-columns: 290px minmax(0, 1fr);
   }
 
   .learning-gap-panel {
@@ -613,6 +731,22 @@
     padding: var(--spacing-5) 0 0;
     border-inline: 0;
     border-top: 1px solid var(--border-primary);
+  }
+
+  .learning-admin-list-results {
+    max-height: 480px;
+  }
+
+  .learning-admin-preview-backdrop {
+    padding: var(--spacing-2);
+  }
+
+  .learning-admin-preview-modal {
+    max-height: calc(100vh - 16px);
+  }
+
+  .learning-admin-preview-modal-body {
+    padding: var(--spacing-3) var(--spacing-4) var(--spacing-5);
   }
 
   .learning-import-grid > div:last-child {
