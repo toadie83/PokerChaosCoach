@@ -20,6 +20,44 @@ export async function requestEntitlements() {
   return getJson("/me/entitlements");
 }
 
+export async function requestStudySpotAnalysis(payload) {
+  return postJson("/study-spots/analyse", payload);
+}
+
+export async function requestStudyReports() {
+  return getJson("/study-spots/reports");
+}
+
+export async function requestStudyReport(reportId) {
+  const safeId = encodeURIComponent(String(reportId || "").trim());
+  return getJson(`/study-spots/reports/${safeId}`);
+}
+
+export async function requestRetryStudyReport(reportId) {
+  const safeId = encodeURIComponent(String(reportId || "").trim());
+  return postJson(`/study-spots/reports/${safeId}/retry`, {});
+}
+
+export async function requestStudyQueue(status = "") {
+  const safeStatus = String(status || "").trim();
+  return getJson(`/study-queue${safeStatus ? `?status=${encodeURIComponent(safeStatus)}` : ""}`);
+}
+
+export async function requestSaveStudySpot(studySpotId) {
+  const safeId = encodeURIComponent(String(studySpotId || "").trim());
+  return postJson(`/study-queue/${safeId}`, {}, { method: "PUT" });
+}
+
+export async function requestUpdateStudySpotStatus(studySpotId, status) {
+  const safeId = encodeURIComponent(String(studySpotId || "").trim());
+  return postJson(`/study-queue/${safeId}`, { status }, { method: "PATCH" });
+}
+
+export async function requestDeleteStudySpot(studySpotId) {
+  const safeId = encodeURIComponent(String(studySpotId || "").trim());
+  return deleteJson(`/study-queue/${safeId}`);
+}
+
 export async function requestBillingStatus() {
   return getJson("/me/billing");
 }

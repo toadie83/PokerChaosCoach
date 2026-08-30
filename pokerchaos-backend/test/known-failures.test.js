@@ -20,6 +20,7 @@ const {
   detectStreetAgency,
   collectStreetAiContexts,
   buildSkippedStreetReviewNode,
+  fallbackStreetReview,
   normalizeStreetReviewFromModel,
   areActionAndSizingAligned,
   opponentConfidenceTier,
@@ -400,6 +401,146 @@ test("street AI contexts derive hand classification per street board progression
   assert.equal(flop?.classification?.showdown_strength_tier, "medium_showdown");
   assert.equal(turn?.classification?.made_hand_category, "two_pair");
   assert.equal(river?.classification?.made_hand_category, "two_pair");
+});
+
+test("KhQh turn combo draw remains explicit without preflop premium leakage", () => {
+  const hand = {
+    handId: "khqh_combo_draw_regression",
+    heroName: "Hero",
+    heroCards: ["Kh", "Qh"],
+    heroPosition: "UTG",
+    heroStack: 2240,
+    blinds: { smallBlind: 50, bigBlind: 100, ante: 15 },
+    seats: [
+      { seat: 1, player: "Hero", chips: 2240, position: "UTG" },
+      { seat: 2, player: "Villain", chips: 5000, position: "BTN" },
+    ],
+    heroOutcome: { resolvedStreet: "turn", code: "lost_showdown" },
+    board: { flop: ["6c", "9h", "3h"], turn: "Ts", river: null },
+    actionsByStreet: {
+      preflop: [
+        { player: "Hero", type: "raise", amount: 220, toAmount: 220 },
+        { player: "Villain", type: "call", amount: 220 },
+      ],
+      flop: [
+        { player: "Hero", type: "check" },
+        { player: "Villain", type: "bet", amount: 300, toAmount: 300 },
+        { player: "Hero", type: "call", amount: 300 },
+      ],
+      turn: [
+        { player: "Hero", type: "check" },
+        { player: "Villain", type: "jam", amount: 1635, toAmount: 1635 },
+        { player: "Hero", type: "call", amount: 1635 },
+      ],
+      river: [],
+    },
+    heroActionsByStreet: {
+      preflop: [{ type: "raise", amount: 220, toAmount: 220 }],
+      flop: [{ type: "check" }, { type: "call", amount: 300 }],
+      turn: [{ type: "check" }, { type: "call", amount: 1635 }],
+      river: [],
+    },
+  };
+  const contexts = collectStreetAiContexts(
+    {
+      hand,
+      validatedHandState: {
+        street: "turn",
+        heroHand: ["Kh", "Qh"],
+        effectiveStackBB: 22.4,
+        legalActions: ["fold", "call"],
+        heroCanRaise: false,
+        potSize: 3173,
+        facingBet: 1635,
+        math: {
+          spr: 0.71,
+          callAmount: 1635,
+          finalPotIfCall: 4808,
+        },
+        boardCards: ["6c", "9h", "3h", "Ts"],
+        isAllInFacingAction: true,
+      },
+      deterministicIntelligence: {
+        street_summaries: [
+          { street: "preflop", pressure_level: "low", strategic_tags: [] },
+          { street: "flop", pressure_level: "medium", strategic_tags: [] },
+          { street: "turn", pressure_level: "high", strategic_tags: [] },
+        ],
+      },
+    },
+    {
+      confidence: "medium",
+      preflop_score: 0,
+      flop_score: 0,
+      turn_score: -1,
+    },
+  );
+
+  const preflop = contexts.find((item) => item.street === "preflop");
+  const turn = contexts.find((item) => item.street === "turn");
+  assert.equal(preflop?.classification?.hand_tier, "premium");
+  assert.equal(preflop?.classification?.premium_holding, true);
+  assert.equal(turn?.classification?.made_hand_category, "air");
+  assert.equal(turn?.classification?.made_hand_type, "king_high");
+  assert.equal(turn?.classification?.draws_present?.flush_draw, true);
+  assert.equal(turn?.classification?.draws_present?.flush_draw_suit, "hearts");
+  assert.equal(turn?.classification?.draws_present?.straight_draw, true);
+  assert.equal(turn?.classification?.draws_present?.straight_draw_type, "gutshot");
+  assert.equal(turn?.classification?.draws_present?.combo_draw, true);
+  assert.equal(turn?.classification?.hand_tier, null);
+  assert.equal(turn?.classification?.premium_holding, false);
+
+  const compact = compactStreetContextForPrompt(turn);
+  assert.equal(compact?.classification?.draws?.flush_draw, true);
+  assert.equal(compact?.classification?.draws?.flush_draw_suit, "hearts");
+  assert.equal(compact?.classification?.draws?.straight_draw, true);
+  assert.equal(compact?.classification?.draws?.straight_draw_type, "gutshot");
+  assert.equal(compact?.classification?.draws?.combo_draw, true);
+  assert.equal(compact?.classification?.hand_tier, undefined);
+
+  const normalized = normalizeStreetReviewFromModel(
+    {
+      score: -1,
+      preferred_action: { action: "fold", sizing: null },
+      analysis: {
+        insight: "K-high has strong showdown value despite premium classification.",
+        range_context:
+          "Without a clearly defined strong draw, this high-card hand cannot continue.",
+        board_texture: "The board is moderately connected with a heart draw.",
+        sizing_commentary: "The price alone does not settle the range decision.",
+        plan_commentary: "Continue only when range equity clears the required price.",
+        takeaway: "Premium status alone is insufficient at this commitment point.",
+      },
+      confidence: "medium",
+      strategic_tags: ["premium_hand", "high_pressure_node"],
+    },
+    turn,
+  );
+  const normalizedText = Object.values(normalized.analysis).join(" ");
+  assert.equal(normalized.preferred_action.action, "fold");
+  assert.match(normalizedText, /hearts flush draw/i);
+  assert.match(normalizedText, /gutshot straight draw/i);
+  assert.doesNotMatch(normalizedText, /strong showdown value/i);
+  assert.doesNotMatch(normalizedText, /without a clearly defined strong draw/i);
+  assert.equal(normalized.strategic_tags.includes("premium_hand"), false);
+  assert.equal(normalized.strategic_tags.includes("combo_draw"), true);
+
+  const fallback = fallbackStreetReview({
+    ...turn,
+    seed_takeaway: "The preflop decision itself appears fundamentally reasonable.",
+    seed_confidence: "medium",
+  });
+  const fallbackText = Object.values(fallback.analysis).join(" ");
+  assert.equal(fallback.generation_status, "fallback");
+  assert.equal(fallback.confidence, "low");
+  assert.equal(fallback.preferred_action.action, "call");
+  assert.match(fallback.analysis.insight, /hearts flush draw/i);
+  assert.match(fallback.analysis.insight, /gutshot straight draw/i);
+  assert.match(fallback.analysis.range_context, /34% equity/i);
+  assert.match(fallback.analysis.sizing_commentary, /16\.35 BB/i);
+  assert.match(fallback.analysis.plan_commentary, /no later-street flexibility/i);
+  assert.doesNotMatch(fallbackText, /preflop decision/i);
+  assert.doesNotMatch(fallbackText, /keep a flexible line/i);
 });
 
 test("street AI context preserves check-call decision node semantics", () => {

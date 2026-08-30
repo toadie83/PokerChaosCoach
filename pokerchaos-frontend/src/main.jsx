@@ -8,9 +8,14 @@ import {
   UserButton,
   useAuth,
 } from "@clerk/react";
-import App from "./App.jsx";
 import ReviewApp from "./ReviewApp.jsx";
 import AboutModal from "./components/AboutModal.jsx";
+import PokerCoachPlaceholder from "./components/PokerCoachPlaceholder.jsx";
+import MyStudyPage from "./components/MyStudyPage.jsx";
+import MyTournamentsPage from "./components/MyTournamentsPage.jsx";
+import StudyReportPage from "./components/StudyReportPage.jsx";
+import StudySpotsEntryPage from "./components/StudySpotsEntryPage.jsx";
+import ToolsHub from "./components/ToolsHub.jsx";
 import HomePage from "./components/marketing/HomePage.jsx";
 import AiPokerHandAnalyzerPage from "./components/marketing/AiPokerHandAnalyzerPage.jsx";
 import GgPokerHandReviewToolPage from "./components/marketing/GgPokerHandReviewToolPage.jsx";
@@ -34,17 +39,38 @@ import {
 } from "./api/aiService.js";
 import { initAnalytics, trackPageView } from "./lib/analytics.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
+import {
+  CAPABILITY_KEYS,
+  canAccessCapability,
+  getCapabilityState,
+} from "./lib/capabilities.js";
+import {
+  DEFAULT_AUTH_ROUTE,
+  normalizeAppRoutePath,
+} from "./lib/appRoutes.js";
 import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
 import navIconMark from "./assets/brand/playback-nav-image-icon.png";
 import "./styles.css";
+import "./study-spots.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-const DEFAULT_ROUTE = "/review";
+const DEFAULT_ROUTE = DEFAULT_AUTH_ROUTE;
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
 const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
 const LOCAL_LIVE_STREAM_URL = "/livestream/index.html";
 const SHOW_LOCAL_LIVE_STREAM = import.meta.env.DEV;
+const CoachApp = React.lazy(() => import("./App.jsx"));
+
+function PokerCoachRoute({ entitlements }) {
+  return canAccessCapability(entitlements, CAPABILITY_KEYS.COACH) ? (
+    <React.Suspense fallback={<p className="study-loading">Loading Coach...</p>}>
+      <CoachApp />
+    </React.Suspense>
+  ) : (
+    <PokerCoachPlaceholder />
+  );
+}
 const MARKETING_PAGE_CONFIG = [
   {
     path: "/",
@@ -89,20 +115,51 @@ const MARKETING_PAGE_CONFIG = [
 ];
 const SECTION_CONFIG = [
   {
-    path: "/review",
-    label: "Hand Review",
-    feature: "review",
-    component: ReviewApp,
-    lockedText:
-      "Hand review access is currently disabled for this account. Enable review entitlement to continue.",
+    path: "/tools",
+    label: "Tools",
+    component: ToolsHub,
   },
   {
-    path: "/coach",
-    label: "Coach",
-    feature: "coach",
-    component: App,
+    path: "/tools/study-spots",
+    label: "Find Study Spots",
+    capability: CAPABILITY_KEYS.STUDY_SPOTS,
+    component: StudySpotsEntryPage,
+    lockedText: "Study Spots is unavailable for this account.",
+  },
+  {
+    path: "/tools/tournament-review",
+    label: "Tournament Review",
+    capability: CAPABILITY_KEYS.TOURNAMENT_REVIEW,
+    component: ReviewApp,
     lockedText:
-      "Coach allows users to run hand simulations and receive AI powered strategic insights. Coach access is currently disabled for all accounts as we are finalizing the feature. Subscribers with active plans can access Coach first. Please stay tuned for updates and release announcements.",
+      "Tournament Review requires an active trial or Tier 1 access.",
+  },
+  {
+    path: "/tools/coach",
+    label: "Poker Coach",
+    capability: CAPABILITY_KEYS.COACH,
+    component: PokerCoachRoute,
+    viewableWhenDisabled: true,
+  },
+  {
+    path: "/tournaments",
+    label: "My Tournaments",
+    capability: CAPABILITY_KEYS.STUDY_SPOTS,
+    component: MyTournamentsPage,
+  },
+  {
+    path: "/study",
+    label: "My Study",
+    capability: CAPABILITY_KEYS.STUDY_SPOTS,
+    component: MyStudyPage,
+  },
+];
+const DYNAMIC_SECTION_CONFIG = [
+  {
+    prefix: "/tools/study-spots/reports",
+    label: "Study Report",
+    capability: CAPABILITY_KEYS.STUDY_SPOTS,
+    component: StudyReportPage,
   },
 ];
 const ROUTE_LOOKUP = new Map(SECTION_CONFIG.map((item) => [item.path, item]));
@@ -153,15 +210,25 @@ function normalizeMarketingPath(pathname) {
   const raw = typeof pathname === "string" ? pathname.trim() : "";
   if (!raw) return "/";
   const normalized = raw.replace(/\/+$/, "") || "/";
-  return MARKETING_ROUTE_LOOKUP.has(normalized) ? normalized : "/";
+  return MARKETING_ROUTE_LOOKUP.has(normalized) ? normalized : null;
 }
 
 function normalizeRoutePath(pathname) {
-  const raw = typeof pathname === "string" ? pathname.trim() : "";
-  if (!raw) return DEFAULT_ROUTE;
-  const normalized = raw.replace(/\/+$/, "") || "/";
-  if (MARKETING_ROUTE_LOOKUP.has(normalized)) return normalized;
-  return ROUTE_LOOKUP.has(normalized) ? normalized : DEFAULT_ROUTE;
+  return normalizeAppRoutePath(pathname, {
+    authenticatedPaths: Array.from(ROUTE_LOOKUP.keys()),
+    authenticatedPrefixes: DYNAMIC_SECTION_CONFIG.map((item) => item.prefix),
+    marketingPaths: Array.from(MARKETING_ROUTE_LOOKUP.keys()),
+  });
+}
+
+function resolveSectionConfig(pathname) {
+  const exact = ROUTE_LOOKUP.get(pathname);
+  if (exact) return exact;
+  return (
+    DYNAMIC_SECTION_CONFIG.find((section) =>
+      pathname.startsWith(`${section.prefix}/`),
+    ) || SECTION_CONFIG[0]
+  );
 }
 
 function useAppRoute() {
@@ -389,6 +456,12 @@ function SignedInShell() {
   }, [routePath]);
 
   useEffect(() => {
+    if (routePath === "/") {
+      navigate(DEFAULT_ROUTE, { replace: true });
+    }
+  }, [navigate, routePath]);
+
+  useEffect(() => {
     const mediaQuery = window.matchMedia("(min-width: 641px)");
     const handleMediaChange = (event) => {
       if (event.matches) setMobileUtilityOpen(false);
@@ -526,18 +599,22 @@ function SignedInShell() {
     };
   }, []);
 
-  const currentSection = ROUTE_LOOKUP.get(routePath) || SECTION_CONFIG[0];
-  const enabledSections = useMemo(
-    () =>
-      SECTION_CONFIG.filter((section) =>
-        Boolean(entitlements?.features?.[section.feature]),
+  const currentSection = resolveSectionConfig(routePath);
+  const canAccessSection = useCallback(
+    (section) =>
+      Boolean(
+        section?.viewableWhenDisabled ||
+          !section?.capability ||
+          canAccessCapability(entitlements, section.capability),
       ),
     [entitlements],
   );
-  const firstEnabledPath = enabledSections[0]?.path || DEFAULT_ROUTE;
-  const canAccessCurrent = Boolean(
-    entitlements?.features?.[currentSection.feature],
+  const enabledSections = useMemo(
+    () => SECTION_CONFIG.filter(canAccessSection),
+    [canAccessSection],
   );
+  const firstEnabledPath = enabledSections[0]?.path || DEFAULT_ROUTE;
+  const canAccessCurrent = canAccessSection(currentSection);
   const hasActiveSubscription = Boolean(
     entitlements?.billing?.hasActiveSubscription,
   );
@@ -548,23 +625,70 @@ function SignedInShell() {
 
   useEffect(() => {
     if (marketingPage) return;
-    if (routePath === "/coach") {
+    if (routePath === "/tools/coach") {
+      const coachEnabled = canAccessCapability(
+        entitlements,
+        CAPABILITY_KEYS.COACH,
+      );
       setPageMeta({
-        title: "Playback Poker Coach | AI Strategy Guidance",
+        title: "Poker Coach | Playback Poker",
+        description: coachEnabled
+          ? "Use Playback Poker's live decision coach and replay analysis tools."
+          : "Personalised ongoing poker analysis and study guidance, coming later to Playback Poker.",
+        path: "/tools/coach",
+      });
+      return;
+    }
+
+    if (routePath === "/tools/study-spots") {
+      setPageMeta({
+        title: "Find My Study Spots | Playback Poker",
         description:
-          "Run AI-powered poker strategy guidance and decision support inside Playback Poker Coach.",
-        path: "/coach",
+          "Upload a poker tournament and find the decisions most worth studying.",
+        path: "/tools/study-spots",
+      });
+      return;
+    }
+
+    if (routePath.startsWith("/tools/study-spots/reports/")) {
+      setPageMeta({
+        title: "Tournament Study Report | Playback Poker",
+        description: "Review your ranked tournament study opportunities.",
+        path: routePath,
+      });
+      return;
+    }
+
+    if (routePath === "/study" || routePath === "/tournaments") {
+      setPageMeta({
+        title: routePath === "/study" ? "My Study | Playback Poker" : "My Tournaments | Playback Poker",
+        description:
+          routePath === "/study"
+            ? "Review saved poker study spots."
+            : "Reopen saved tournament Study Reports.",
+        path: routePath,
+      });
+      return;
+    }
+
+    if (routePath === "/tools") {
+      setPageMeta({
+        title: "Tools | Playback Poker",
+        description: "Choose a Playback Poker tournament study tool.",
+        path: "/tools",
       });
       return;
     }
 
     setPageMeta({
-      title: "Playback Poker Hand Review | Tournament Analysis",
+      title: "Tournament Review | Playback Poker",
       description:
         "Review tournament hands with AI-powered analysis to find leaks and improve MTT decisions.",
-      path: "/review",
+      path: "/tools/tournament-review",
     });
-  }, [marketingPage, routePath]);
+  }, [entitlements, marketingPage, routePath]);
+
+  if (routePath === "/") return null;
 
   if (marketingPage) {
     const MarketingComponent = marketingPage.component;
@@ -600,19 +724,21 @@ function SignedInShell() {
           </div>
           <div className="auth-bar-nav">
             {SECTION_CONFIG.map((section) => {
-              const enabled = Boolean(
-                entitlements?.features?.[section.feature],
-              );
+              const enabled = canAccessSection(section);
+              const state = section.capability
+                ? getCapabilityState(entitlements, section.capability)
+                : "enabled";
               return (
                 <button
                   key={section.path}
                   type="button"
                   className={`top-nav-link ${routePath === section.path ? "active" : ""}`}
                   data-enabled={enabled}
+                  data-capability-state={state}
                   onClick={() => navigate(section.path)}
                 >
                   {section.label}
-                  {!enabled ? " (Locked)" : ""}
+                  {!enabled && state === "locked" ? " (Locked)" : ""}
                 </button>
               );
             })}
@@ -783,7 +909,11 @@ function SignedInShell() {
         ) : null}
 
         {entitlementsStatus === "ready" && canAccessCurrent ? (
-          <SectionComponent entitlements={entitlements} />
+          <SectionComponent
+            entitlements={entitlements}
+            navigate={navigate}
+            routePath={routePath}
+          />
         ) : null}
 
         {entitlementsStatus === "ready" && !canAccessCurrent ? (
@@ -804,7 +934,9 @@ function SignedInShell() {
       <AboutModal open={aboutOpen} onClose={handleCloseAbout} />
       <TrialInfoModal open={trialInfoOpen} onClose={handleCloseTrialInfo} />
       <DisclaimerModal open={disclaimerOpen} onClose={handleCloseDisclaimer} />
-      <MobileScrollTopWidget enabled={routePath === "/review"} />
+      <MobileScrollTopWidget
+        enabled={routePath === "/tools/tournament-review"}
+      />
       <AppFooter
         onOpenAbout={handleOpenAbout}
         onOpenDisclaimer={handleOpenDisclaimer}
@@ -881,13 +1013,16 @@ function SignedOutShell() {
           alt="Playback Poker"
           className="auth-gate-brand"
         />
-        <p>Sign in to access Hand Review and Coach.</p>
+        <p>
+          Create a free account so we can save your tournaments and study
+          queue.
+        </p>
         <div className="auth-actions">
           <SignInButton mode="modal">
-            <button className="auth-button">Sign In</button>
+            <button className="auth-button">Sign in</button>
           </SignInButton>
           <SignUpButton mode="modal">
-            <button className="auth-button secondary">Create Account</button>
+            <button className="auth-button secondary">Create free account</button>
           </SignUpButton>
         </div>
         <div className="auth-gate-secondary-links" aria-label="Learn more">

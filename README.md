@@ -10,6 +10,26 @@ This project mirrors the SickDayGPT split frontend/backend structure and convent
 
 ## Getting Started
 
+### Quick start (all services)
+
+Start the frontend, livestream, and backend together from the repository root:
+
+```bash
+npm run dev
+```
+
+Press `Ctrl+C` to stop all three processes.
+
+Before the first run, install the application dependencies in each folder if
+you have not already done so:
+
+```bash
+npm --prefix pokerchaos-frontend install
+npm --prefix pokerchaos-backend install
+```
+
+### Start services separately
+
 1. Backend
 
 - Copy `pokerchaos-backend` to your new project

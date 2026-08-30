@@ -52,6 +52,13 @@ export interface StreetHandClassification {
   board_pair_kicker_class: string | null;
   kicker_strength: string | null;
   bluff_catcher: boolean;
+  draws_present?: {
+    flush_draw: boolean;
+    straight_draw: boolean;
+    combo_draw: boolean;
+    flush_draw_suit: string | null;
+    straight_draw_type: string | null;
+  };
 }
 
 export interface StreetReviewNode {

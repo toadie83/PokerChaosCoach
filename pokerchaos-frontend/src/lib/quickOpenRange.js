@@ -1,9 +1,20 @@
+import {
+  getTournamentStageMeta,
+  isIcmSensitiveTournamentStage,
+  normalizeTournamentStage,
+} from "../config/tournamentStageConfig.js";
+import {
+  getBountyModeMeta,
+  isBountyTournament,
+  normalizeBountyMode,
+} from "../config/bountyTournamentConfig.js";
+
 const CARD_CODE_PATTERN = /^[AKQJT2-9][shdc]$/i;
 const RANKS_ASCENDING = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const RANK_INDEX = new Map(RANKS_ASCENDING.map((rank, index) => [rank, index]));
 
 export const QUICK_OPEN_CHART_VERSION = "cash-6max-rfi-100bb-baseline-v1";
-export const MTT_QUICK_OPEN_CHART_VERSION = "mtt-8max-rfi-chip-ev-baseline-v1";
+export const MTT_QUICK_OPEN_CHART_VERSION = "mtt-8max-rfi-stage-labelled-baseline-v2";
 
 function handsFromPair(minimumRank) {
   const start = RANK_INDEX.get(minimumRank);
@@ -253,6 +264,8 @@ export function getQuickOpenSnapshot({
   tableSize,
   gameType,
   heroStackBB,
+  tournamentStage,
+  bountyMode,
 } = {}) {
   const normalizedGameType = String(gameType || "").toLowerCase();
   const normalizedTableSize = Number(tableSize);
@@ -268,6 +281,14 @@ export function getQuickOpenSnapshot({
 
   const rawStack = Number(heroStackBB);
   const knownStack = Number.isFinite(rawStack) && rawStack > 0 ? rawStack : null;
+  const stageCode = isMtt ? normalizeTournamentStage(tournamentStage) : "auto";
+  const stageMeta = getTournamentStageMeta(stageCode);
+  const normalizedBountyMode = isMtt
+    ? normalizeBountyMode(bountyMode)
+    : "none";
+  const bountyMeta = getBountyModeMeta(normalizedBountyMode);
+  const bountyEnabled = isMtt && isBountyTournament(normalizedBountyMode);
+  const icmSensitive = isMtt && isIcmSensitiveTournamentStage(stageCode);
   const mttStackBand = knownStack !== null && knownStack <= 20
     ? "short"
     : knownStack !== null && knownStack <= 40
@@ -285,6 +306,27 @@ export function getQuickOpenSnapshot({
   const chartVersion = isCash
     ? QUICK_OPEN_CHART_VERSION
     : MTT_QUICK_OPEN_CHART_VERSION;
+  const stackLabel = knownStack !== null ? `${knownStack}BB` : "stack unknown";
+  const stageBaselineLabel = isCash
+    ? baselineLabel
+    : stageCode === "auto"
+      ? `${stackLabel} chip-EV · no ICM`
+      : `${stackLabel} · ${stageMeta.shortLabel}${
+          icmSensitive ? " · ICM-sensitive" : " lens"
+        }`;
+  const stageCaveat = !isMtt || stageCode === "auto"
+    ? ""
+    : icmSensitive
+      ? `${stageMeta.label} can change this baseline according to stack coverage and payouts; exact ICM is not available here.`
+      : `${stageMeta.label} is applied by the coach; this snapshot remains a conservative chart baseline.`;
+  const bountyCaveat = bountyEnabled
+    ? `${bountyMeta.label} is applied qualitatively by the live Coach; this deterministic unopened chart does not invent bounty value or alter raw pot odds.`
+    : "";
+  const displayedBaselineLabel = bountyEnabled
+    ? `${stageBaselineLabel} · ${bountyMeta.shortLabel} qualitative`
+    : stageBaselineLabel;
+  const explainWithStage = (message) =>
+    [message, stageCaveat, bountyCaveat].filter(Boolean).join(" ");
 
   if (seat === "BB") {
     return {
@@ -293,10 +335,17 @@ export function getQuickOpenSnapshot({
       tone: "neutral",
       handCode,
       seat,
-      explanation: "If everyone folds to the big blind, there is no open-or-fold decision.",
+      explanation: explainWithStage(
+        "If everyone folds to the big blind, there is no open-or-fold decision.",
+      ),
       heading,
-      baselineLabel,
+      baselineLabel: displayedBaselineLabel,
       chartVersion,
+      stageCode: isMtt ? stageCode : null,
+      stageLabel: isMtt ? stageMeta.label : "",
+      icmSensitive,
+      bountyMode: bountyEnabled ? normalizedBountyMode : "none",
+      bountyLabel: bountyEnabled ? bountyMeta.shortLabel : "",
     };
   }
 
@@ -308,14 +357,21 @@ export function getQuickOpenSnapshot({
     tone: shouldOpen ? "positive" : "negative",
     handCode,
     seat,
-    explanation: shouldOpen
-      ? isMtt && mttStackBand === "short"
-        ? "Inside the conservative first-in short-stack play range; the snapshot does not choose between a small raise and a jam."
-        : "Inside the conservative first-in range for this position."
-      : "Outside the conservative first-in range for this position.",
+    explanation: explainWithStage(
+      shouldOpen
+        ? isMtt && mttStackBand === "short"
+          ? "Inside the conservative first-in short-stack play range; the snapshot does not choose between a small raise and a jam."
+          : "Inside the conservative first-in range for this position."
+        : "Outside the conservative first-in range for this position.",
+    ),
     heading,
-    baselineLabel,
+    baselineLabel: displayedBaselineLabel,
     chartVersion,
+    stageCode: isMtt ? stageCode : null,
+    stageLabel: isMtt ? stageMeta.label : "",
+    icmSensitive,
+    bountyMode: bountyEnabled ? normalizedBountyMode : "none",
+    bountyLabel: bountyEnabled ? bountyMeta.shortLabel : "",
   };
 }
 

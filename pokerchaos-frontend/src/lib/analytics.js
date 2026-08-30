@@ -1,9 +1,40 @@
 const GA_MEASUREMENT_ID = String(
-  import.meta.env.VITE_GA_MEASUREMENT_ID || "",
+  import.meta.env?.VITE_GA_MEASUREMENT_ID || "",
 ).trim();
 
 let isInitialized = false;
 let hasRequestedScript = false;
+
+const PRODUCT_EVENT_FIELDS = Object.freeze({
+  study_spots_upload_started: ["upload_method"],
+  study_spots_parse_failed: ["error_code", "upload_method"],
+  study_spots_analysis_completed: [
+    "hand_count",
+    "candidate_count",
+    "spot_count",
+  ],
+  study_spots_analysis_failed: ["error_code"],
+  study_resource_opened: ["spot_category", "resource_id", "match_quality"],
+  tournament_review_upsell_viewed: ["spot_count"],
+  tournament_review_upsell_clicked: ["spot_count"],
+});
+
+function safeEventValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string") return value.trim().slice(0, 100);
+  return undefined;
+}
+
+export function buildProductEventParams(eventName, parameters = {}) {
+  const allowedFields = PRODUCT_EVENT_FIELDS[eventName];
+  if (!allowedFields) return null;
+  return Object.fromEntries(
+    allowedFields
+      .map((key) => [key, safeEventValue(parameters[key])])
+      .filter(([, value]) => value !== undefined && value !== ""),
+  );
+}
 
 function getPagePath() {
   const { pathname, search, hash } = window.location;
@@ -63,4 +94,13 @@ export function trackPageView() {
     page_path: getPagePath(),
     page_location: getPageLocation(),
   });
+}
+
+export function trackProductEvent(eventName, parameters = {}) {
+  if (!GA_MEASUREMENT_ID || typeof window === "undefined") return false;
+  if (typeof window.gtag !== "function") return false;
+  const safeParameters = buildProductEventParams(eventName, parameters);
+  if (!safeParameters) return false;
+  window.gtag("event", eventName, safeParameters);
+  return true;
 }

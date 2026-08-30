@@ -4,12 +4,38 @@ import {
   buildDecisionNode,
   buildStackState,
   compareRecommendation,
+  decisionKeyForAssumedAction,
   deriveRelativePosition,
   finitePositiveOrNull,
   legalActionsForDecision,
   normalizeActionEvent,
   streetCommitments,
 } from "./decisionState.js";
+
+import { DEFAULT_COACH_MODEL } from "../config/modelConfig.js";
+import { DEFAULT_TOURNAMENT_STAGE } from "../config/tournamentStageConfig.js";
+import {
+  DEFAULT_BOUNTY_MODE,
+  normalizeBountyMode,
+} from "../config/bountyTournamentConfig.js";
+
+export const DEFAULT_TOURNAMENT_ANTE_BB = 0.15;
+
+const ACTION_BEFORE_HERO_CODES = new Set([
+  "unopened",
+  "limped_to_me",
+  "opened_to_me",
+  "multiple_villains_opened",
+  "open_and_3bet_to_me",
+  "button_steal",
+  "faced_3bet",
+  "faced_4bet",
+  "faced_allin",
+  "first_to_act",
+  "checked_to_me",
+  "faced_bet",
+  "faced_raise",
+]);
 
 export const initialState = {
   street: "preflop",
@@ -23,6 +49,7 @@ export const initialState = {
   lastEvent: null,
   lastEventAt: 0,
   lastEventAssumed: false,
+  lastAssumedDecisionKey: null,
   aggressors: 0,
   opens: 0,
   threeBets: 0,
@@ -35,7 +62,9 @@ export const initialState = {
   opponentSeat: "",
   playersInHand: 2,
   gameType: "tournament",
-  anteBB: 0,
+  tournamentStage: DEFAULT_TOURNAMENT_STAGE,
+  bountyMode: DEFAULT_BOUNTY_MODE,
+  anteBB: DEFAULT_TOURNAMENT_ANTE_BB,
   decisionKind: null,
   facingAction: null,
   legalActions: [],
@@ -45,6 +74,7 @@ export const initialState = {
   estimatedPotBB: null,
   preflopLimpers: 0,
   preflopCallers: 0,
+  preflopSequence: null,
   board: {
     flop: [null, null, null],
     turn: null,
@@ -61,7 +91,7 @@ export const initialState = {
   },
   villainType: "fishy",
   stakeTier: "unknown",
-  model: "gpt-4.1-mini",
+  model: DEFAULT_COACH_MODEL,
 };
 
 export function applyEvent(state, event) {
@@ -69,6 +99,32 @@ export function applyEvent(state, event) {
   if (now - (state.lastEventAt || 0) < 250) return state; // debounce spam
   const actionEvent = normalizeActionEvent(event);
   const eventCode = actionEvent.code;
+  const currentActor = state.nextActor || "hero";
+  if (
+    ACTION_BEFORE_HERO_CODES.has(eventCode) &&
+    (currentActor !== "hero" || state.handComplete)
+  ) {
+    return state;
+  }
+  if (
+    actionEvent.assumed &&
+    eventCode.startsWith("hero_") &&
+    (currentActor !== "hero" || state.handComplete)
+  ) {
+    return state;
+  }
+  if (
+    actionEvent.assumedDecisionKey &&
+    actionEvent.assumedDecisionKey !== decisionKeyForAssumedAction(state)
+  ) {
+    return state;
+  }
+  if (
+    actionEvent.assumedDecisionKey &&
+    actionEvent.assumedDecisionKey === state.lastAssumedDecisionKey
+  ) {
+    return state;
+  }
   const s = { ...state };
   const push = (code) => {
     s.actions = [...s.actions, { code, at: now, street: s.street }];
@@ -196,6 +252,56 @@ export function applyEvent(state, event) {
         actorSeat: s.lastAggressorSeat,
         toAmountBB: actionEvent.toAmountBB || actionEvent.amountBB,
         callAmountBB: actionEvent.toAmountBB || actionEvent.amountBB,
+      });
+      break;
+    }
+    case "open_and_3bet_to_me": {
+      push("preflop_open_and_3bet_to_me");
+      const initialOpenAmountBB =
+        finitePositiveOrNull(actionEvent.openAmountBB) ||
+        finitePositiveOrNull(s.openSize) ||
+        2.5;
+      const threeBetToBB = finitePositiveOrNull(
+        actionEvent.toAmountBB || actionEvent.amountBB,
+      );
+      const initialOpenerSeat = actionEvent.openerSeat || null;
+      const threeBettorSeat = actionEvent.actorSeat || s.opponentSeat || "";
+      s.opens += 1;
+      s.threeBets += 1;
+      s.aggressors += 2;
+      s.playersInHand = Math.max(3, Number(s.playersInHand || 3));
+      s.lastAggressorSeat = threeBettorSeat;
+      appendHistory({
+        actor: "opp_extra",
+        action: "open",
+        seat: initialOpenerSeat,
+        toAmountBB: initialOpenAmountBB,
+        note: "Initial opener",
+      });
+      addEstimatedPot(initialOpenAmountBB);
+      appendHistory({
+        actor: "opp",
+        action: "3-bet",
+        seat: threeBettorSeat,
+        toAmountBB: threeBetToBB,
+        note: "Separate 3-bettor",
+      });
+      recordAggressiveContribution("opp", threeBetToBB);
+      s.preflopSequence = {
+        kind: "open_then_3bet",
+        initialOpenAmountBB,
+        initialOpenerSeat,
+        threeBetToBB,
+        threeBettorSeat: threeBettorSeat || null,
+      };
+      setDecision("facing_open_and_3bet", {
+        type: "3-bet",
+        actorSeat: threeBettorSeat,
+        toAmountBB: threeBetToBB,
+        callAmountBB: threeBetToBB,
+        initialOpenAmountBB,
+        initialOpenerSeat,
+        openerStillActive: true,
       });
       break;
     }
@@ -409,10 +515,12 @@ export function applyEvent(state, event) {
         openSize: s.openSize,
         persona: s.persona,
         heroCards: s.heroCards,
-        heroRelativePosition: s.heroRelativePosition,
-        opponentSeat: s.opponentSeat,
+        heroRelativePosition: "auto",
+        opponentSeat: "",
         playersInHand: 2,
         gameType: s.gameType,
+        tournamentStage: s.tournamentStage || DEFAULT_TOURNAMENT_STAGE,
+        bountyMode: normalizeBountyMode(s.bountyMode),
         anteBB: s.anteBB,
         heroStackBB: s.heroStackBB,
         villainStackBB: s.villainStackBB,
@@ -435,13 +543,11 @@ export function applyEvent(state, event) {
       const actualAction = HERO_ACTION_BY_CODE[eventCode];
       const beforeCommitments = streetCommitments(s);
       const stackStateBeforeAction = buildStackState(s);
-      const potBeforeAction =
-        finitePositiveOrNull(s.estimatedPotBB) ||
-        finitePositiveOrNull(s.potSizes?.total) ||
-        (s.street === "preflop"
-          ? Number((1.5 + Number(s.anteBB || 0) * Number(s.tableSize || 0)).toFixed(2))
-          : null);
-      const facingCallAmount = amountToCallForFacingAction(s);
+      const decisionBeforeAction = buildDecisionNode(s);
+      const potBeforeAction = decisionBeforeAction.potBB;
+      const facingCallAmount =
+        decisionBeforeAction.facingAction?.callAmountBB ||
+        amountToCallForFacingAction(s);
       const requestedTarget = actionEvent.toAmountBB || actionEvent.amountBB;
       const maxHeroTarget = stackStateBeforeAction.heroStackBehindBB !== null
         ? Number(
@@ -475,8 +581,20 @@ export function applyEvent(state, event) {
         toAmountBB: callTarget || aggressionTarget,
         note: actionEvent.assumed ? "Coach line assumed" : undefined,
       });
+      if (
+        actualAction === "call" &&
+        decisionBeforeAction.potCorrectionBB > 0 &&
+        finitePositiveOrNull(decisionBeforeAction.potBB)
+      ) {
+        // Chips above Hero's maximum call are returned to the covering player.
+        // Carry only the Hero-contestable pot forward after the call.
+        s.estimatedPotBB = decisionBeforeAction.potBB;
+      }
       addEstimatedPot(contribution);
       s.lastRecommendation = actionEvent.recommendation || s.lastRecommendation || null;
+      if (actionEvent.assumedDecisionKey) {
+        s.lastAssumedDecisionKey = actionEvent.assumedDecisionKey;
+      }
       s.lastComparison = actionEvent.assumed
         ? null
         : compareRecommendation(
@@ -740,6 +858,8 @@ export function instructionForBranch(branch) {
       "Evaluate fold, call, 3-bet, and jam where legal; account for opener position and size. Preserve priced BB defenses and playable in-position calls at medium/deep depth.",
     preflop_multiple_villains_opened:
       "Evaluate the open-plus-callers decision with multiway risk and squeeze incentives.",
+    preflop_open_and_3bet_to_me:
+      "Evaluate Hero's cold decision after an initial opener and a separate 3-bettor. The opener remains live, as do any players behind Hero; evaluate fold, cold-call, 4-bet, and jam using both ranges, exact sizing, and full-stack exposure.",
     preflop_button_steal:
       "Evaluate the blind-defense decision against the Button's wide opening range and actual size; avoid premium-only defense when stack depth and price support calls or 3-bets.",
     preflop_limped_to_me:
@@ -939,6 +1059,12 @@ export function summarizeForAI(state) {
       tableSize: state.tableSize,
       playersInHand: Number(state.playersInHand || 2),
       gameType: inferredFormat,
+      ...(inferredFormat === "tournament"
+        ? {
+            tournamentStage: state.tournamentStage || DEFAULT_TOURNAMENT_STAGE,
+            bountyMode: normalizeBountyMode(state.bountyMode),
+          }
+        : {}),
       anteBB: Number(state.anteBB || 0),
       openSizeBB: Number(state.openSize || 0) || null,
       previousActions: state.previousActions,
@@ -979,7 +1105,7 @@ export function summarizeForAI(state) {
         typeof state.preflopCallers === "number" ? state.preflopCallers : 0,
       stakeTier: state.stakeTier || "unknown",
       format: inferredFormat,
-      model: state.model || "gpt-4.1-mini",
+      model: state.model || DEFAULT_COACH_MODEL,
       potSize: decisionNode.potBB,
       tendencies: {
         villainCallsByStreet,
@@ -996,7 +1122,7 @@ export function summarizeForAI(state) {
   };
 }
 
-export function getAvailableActions(state, hasCoach) {
+export function getAvailableActions(state) {
   if (state.handComplete) {
     return [];
   }
@@ -1015,7 +1141,7 @@ export function getAvailableActions(state, hasCoach) {
     return [];
   }
 
-  if (next === "opp" && hasCoach) {
+  if (next === "opp") {
     const latestHeroAction = [...(Array.isArray(state.history) ? state.history : [])]
       .reverse()
       .find((row) => row?.actor === "hero" && row?.street === state.street)?.action;
@@ -1121,6 +1247,18 @@ export function getAvailableActions(state, hasCoach) {
         requiresAmount: true,
         amountLabel: "Open size (BB)",
         presets: [2, 2.2, 2.5, 3, 3.5],
+      },
+      {
+        code: "open_and_3bet_to_me",
+        label: "Open + 3-bet",
+        requiresAmount: true,
+        amountLabel: "3-bet to (BB)",
+        presets: [6, 7, 8, 9, 10],
+        secondaryAmountKey: "openAmountBB",
+        secondaryAmountLabel: "Initial open size (BB)",
+        secondaryPresets: [2, 2.2, 2.5, 3, 3.5],
+        secondaryDefault: finitePositiveOrNull(state.openSize) || 2.5,
+        amountMustExceedSecondary: true,
       },
       {
         code: "faced_3bet",

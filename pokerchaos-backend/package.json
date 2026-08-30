@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon --watch src --exec \"node src/index.js\"",
-    "test": "node --test"
+    "test": "node --test",
+    "verify:study-db": "node scripts/verify-study-spots-db.mjs"
   },
   "dependencies": {
     "@clerk/backend": "^3.2.1",

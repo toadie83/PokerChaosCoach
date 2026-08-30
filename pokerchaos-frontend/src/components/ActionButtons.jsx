@@ -7,12 +7,13 @@ export default function ActionButtons({
   highlightedCodes = [],
 }) {
   const content = (
-    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+    <div className="row action-button-row">
       {(actions || []).map((a) => {
         const isHighlighted = highlightedCodes.includes(a.code);
         return (
           <button
             key={a.code}
+            type="button"
             onClick={() => onAction(a)}
             disabled={disabled}
             className={`action-btn${isHighlighted ? " highlighted" : ""}`}

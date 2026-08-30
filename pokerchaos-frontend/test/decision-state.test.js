@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_TOURNAMENT_ANTE_BB,
   applyEvent,
   getAvailableActions,
   initialState,
   summarizeForAI,
 } from "../src/state/machine.js";
+
+test("tournament games default to the standard GG Poker ante", () => {
+  assert.equal(initialState.gameType, "tournament");
+  assert.equal(initialState.anteBB, DEFAULT_TOURNAMENT_ANTE_BB);
+  assert.equal(DEFAULT_TOURNAMENT_ANTE_BB, 0.15);
+  assert.equal(initialState.bountyMode, "none");
+});
 import {
   assumedHeroEventFromRecommendation,
   buildDecisionNode,
@@ -54,6 +62,66 @@ test("derives heads-up postflop position from exact seats", () => {
   );
 });
 
+test("records an opener and separate 3-bettor as a cold two-villain decision", () => {
+  let state = freshState({
+    heroSeat: "BTN",
+    opponentSeat: "CO",
+    anteBB: 0,
+    openSize: 2.5,
+  });
+  const action = getAvailableActions(state, false).find(
+    (item) => item.code === "open_and_3bet_to_me",
+  );
+  assert.ok(action);
+  assert.equal(action.label, "Open + 3-bet");
+  assert.equal(action.secondaryAmountKey, "openAmountBB");
+
+  state = step(state, {
+    code: "open_and_3bet_to_me",
+    openAmountBB: 2.2,
+    amountBB: 7,
+    toAmountBB: 7,
+  });
+
+  assert.equal(state.decisionKind, "facing_open_and_3bet");
+  assert.equal(state.playersInHand, 3);
+  assert.deepEqual(state.legalActions, ["fold", "call", "4-bet", "jam"]);
+  assert.deepEqual(
+    state.history.slice(-2).map(({ actor, action: recordedAction, toAmountBB }) => ({
+      actor,
+      action: recordedAction,
+      toAmountBB,
+    })),
+    [
+      { actor: "opp_extra", action: "open", toAmountBB: 2.2 },
+      { actor: "opp", action: "3-bet", toAmountBB: 7 },
+    ],
+  );
+  assert.deepEqual(state.preflopSequence, {
+    kind: "open_then_3bet",
+    initialOpenAmountBB: 2.2,
+    initialOpenerSeat: null,
+    threeBetToBB: 7,
+    threeBettorSeat: "CO",
+  });
+
+  const node = buildDecisionNode(state);
+  assert.equal(node.facingAction.initialOpenAmountBB, 2.2);
+  assert.equal(node.facingAction.openerStillActive, true);
+  assert.equal(node.facingAction.callAmountBB, 7);
+  assert.equal(node.minimumRaiseToBB, 11.8);
+  assert.equal(node.potBB, 10.7);
+  assert.deepEqual(node.playersYetToActSeats, ["SB", "BB"]);
+  assert.equal(node.playersLiveAtDecision, 5);
+  assert.ok(node.missingInformation.includes("initial_opener_seat"));
+  assert.ok(node.missingInformation.includes("initial_opener_stack_bb"));
+  assert.ok(
+    node.strategicRestrictions.some(
+      (item) => item.code === "cold_3bet_two_villain_exposure",
+    ),
+  );
+});
+
 test("automatically records the recommended Hero action for MVP", () => {
   let state = freshState({ heroSeat: "BTN", opponentSeat: "BB" });
   state = step(state, "unopened");
@@ -69,6 +137,7 @@ test("automatically records the recommended Hero action for MVP", () => {
   const assumedEvent = assumedHeroEventFromRecommendation(recommendation, state);
   assert.equal(assumedEvent.code, "hero_open");
   assert.equal(assumedEvent.assumed, true);
+  assert.match(assumedEvent.assumedDecisionKey, /^preflop:/);
   state = step(state, assumedEvent);
   assert.equal(state.history.at(-1).actor, "hero");
   assert.equal(state.history.at(-1).action, "open");
@@ -77,6 +146,78 @@ test("automatically records the recommended Hero action for MVP", () => {
   assert.equal(state.lastComparison, null);
   assert.equal(state.nextActor, "opp");
   assert.equal(state.lastEventAssumed, true);
+});
+
+test("a Coach response can assume its Hero action only once", () => {
+  let state = freshState({ heroSeat: "HJ", opponentSeat: "BB" });
+  state = step(state, "unopened");
+  const assumedEvent = assumedHeroEventFromRecommendation(
+    {
+      hero_action: "open",
+      sizing: "2.2 BB",
+      sizing_bb: 2.2,
+    },
+    state,
+  );
+
+  state = step(state, assumedEvent);
+  const afterFirstOpen = state;
+  state = step(state, assumedEvent);
+
+  assert.deepEqual(state.history, afterFirstOpen.history);
+  assert.equal(
+    state.history.filter(
+      (entry) => entry.actor === "hero" && entry.action === "open",
+    ).length,
+    1,
+  );
+});
+
+test("a delayed Coach response cannot act on a later decision", () => {
+  let state = freshState({ heroSeat: "HJ", opponentSeat: "BB" });
+  state = step(state, "unopened");
+  const delayedEvent = assumedHeroEventFromRecommendation(
+    { hero_action: "open", sizing: "2.2 BB", sizing_bb: 2.2 },
+    state,
+  );
+  state = step(state, "next_street");
+  const laterDecision = state;
+
+  state = step(state, delayedEvent);
+
+  assert.deepEqual(state.history, laterDecision.history);
+  assert.equal(state.street, "flop");
+  assert.equal(
+    state.history.some(
+      (entry) => entry.actor === "hero" && entry.action === "open",
+    ),
+    false,
+  );
+});
+
+test("action-before-Hero inputs are ignored while awaiting an opponent response", () => {
+  let state = freshState({ heroSeat: "HJ", opponentSeat: "BB" });
+  state = step(state, "unopened");
+  state = step(state, {
+    code: "hero_open",
+    amountBB: 2.2,
+    toAmountBB: 2.2,
+    assumed: true,
+  });
+  const awaitingOpponent = state;
+
+  state = step(state, "unopened");
+
+  assert.deepEqual(state.history, awaitingOpponent.history);
+  assert.deepEqual(state.previousActions, awaitingOpponent.previousActions);
+  assert.equal(state.lastEvent, awaitingOpponent.lastEvent);
+  assert.equal(state.nextActor, "opp");
+  assert.equal(
+    state.history.filter(
+      (entry) => entry.actor === "hero" && entry.action === "open",
+    ).length,
+    1,
+  );
 });
 
 test("assumed recommendation sizes a multiplier against the facing action", () => {
@@ -141,6 +282,7 @@ test("opponent raise creates a new legal Hero decision", () => {
   let state = freshState({
     heroSeat: "CO",
     opponentSeat: "BTN",
+    anteBB: 0,
     nextActor: "opp",
     history: [{ street: "preflop", actor: "hero", action: "open", at: 1 }],
   });
@@ -156,6 +298,7 @@ test("call amount subtracts Hero's existing preflop commitment", () => {
   let state = freshState({
     heroSeat: "CO",
     opponentSeat: "BTN",
+    anteBB: 0,
   });
   state = step(state, "unopened");
   state = step(state, { code: "hero_open", amountBB: 2.5, toAmountBB: 2.5 });
@@ -174,6 +317,7 @@ test("blind commitments are included in calls and pot estimates", () => {
   let state = freshState({
     heroSeat: "BB",
     opponentSeat: "BTN",
+    anteBB: 0,
   });
   state = step(state, { code: "opened_to_me", amountBB: 2.5, toAmountBB: 2.5 });
   assert.equal(buildDecisionNode(state).facingAction.callAmountBB, 1.5);
@@ -205,13 +349,30 @@ test("postflop opponent options follow Hero's check", () => {
   });
   state = step(state, { code: "hero_check" });
   assert.equal(state.nextActor, "opp");
-  const responseCodes = getAvailableActions(state, true).map((action) => action.code);
+  const responseCodes = getAvailableActions(state).map((action) => action.code);
   assert.deepEqual(responseCodes, ["opp_check_back", "opp_bet", "opp_shove"]);
 
   state = step(state, { code: "opp_bet", amountBB: 3, toAmountBB: 3 });
   assert.equal(state.decisionKind, "facing_bet");
   assert.deepEqual(state.legalActions, ["fold", "call", "raise", "jam"]);
   assert.equal(buildDecisionNode(state).facingAction.callAmountBB, 3);
+});
+
+test("opponent actions remain available if a duplicate Vision read clears Coach UI", () => {
+  let state = freshState({ heroSeat: "BTN", opponentSeat: "BB" });
+  state = step(state, "unopened");
+  state = step(state, {
+    code: "hero_open",
+    amountBB: 2.2,
+    toAmountBB: 2.2,
+    assumed: true,
+  });
+
+  assert.equal(state.nextActor, "opp");
+  assert.deepEqual(
+    getAvailableActions(state).map((action) => action.code),
+    ["opp_all_fold", "opp_one_call", "opp_multi_call", "opp_raise", "opp_shove"],
+  );
 });
 
 test("an in-position check or heads-up call closes the street", () => {
@@ -276,6 +437,44 @@ test("direct all-in situations expose only fold and call", () => {
   assert.deepEqual(state.legalActions, ["fold", "call"]);
 });
 
+test("covering shove excludes chips Hero cannot win from pot odds", () => {
+  let state = freshState({
+    street: "preflop",
+    heroSeat: "BB",
+    opponentSeat: "SB",
+    heroStackBB: 5,
+    villainStackBB: 30,
+    tableSize: 8,
+    anteBB: 0.15,
+  });
+
+  state = step(state, {
+    code: "faced_allin",
+    amountBB: 30,
+    toAmountBB: 30,
+    actorSeat: "SB",
+  });
+
+  const decision = buildDecisionNode(state);
+  assert.equal(decision.rawPotBB, 32.2);
+  assert.equal(decision.uncalledExcessBB, 25);
+  assert.equal(decision.potCorrectionBB, 25);
+  assert.equal(decision.potBB, 7.2);
+  assert.equal(decision.facingAction.callAmountBB, 4);
+  assert.deepEqual(decision.potOdds, {
+    requiredEquityPct: 35.7,
+    callAmountBB: 4,
+    potBeforeCallBB: 7.2,
+    potAfterCallBB: 11.2,
+  });
+
+  state = step(state, { code: "hero_call" });
+  assert.equal(state.estimatedPotBB, 11.2);
+  assert.equal(state.history.at(-1).amountBB, 4);
+  assert.equal(state.history.at(-1).toAmountBB, 5);
+  assert.equal(buildDecisionNode(state).potBB, 11.2);
+});
+
 test("Hero fold is terminal and remains distinct from recommendation", () => {
   const recommendation = { hero_action: "call", confidence: "medium" };
   let state = freshState({
@@ -314,9 +513,153 @@ test("AI summary contains a structured legal decision node", () => {
   assert.equal(decision.relativePosition, "oop");
   assert.equal(decision.potBB, 10);
   assert.equal(decision.facingAction.callAmountBB, 2.5);
+  assert.deepEqual(decision.potOdds, {
+    requiredEquityPct: 20,
+    callAmountBB: 2.5,
+    potBeforeCallBB: 10,
+    potAfterCallBB: 12.5,
+  });
   assert.deepEqual(decision.legalActions, ["fold", "call", "raise", "jam"]);
   assert.deepEqual(decision.boardCards, ["Kd", "7c", "2h"]);
   assert.deepEqual(buildDecisionNode(state).legalActions, decision.legalActions);
+});
+
+test("short opener stack does not hide deeper players yet to act", () => {
+  const state = freshState({
+    street: "preflop",
+    heroSeat: "BTN",
+    opponentSeat: "CO",
+    heroCards: { card1: "Ah", card2: "Jc" },
+    heroStackBB: 50,
+    villainStackBB: 15,
+    decisionKind: "facing_open",
+    facingAction: {
+      type: "raise",
+      actorSeat: "CO",
+      amountBB: 2,
+      toAmountBB: 2,
+      callAmountBB: 2,
+      allIn: false,
+    },
+    legalActions: ["fold", "call", "3-bet", "jam"],
+    history: [
+      {
+        street: "preflop",
+        actor: "opp",
+        seat: "CO",
+        action: "raise",
+        amountBB: 2,
+        toAmountBB: 2,
+      },
+    ],
+  });
+
+  const decision = buildDecisionNode(state);
+  assert.deepEqual(decision.playersYetToActSeats, ["SB", "BB"]);
+  assert.equal(decision.playersYetToActCount, 2);
+  assert.equal(decision.playersLiveAtDecision, 4);
+  assert.equal(decision.primaryOpponentEffectiveStackBB, 13);
+  assert.equal(decision.heroMaximumExposureBB, 50);
+  assert.equal(decision.heroExposureBeyondPrimaryOpponentBB, 35);
+  assert.equal(decision.playersYetToActStacksKnown, false);
+  assert.equal(decision.legalActions.includes("jam"), false);
+  assert.equal(
+    decision.strategicRestrictions[0]?.code,
+    "short_opener_players_behind_overjam",
+  );
+  assert.ok(
+    decision.missingInformation.includes("players_yet_to_act_stack_sizes"),
+  );
+});
+
+test("players-behind guard retains jams for premium hands and heads-up blind decisions", () => {
+  const base = {
+    street: "preflop",
+    opponentSeat: "CO",
+    heroStackBB: 50,
+    villainStackBB: 15,
+    decisionKind: "facing_open",
+    facingAction: {
+      type: "raise",
+      actorSeat: "CO",
+      amountBB: 2,
+      toAmountBB: 2,
+      callAmountBB: 2,
+      allIn: false,
+    },
+    legalActions: ["fold", "call", "3-bet", "jam"],
+    history: [
+      {
+        street: "preflop",
+        actor: "opp",
+        seat: "CO",
+        action: "raise",
+        amountBB: 2,
+        toAmountBB: 2,
+      },
+    ],
+  };
+
+  const premium = buildDecisionNode(
+    freshState({
+      ...base,
+      heroSeat: "BTN",
+      heroCards: { card1: "As", card2: "Kh" },
+    }),
+  );
+  assert.equal(premium.legalActions.includes("jam"), true);
+
+  const closesAction = buildDecisionNode(
+    freshState({
+      ...base,
+      heroSeat: "BB",
+      heroCards: { card1: "Ah", card2: "Jc" },
+    }),
+  );
+  assert.deepEqual(closesAction.playersYetToActSeats, []);
+  assert.equal(closesAction.legalActions.includes("jam"), true);
+});
+
+test("AI summary sends an approximate tournament stage only for tournament mode", () => {
+  const tournament = summarizeForAI(
+    freshState({
+      gameType: "tournament",
+      tournamentStage: "bubble_pressure",
+      bountyMode: "progressive_ko",
+    }),
+  );
+  assert.equal(tournament.context.tournamentStage, "bubble_pressure");
+  assert.equal(tournament.context.bountyMode, "progressive_ko");
+  assert.equal(tournament.context.decisionNode.bountyMode, "progressive_ko");
+
+  const cash = summarizeForAI(
+    freshState({
+      persona: "cash_game_crusher",
+      gameType: "tournament",
+      tournamentStage: "late_endgame",
+      bountyMode: "standard_ko",
+    }),
+  );
+  assert.equal(cash.context.gameType, "cash");
+  assert.equal("tournamentStage" in cash.context, false);
+  assert.equal("bountyMode" in cash.context, false);
+  assert.equal(cash.context.decisionNode.bountyMode, "none");
+});
+
+test("starting a new hand preserves the selected tournament stage", () => {
+  const reset = step(
+    freshState({
+      tournamentStage: "middle_accumulation",
+      bountyMode: "standard_ko",
+      opponentSeat: "BTN",
+      heroRelativePosition: "oop",
+    }),
+    "reset_hand",
+  );
+  assert.equal(reset.tournamentStage, "middle_accumulation");
+  assert.equal(reset.bountyMode, "standard_ko");
+  assert.equal(reset.opponentSeat, "");
+  assert.equal(reset.heroRelativePosition, "auto");
 });
 
 test("Cash Game Crusher turn caution rebuilds ranges instead of defaulting to pot control", () => {
@@ -349,6 +692,7 @@ test("tracks running pot, total commitments, and chips behind across streets", (
     opponentSeat: "BB",
     heroStackBB: 20,
     villainStackBB: 20,
+    anteBB: 0,
   });
   state = step(state, "unopened");
   state = step(state, { code: "hero_open", amountBB: 2.2, toAmountBB: 2.2 });

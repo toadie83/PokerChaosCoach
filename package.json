@@ -1,0 +1,10 @@
+{
+  "name": "pokerchaos-coach",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/start-dev.mjs",
+    "dev:frontend": "npm --prefix pokerchaos-frontend run dev",
+    "dev:stream": "npm --prefix pokerchaos-frontend run stream",
+    "dev:backend": "npm --prefix pokerchaos-backend run dev"
+  }
+}

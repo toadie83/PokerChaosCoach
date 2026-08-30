@@ -1,0 +1,72 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  getStackDepthTag,
+  getStudySpotTaxonomy,
+  sanitizeLearningResource,
+  sanitizeStudySpotTaxonomy,
+} from "../src/studySpots/taxonomy.js";
+import { LEARNING_RESOURCE_SEED } from "../src/studySpots/learningResourceSeed.js";
+
+test("stack depth buckets have stable exclusive upper boundaries", () => {
+  assert.equal(getStackDepthTag(0), "0-10");
+  assert.equal(getStackDepthTag(9.99), "0-10");
+  assert.equal(getStackDepthTag(10), "10-15");
+  assert.equal(getStackDepthTag(15), "15-25");
+  assert.equal(getStackDepthTag(25), "25-40");
+  assert.equal(getStackDepthTag(40), "40+");
+  assert.equal(getStackDepthTag(null), null);
+});
+
+test("Study Spot taxonomy fails unknown values to conservative defaults", () => {
+  assert.deepEqual(
+    sanitizeStudySpotTaxonomy({
+      type: "certain_disaster",
+      category: "invented",
+      tags: ["fake-tag"],
+      heroPosition: "MP9",
+      opponentType: "psychic",
+    }),
+    {
+      type: "interesting_spot",
+      category: "study",
+      tags: [],
+      stackDepthTag: null,
+      heroPosition: "unknown",
+      villainPosition: "unknown",
+      opponentType: "unknown",
+    },
+  );
+});
+
+test("resource sanitizer removes unknown tags and clamps priority", () => {
+  const resource = sanitizeLearningResource({
+    id: "r1",
+    slug: "lesson",
+    title: "Lesson",
+    category: "preflop",
+    tags: ["opening", "not-real", "opening"],
+    contentType: "article",
+    priority: 500,
+  });
+  assert.deepEqual(resource.tags, ["opening"]);
+  assert.equal(resource.priority, 100);
+  assert.ok(getStudySpotTaxonomy().categories.preflop.includes("reshove"));
+});
+
+test("V1 seed contains only real published study resources", () => {
+  assert.equal(LEARNING_RESOURCE_SEED.length, 2);
+  for (const resource of LEARNING_RESOURCE_SEED) {
+    assert.equal(resource.published, true);
+    assert.equal(resource.category, "study");
+    assert.ok(resource.url.startsWith("https://www.playbackpoker.com/articles/"));
+    assert.ok(resource.tags.includes("hand-review"));
+  }
+  assert.equal(
+    LEARNING_RESOURCE_SEED.some((resource) =>
+      resource.slug.includes("export"),
+    ),
+    false,
+  );
+});

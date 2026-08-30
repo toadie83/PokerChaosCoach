@@ -58,9 +58,41 @@ export function isDatabaseConfigured() {
   return Boolean(getPool());
 }
 
+export async function closeDatabase() {
+  if (pool) await pool.end();
+  pool = null;
+  poolInitialized = false;
+}
+
 export async function initDatabase() {
   const resolvedPool = getPool();
   if (!resolvedPool) return;
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS learning_resources (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      stack_depth_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      position_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      opponent_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      content_type TEXT NOT NULL,
+      url TEXT NOT NULL UNIQUE,
+      published BOOLEAN NOT NULL DEFAULT FALSE,
+      publish_date DATE,
+      priority INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS learning_resources_published_category_idx
+    ON learning_resources (published, category, priority DESC);
+  `);
 
   await resolvedPool.query(`
     CREATE TABLE IF NOT EXISTS tournament_uploads (
@@ -93,6 +125,117 @@ export async function initDatabase() {
   await resolvedPool.query(`
     CREATE INDEX IF NOT EXISTS tournament_uploads_user_played_at_idx
     ON tournament_uploads (user_id, tournament_played_at DESC, updated_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      tournament_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      hands_analysed INTEGER NOT NULL DEFAULT 0,
+      candidate_count INTEGER NOT NULL DEFAULT 0,
+      spot_count INTEGER NOT NULL DEFAULT 0,
+      pipeline_version TEXT NOT NULL,
+      model TEXT,
+      error_code TEXT,
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      UNIQUE (id, user_id),
+      FOREIGN KEY (user_id, tournament_id)
+        REFERENCES tournament_uploads (user_id, tournament_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_reports_user_created_idx
+    ON study_reports (user_id, created_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_spots (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      primary_hand_key TEXT NOT NULL,
+      example_hand_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+      type TEXT NOT NULL,
+      category TEXT NOT NULL,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      why_study_this TEXT NOT NULL,
+      confidence NUMERIC(5, 4) NOT NULL,
+      rank_score NUMERIC(5, 4) NOT NULL,
+      rank INTEGER NOT NULL,
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      stack_depth_bb NUMERIC(8, 2),
+      stack_depth_tag TEXT,
+      hero_position TEXT NOT NULL DEFAULT 'unknown',
+      villain_position TEXT NOT NULL DEFAULT 'unknown',
+      opponent_type TEXT NOT NULL DEFAULT 'unknown',
+      hand_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      resource_matches JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (report_id, rank),
+      FOREIGN KEY (report_id, user_id)
+        REFERENCES study_reports (id, user_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_spots_report_rank_idx
+    ON study_spots (report_id, rank ASC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_spots_user_category_idx
+    ON study_spots (user_id, category, created_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS study_queue_items (
+      user_id TEXT NOT NULL,
+      study_spot_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'to_review',
+      saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      PRIMARY KEY (user_id, study_spot_id),
+      FOREIGN KEY (study_spot_id)
+        REFERENCES study_spots (id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS study_queue_user_status_idx
+    ON study_queue_items (user_id, status, saved_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS content_gap_occurrences (
+      study_spot_id TEXT NOT NULL,
+      report_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (study_spot_id, tag),
+      FOREIGN KEY (study_spot_id)
+        REFERENCES study_spots (id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (report_id, user_id)
+        REFERENCES study_reports (id, user_id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS content_gap_tag_seen_idx
+    ON content_gap_occurrences (tag, last_seen DESC);
   `);
 
   await resolvedPool.query(`
@@ -478,6 +621,132 @@ export async function deleteTournamentUpload(userId, tournamentId) {
     [userId, tournamentId]
   );
   return Number(result.rowCount) > 0;
+}
+
+function toLearningResourcePayload(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    stackDepthTags: Array.isArray(row.stack_depth_tags)
+      ? row.stack_depth_tags
+      : [],
+    positionTags: Array.isArray(row.position_tags) ? row.position_tags : [],
+    opponentTags: Array.isArray(row.opponent_tags) ? row.opponent_tags : [],
+    contentType: row.content_type,
+    url: row.url,
+    published: Boolean(row.published),
+    publishDate: row.publish_date || null,
+    priority: Number(row.priority) || 0,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+export async function seedLearningResources(resources) {
+  const resolvedPool = getRequiredPool();
+  const items = Array.isArray(resources) ? resources : [];
+  if (items.length === 0) return [];
+  const client = await resolvedPool.connect();
+  const seeded = [];
+  try {
+    await client.query("BEGIN");
+    for (const resource of items) {
+      const result = await client.query(
+        `
+          INSERT INTO learning_resources (
+            id,
+            slug,
+            title,
+            description,
+            category,
+            tags,
+            stack_depth_tags,
+            position_tags,
+            opponent_tags,
+            content_type,
+            url,
+            published,
+            publish_date,
+            priority
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb,
+            $9::jsonb, $10, $11, $12, $13, $14
+          )
+          ON CONFLICT (slug)
+          DO UPDATE SET
+            title = EXCLUDED.title,
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            tags = EXCLUDED.tags,
+            stack_depth_tags = EXCLUDED.stack_depth_tags,
+            position_tags = EXCLUDED.position_tags,
+            opponent_tags = EXCLUDED.opponent_tags,
+            content_type = EXCLUDED.content_type,
+            url = EXCLUDED.url,
+            published = EXCLUDED.published,
+            publish_date = EXCLUDED.publish_date,
+            priority = EXCLUDED.priority,
+            updated_at = NOW()
+          RETURNING *;
+        `,
+        [
+          resource.id,
+          resource.slug,
+          resource.title,
+          resource.description,
+          resource.category,
+          toJsonbParam(resource.tags, []),
+          toJsonbParam(resource.stackDepthTags, []),
+          toJsonbParam(resource.positionTags, []),
+          toJsonbParam(resource.opponentTags, []),
+          resource.contentType,
+          resource.url,
+          Boolean(resource.published),
+          resource.publishDate || null,
+          Number(resource.priority) || 0,
+        ],
+      );
+      if (result.rows[0]) seeded.push(toLearningResourcePayload(result.rows[0]));
+    }
+    await client.query("COMMIT");
+    return seeded;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listLearningResources({
+  publishedOnly = true,
+  tag = null,
+} = {}) {
+  const resolvedPool = getRequiredPool();
+  const filters = [];
+  const values = [];
+  if (publishedOnly) filters.push("published = TRUE");
+  if (tag) {
+    values.push(JSON.stringify([String(tag)]));
+    filters.push(`tags @> $${values.length}::jsonb`);
+  }
+  const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+  const result = await resolvedPool.query(
+    `
+      SELECT *
+      FROM learning_resources
+      ${where}
+      ORDER BY priority DESC, publish_date DESC NULLS LAST, title ASC;
+    `,
+    values,
+  );
+  return result.rows.map(toLearningResourcePayload);
 }
 
 function toPerformanceSnapshotPayload(row) {
@@ -1158,4 +1427,408 @@ export async function getUserBillingAiAccess(userId) {
     trial,
     reviewAiGranted: hasActiveSubscription || (trial?.remainingTokens || 0) > 0,
   };
+}
+
+function toStudySpotPayload(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reportId: row.report_id,
+    primaryHandKey: row.primary_hand_key,
+    exampleHandKeys: Array.isArray(row.example_hand_keys)
+      ? row.example_hand_keys
+      : [],
+    type: row.type,
+    category: row.category,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    title: row.title,
+    summary: row.summary,
+    whyStudyThis: row.why_study_this,
+    confidence: Number(row.confidence) || 0,
+    rankScore: Number(row.rank_score) || 0,
+    rank: Number(row.rank) || 0,
+    occurrenceCount: Number(row.occurrence_count) || 1,
+    stackDepthBb:
+      row.stack_depth_bb === null ? null : Number(row.stack_depth_bb),
+    stackDepthTag: row.stack_depth_tag || null,
+    heroPosition: row.hero_position || "unknown",
+    villainPosition: row.villain_position || "unknown",
+    opponentType: row.opponent_type || "unknown",
+    handContext:
+      row.hand_context && typeof row.hand_context === "object"
+        ? row.hand_context
+        : {},
+    resourceMatches: Array.isArray(row.resource_matches)
+      ? row.resource_matches
+      : [],
+    createdAt: row.created_at || null,
+  };
+}
+
+function toStudyReportPayload(row, spots = []) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name || null,
+    status: row.status,
+    handsAnalysed: Number(row.hands_analysed) || 0,
+    candidateCount: Number(row.candidate_count) || 0,
+    spotCount: Number(row.spot_count) || 0,
+    pipelineVersion: row.pipeline_version,
+    model: row.model || null,
+    errorCode: row.error_code || null,
+    errorMessage: row.error_message || null,
+    createdAt: row.created_at || null,
+    completedAt: row.completed_at || null,
+    spots,
+  };
+}
+
+export async function createStudyReport({
+  id,
+  userId,
+  tournamentId,
+  handsAnalysed,
+  candidateCount,
+  pipelineVersion,
+  model = null,
+}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      INSERT INTO study_reports (
+        id,
+        user_id,
+        tournament_id,
+        status,
+        hands_analysed,
+        candidate_count,
+        pipeline_version,
+        model
+      )
+      VALUES ($1, $2, $3, 'analysing', $4, $5, $6, $7)
+      RETURNING *;
+    `,
+    [
+      id,
+      userId,
+      tournamentId,
+      Number(handsAnalysed) || 0,
+      Number(candidateCount) || 0,
+      pipelineVersion,
+      model,
+    ],
+  );
+  return toStudyReportPayload(result.rows[0]);
+}
+
+export async function completeStudyReport({ id, userId, spots }) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const reportResult = await client.query(
+      `
+        SELECT *
+        FROM study_reports
+        WHERE id = $1 AND user_id = $2 AND status = 'analysing'
+        FOR UPDATE;
+      `,
+      [id, userId],
+    );
+    if (!reportResult.rows[0]) {
+      const error = new Error("Analysing Study Report not found.");
+      error.code = "REPORT_NOT_FOUND";
+      throw error;
+    }
+
+    for (const spot of Array.isArray(spots) ? spots : []) {
+      await client.query(
+        `
+          INSERT INTO study_spots (
+            id,
+            report_id,
+            user_id,
+            primary_hand_key,
+            example_hand_keys,
+            type,
+            category,
+            tags,
+            title,
+            summary,
+            why_study_this,
+            confidence,
+            rank_score,
+            rank,
+            occurrence_count,
+            stack_depth_bb,
+            stack_depth_tag,
+            hero_position,
+            villain_position,
+            opponent_type,
+            hand_context,
+            resource_matches
+          )
+          VALUES (
+            $1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9, $10, $11,
+            $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb,
+            $22::jsonb
+          );
+        `,
+        [
+          spot.id,
+          id,
+          userId,
+          spot.primaryHandKey,
+          toJsonbParam(spot.exampleHandKeys, []),
+          spot.type,
+          spot.category,
+          toJsonbParam(spot.tags, []),
+          spot.title,
+          spot.summary,
+          spot.whyStudyThis,
+          Number(spot.confidence) || 0,
+          Number(spot.rankScore) || 0,
+          Number(spot.rank) || 0,
+          Number(spot.occurrenceCount) || 1,
+          spot.stackDepthBb ?? null,
+          spot.stackDepthTag || null,
+          spot.heroPosition || "unknown",
+          spot.villainPosition || "unknown",
+          spot.opponentType || "unknown",
+          toJsonbParam(spot.handContext, {}),
+          toJsonbParam(spot.resourceMatches, []),
+        ],
+      );
+
+      if (!Array.isArray(spot.resourceMatches) || spot.resourceMatches.length === 0) {
+        const tags = Array.isArray(spot.tags) ? spot.tags : [];
+        const gapTag = String(spot.contentGapTag || tags.at(-1) || spot.category).trim();
+        if (gapTag) {
+          await client.query(
+            `
+              INSERT INTO content_gap_occurrences (
+                study_spot_id,
+                report_id,
+                user_id,
+                tag
+              )
+              VALUES ($1, $2, $3, $4)
+              ON CONFLICT (study_spot_id, tag)
+              DO UPDATE SET last_seen = NOW();
+            `,
+            [spot.id, id, userId, gapTag],
+          );
+        }
+      }
+    }
+
+    const completed = await client.query(
+      `
+        UPDATE study_reports
+        SET
+          status = 'complete',
+          spot_count = $3,
+          error_code = NULL,
+          error_message = NULL,
+          completed_at = NOW()
+        WHERE id = $1 AND user_id = $2
+        RETURNING *;
+      `,
+      [id, userId, Array.isArray(spots) ? spots.length : 0],
+    );
+    await client.query("COMMIT");
+    return toStudyReportPayload(completed.rows[0], spots);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function failStudyReport({
+  id,
+  userId,
+  errorCode = "ANALYSIS_FAILED",
+  errorMessage = "Study Spot analysis failed.",
+}) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      UPDATE study_reports
+      SET
+        status = 'failed',
+        error_code = $3,
+        error_message = $4,
+        completed_at = NOW()
+      WHERE id = $1 AND user_id = $2 AND status = 'analysing'
+      RETURNING *;
+    `,
+    [id, userId, errorCode, errorMessage],
+  );
+  return toStudyReportPayload(result.rows[0]);
+}
+
+export async function getStudyReport(userId, reportId) {
+  const resolvedPool = getRequiredPool();
+  const reportResult = await resolvedPool.query(
+    `
+      SELECT r.*, t.tournament_name
+      FROM study_reports r
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE r.id = $1 AND r.user_id = $2
+      LIMIT 1;
+    `,
+    [reportId, userId],
+  );
+  if (!reportResult.rows[0]) return null;
+  const spotsResult = await resolvedPool.query(
+    `
+      SELECT *
+      FROM study_spots
+      WHERE report_id = $1 AND user_id = $2
+      ORDER BY rank ASC;
+    `,
+    [reportId, userId],
+  );
+  return toStudyReportPayload(
+    reportResult.rows[0],
+    spotsResult.rows.map(toStudySpotPayload),
+  );
+}
+
+export async function listStudyReports(userId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      SELECT r.*, t.tournament_name
+      FROM study_reports r
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE r.user_id = $1
+      ORDER BY r.created_at DESC;
+    `,
+    [userId],
+  );
+  return result.rows.map((row) => toStudyReportPayload(row));
+}
+
+export async function saveStudyQueueItem(userId, studySpotId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      INSERT INTO study_queue_items (user_id, study_spot_id, status)
+      SELECT $1, s.id, 'to_review'
+      FROM study_spots s
+      WHERE s.id = $2 AND s.user_id = $1
+      ON CONFLICT (user_id, study_spot_id)
+      DO UPDATE SET status = 'to_review', completed_at = NULL
+      RETURNING user_id, study_spot_id, status, saved_at, completed_at;
+    `,
+    [userId, studySpotId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    studySpotId: row.study_spot_id,
+    status: row.status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function updateStudyQueueItemStatus(userId, studySpotId, status) {
+  const resolvedPool = getRequiredPool();
+  const completedAt = status === "completed" ? new Date() : null;
+  const result = await resolvedPool.query(
+    `
+      UPDATE study_queue_items
+      SET status = $3, completed_at = $4
+      WHERE user_id = $1 AND study_spot_id = $2
+      RETURNING user_id, study_spot_id, status, saved_at, completed_at;
+    `,
+    [userId, studySpotId, status, completedAt],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    studySpotId: row.study_spot_id,
+    status: row.status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function deleteStudyQueueItem(userId, studySpotId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      DELETE FROM study_queue_items
+      WHERE user_id = $1 AND study_spot_id = $2
+      RETURNING study_spot_id;
+    `,
+    [userId, studySpotId],
+  );
+  return Boolean(result.rows[0]);
+}
+
+export async function listStudyQueueItems(userId, status = null) {
+  const resolvedPool = getRequiredPool();
+  const values = [userId];
+  const statusFilter = status ? "AND q.status = $2" : "";
+  if (status) values.push(status);
+  const result = await resolvedPool.query(
+    `
+      SELECT
+        q.status AS queue_status,
+        q.saved_at,
+        q.completed_at,
+        s.*,
+        r.tournament_id,
+        t.tournament_name
+      FROM study_queue_items q
+      JOIN study_spots s ON s.id = q.study_spot_id AND s.user_id = q.user_id
+      JOIN study_reports r ON r.id = s.report_id AND r.user_id = q.user_id
+      JOIN tournament_uploads t
+        ON t.user_id = r.user_id AND t.tournament_id = r.tournament_id
+      WHERE q.user_id = $1 ${statusFilter}
+      ORDER BY q.saved_at DESC;
+    `,
+    values,
+  );
+  return result.rows.map((row) => ({
+    ...toStudySpotPayload(row),
+    queueStatus: row.queue_status,
+    savedAt: row.saved_at,
+    completedAt: row.completed_at,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name || null,
+  }));
+}
+
+export async function listContentGaps() {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(`
+    SELECT
+      tag,
+      COUNT(*)::INTEGER AS occurrence_count,
+      (ARRAY_AGG(study_spot_id ORDER BY last_seen DESC))[1:10] AS example_spot_ids,
+      MIN(first_seen) AS first_seen,
+      MAX(last_seen) AS last_seen
+    FROM content_gap_occurrences
+    GROUP BY tag
+    ORDER BY occurrence_count DESC, last_seen DESC;
+  `);
+  return result.rows.map((row) => ({
+    tag: row.tag,
+    occurrenceCount: Number(row.occurrence_count) || 0,
+    exampleSpotIds: Array.isArray(row.example_spot_ids)
+      ? row.example_spot_ids
+      : [],
+    firstSeen: row.first_seen || null,
+    lastSeen: row.last_seen || null,
+  }));
 }
