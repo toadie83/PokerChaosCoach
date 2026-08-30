@@ -648,11 +648,21 @@ function SignedInShell() {
   }, []);
 
   const currentSection = resolveSectionConfig(routePath);
+  const isScopedLearningManager = Boolean(
+    entitlements?.features?.learningManager && !entitlements?.features?.admin,
+  );
   const isScopedLearningImporter = Boolean(
-    entitlements?.features?.learningImporter && !entitlements?.features?.admin,
+    entitlements?.features?.learningImporter &&
+      !entitlements?.features?.learningManager &&
+      !entitlements?.features?.admin,
   );
   const canAccessSection = useCallback(
     (section) => {
+      if (isScopedLearningManager) {
+        return section?.path === "/admin/learning" ||
+          section?.path === "/admin/learning/import" ||
+          section?.prefix === "/admin/learning";
+      }
       if (isScopedLearningImporter) {
         return section?.path === "/admin/learning/import";
       }
@@ -666,7 +676,7 @@ function SignedInShell() {
                 canAccessCapability(entitlements, section.capability),
       );
     },
-    [entitlements, isScopedLearningImporter],
+    [entitlements, isScopedLearningImporter, isScopedLearningManager],
   );
   const enabledSections = useMemo(
     () => SECTION_CONFIG.filter(canAccessSection),
@@ -792,6 +802,9 @@ function SignedInShell() {
           <div className="auth-bar-nav">
             {SECTION_CONFIG.filter(
               (section) => {
+                if (isScopedLearningManager) {
+                  return section.path === "/admin/learning";
+                }
                 if (isScopedLearningImporter) {
                   return section.path === "/admin/learning/import";
                 }

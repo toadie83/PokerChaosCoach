@@ -98,6 +98,8 @@ Set `LEARNING_IMPORT_API_URL` to override the default `http://localhost:4011`. T
 
 Configure `LEARNING_IMPORT_ALLOWED_EMAILS` or `LEARNING_IMPORT_ALLOWED_USER_IDS` for automation accounts. A non-admin account on either allowlist can call only the two POST import endpoints and is denied on every other authenticated route. Administrators retain import access through the existing admin entitlement. Do not add an import-only account to the admin allowlists.
 
+For automation that must validate and manage existing resources, use `LEARNING_ADMIN_ALLOWED_EMAILS` or `LEARNING_ADMIN_ALLOWED_USER_IDS`. This grants the complete `/admin/learning` API and UI surface while continuing to deny every authenticated route outside the Learning Library.
+
 Source audit note: the available product material names Daily MTT Edge #002 and #003 but does not include their canonical lesson bodies. They have not been seeded as fabricated or publishable resources. Import the real lesson payloads through the workflow above when that source copy is available.
 
 ## Verification

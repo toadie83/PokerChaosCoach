@@ -131,7 +131,7 @@ function ImportWorkspace({ onImported }) {
 
 export default function AdminLearningPage({ entitlements, routePath, navigate }) {
   const importMode = routePath === "/admin/learning/import";
-  const isAdmin = entitlements?.features?.admin === true;
+  const canManage = entitlements?.features?.admin === true || entitlements?.features?.learningManager === true;
   const [resources, setResources] = useState([]);
   const [taxonomy, setTaxonomy] = useState(null);
   const [gaps, setGaps] = useState([]);
@@ -214,7 +214,7 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
     return (
       <main className="learning-admin-page">
         <div className="learning-admin-subnav">
-          {isAdmin ? <button type="button" onClick={() => navigate("/admin/learning")}>Resource manager</button> : null}
+          {canManage ? <button type="button" onClick={() => navigate("/admin/learning")}>Resource manager</button> : null}
           <button type="button" className="active">JSON import</button>
         </div>
         <ImportWorkspace onImported={() => {}} />
