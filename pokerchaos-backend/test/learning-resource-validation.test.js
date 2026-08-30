@@ -158,3 +158,21 @@ test("complete production Daily MTT Edge 001 payload remains import-compatible",
   assert.equal(parsed.data.whenNotToUse.length, 5);
   assert.deepEqual(parsed.warnings, ["Source taxonomy flags: missing:iso-sizing."]);
 });
+
+test("complete production Daily MTT Edge V2 payload remains import-compatible", () => {
+  const fixtureUrl = new URL("./fixtures/daily-mtt-edge-003.production-v2.json", import.meta.url);
+  const payload = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  const parsed = validateLearningResourceImport(payload);
+
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data.externalId, "daily-mtt-edge-003");
+  assert.equal(parsed.data.slug, "bb-defend-vs-sb");
+  assert.equal(parsed.data.resourceType, "quick_lesson");
+  assert.equal(parsed.data.category, "blind-vs-blind");
+  assert.equal(parsed.data.primaryTag, "bb-defence");
+  assert.equal(parsed.data.instagramUrl, "https://www.instagram.com/p/DcoSLgpFoJT/");
+  assert.equal(parsed.data.publishedAt, null);
+  assert.equal(parsed.data.body, payload.canonical_lesson.trim());
+  assert.deepEqual(parsed.data.studySpotTypes, ["interesting_spot"]);
+  assert.deepEqual(parsed.warnings, []);
+});
