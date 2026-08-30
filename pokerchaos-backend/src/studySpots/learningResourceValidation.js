@@ -56,6 +56,22 @@ const externalLearningResourceSchemaV1 = z
   })
   .strict();
 
+const externalPublishingChannelSchema = z
+  .object({
+    status: z.string().trim().min(1).max(80),
+    published_at: z.string().nullable().optional(),
+    url: z.string().nullable().optional(),
+  })
+  .strict();
+
+const externalLearningResourceSchemaV2 = externalLearningResourceSchemaV1.extend({
+  schema_version: z.literal(2),
+  resource_type: z.string().trim().min(1).max(80),
+  slug: slugSchema,
+  website: externalPublishingChannelSchema,
+  instagram: externalPublishingChannelSchema,
+});
+
 function kebabCase(value) {
   return String(value || "")
     .trim()
@@ -155,6 +171,21 @@ function normalizeExternalLearningResourceV1(input) {
   };
 }
 
+function normalizeExternalLearningResourceV2(input) {
+  const normalized = normalizeExternalLearningResourceV1({
+    ...input,
+    schema_version: 1,
+  });
+  const resourceType = kebabCase(input.resource_type).replace(/-/g, "_");
+  normalized.resource.slug = kebabCase(input.slug);
+  normalized.resource.resourceType = resourceType;
+  normalized.resource.instagramUrl = String(
+    input.instagram.url || input.instagram_url || "",
+  ).trim();
+  normalized.resource.publishedAt = isoDateTime(input.website.published_at);
+  return normalized;
+}
+
 export const learningResourceInputSchema = z
   .object({
     externalId: z.string().trim().min(1).max(160).nullable().optional(),
@@ -246,9 +277,14 @@ export function validateLearningResourceImport(input) {
     const parsed = validateLearningResourceInput(unwrapped);
     return parsed.success ? { ...parsed, warnings: [] } : parsed;
   }
-  const external = externalLearningResourceSchemaV1.safeParse(unwrapped);
+  const externalSchema = unwrapped.schema_version === 2
+    ? externalLearningResourceSchemaV2
+    : externalLearningResourceSchemaV1;
+  const external = externalSchema.safeParse(unwrapped);
   if (!external.success) return external;
-  const normalized = normalizeExternalLearningResourceV1(external.data);
+  const normalized = external.data.schema_version === 2
+    ? normalizeExternalLearningResourceV2(external.data)
+    : normalizeExternalLearningResourceV1(external.data);
   const parsed = validateLearningResourceInput(normalized.resource);
   return parsed.success ? { ...parsed, warnings: normalized.warnings } : parsed;
 }

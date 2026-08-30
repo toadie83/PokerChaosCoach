@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "external_id": "daily-mtt-edge-003",
+  "series": "daily-mtt-edge",
+  "lesson_number": "003",
+  "date": "2026-08-31",
+  "title": "Big blind defence vs a small blind steal",
+  "short_social_title": "Stop auto-folding the big blind",
+  "category": "blind-vs-blind",
+  "primary_study_tag": "bb-defence",
+  "secondary_study_tags": [
+    "sb-vs-bb",
+    "3bet",
+    "opening",
+    "calling-station"
+  ],
+  "stack_depth_bands": [
+    "25-40",
+    "10-15"
+  ],
+  "hero_positions": [
+    "BB"
+  ],
+  "villain_positions": [
+    "SB"
+  ],
+  "opponent_types": [
+    "recreational",
+    "calling-station",
+    "tight",
+    "aggressive"
+  ],
+  "study_spot_types": [
+    "bb-defence",
+    "sb-vs-bb",
+    "3bet"
+  ],
+  "summary": "Do not auto-fold the big blind to a steal because you are out of position. Take the cheap price against a wide small-blind range. Call more versus stations, 3-bet more versus folders, and fold more versus nits with a big size.",
+  "canonical_lesson": "# DAILY MTT EDGE #003\n**Date:** Monday 31 August 2026\n**Category:** Blind vs Blind\n**Topic:** Big blind defence vs a small blind steal at 20â€“40bb\n**Hook:** Stop auto-folding the big blind to a steal. Out of position is a cost, not a fold button.\n**Status:** Draft for review\n**Main concept:** Vs a typical low- and mid-stakes small blind, defend the big blind wider than feels comfortable, mostly by calling. 3-bet more vs SBs who fold. Call more vs SBs who never fold. Do not treat \"OOP\" as a reason to give up the discounted price and the ante.\n**Example:** 32bb, BB Kâ™  9â™£ vs SB open to 2.25x\n**Takeaway:** Out of position is a cost you pay to realize a cheap price against a wide range. It is not a reason to auto-fold.\n\n---\n\n## Today's Edge\n\nThe small blind opens. You look down at King-Nine offsuit in the big blind, 30bb deep, and fold because you are out of position. That fold feels disciplined. Against many of the small blinds in low- and mid-stakes MTTs, it is a leak.\n\nYou are getting the best defend price on the table. There is a big-blind ante in the middle. The small blind's open is the widest open in the game. They are stealing with junk, leftover suited cards, and offsuit high cards they would not open from the cutoff. Folding KTo, 87s, 55, A7o, and K9o on a loop is how you donate walk after walk.\n\nThat does not mean you 3-bet every playable hand. \"Big blind versus small blind is 3-bet or fold\" is a solver-shaped slogan that plays badly against the actual population. A rec small blind who opens 2.2x and never folds to a 3-bet should be called more, not 3-bet lighter. A tight small blind who min-raises a genuine range and overfolds to 3-bets should be 3-bet more, and you can fold more of the junk.\n\nThe leak is auto-folding because you are out of position. The fix is not auto-3-betting. The fix is: take the price against a wide range, then pick call or 3-bet from the opponent in front of you.\n\nOut of position is a cost you pay to realize a cheap price against a wide range. It is not a reason to auto-fold.\n\n## Why It Works\n\n**The price is real.** Calling a 2.2x or 2.5x from the big blind with an ante already in is one of the best prices you get all tournament. You need less equity than a button defend versus a cutoff open. Folding a hand that has that equity because of position is paying a tax the pot does not charge.\n\n**The small blind's range is wide.** In these games the SB steal is often 40% plus of hands, sometimes much more. King-Nine offsuit is not a bluff-catcher against that. It is ahead of a lot of it, and it flops well enough to continue on some boards.\n\n**They do not punish you enough postflop.** Recreational small blinds c-bet once on almost every flop and then give up. They under-barrel turns. They overfold to check-raises on dry boards. Out of position is worse against a player who barrels three streets. It is much less bad against a player who fires flop and checks turn.\n\n**Call versus 3-bet depends on their fold button.** If they fold to 3-bets, 3-bet the top of your defend range and some suited blockers. If they never fold, 3-bet value (AQ+, pairs that want it, strong suited aces) and call the rest. One line does not cover both player types.\n\n## Example Spot\n\n- Blinds: 200 / 400 with a 400 big-blind ante\n- Effective stack: 32bb (12,800)\n- Hero: Big blind with Kâ™  9â™£\n- Folds to the small blind\n- SB (typical rec, has opened a few blinds lately) raises to 900 (2.25x)\n- Action on you.\n- Decision: fold, call, or 3-bet?\n\nKing-Nine offsuit is the kind of hand people fold \"because OOP\" and the kind of hand that should often continue versus this small blind, at this size, at this depth.\n\n## Decision Analysis\n\n**Fold.** You save 900. You also give up a pot that already has 1,000 in blinds and ante, against a range that has a lot of worse kings, nines, offsuit junk, and suited connectors. At 32bb, folding K9o to a 2.25x SB steal is usually too tight versus the population. It becomes more reasonable versus a nit who opens 15% and 3-bet-pots are death, or versus a 3x+ size that prices you out.\n\n**Call 500 more (to 900).** Pot will be about 2,200. You are out of position with a playable king. That is uncomfortable, not unplayable. Continue versus a flop c-bet on K-high, 9-high, some broadway-ish textures, and some low connected boards where their steal range missed. Fold to a big turn barrel without improvement a lot of the time. Check-raise some dry flops if this SB c-bets too wide and gives up.\n\n**3-bet to about 2,600â€“2,800.** This is the right idea versus a small blind who folds to 3-bets. Versus a rec who calls any 3-bet and then calls flop, King-Nine offsuit does not want a bloated pot out of position. 3-bet your stronger kings, AQ, pairs, suited aces. Call this one.\n\nThe close decision is call versus fold versus a tighter SB. Versus the actual steal-happy rec, call is the default with this hand. 3-bet is the adjustment, not the base.\n\n## The Mistake\n\nThe common mistake is not folding 72 offsuit. It is folding K9o, QTo, 87s, and 55 on a loop because \"I hate playing the big blind.\"\n\nA related mistake is the opposite slogan: 3-bet or fold, no calling. That turns a cheap defend into a bloated OOP pot against a calling station. You also 3-bet-bluff into someone who never folds, which is how \"aggressive BB play\" just donates.\n\nA third mistake: defending this wide, then auto-check-folding every flop. If you are going to take the price, you have to continue on the boards that hit you and on some boards where their steal range missed.\n\n## The Better Play\n\nCall.\n\nVersus this small blind, this size, this depth, King-Nine offsuit takes the price. You are not trying to win a huge pot. You are trying to realize equity against a wide range that will often c-bet once and go away.\n\n3-bet instead if you have seen this SB fold to 3-bets. Fold instead if they only open strong and they size 3x, or if you are 12â€“15bb and this is a shove-or-fold hand (K9o is then often a fold, sometimes a shove versus a very wide SB).\n\nAfter you call: continue on K-high and 9-high. Give up a lot of missed flops versus a delayed second barrel. Do not turn every check-raise into a bluff just because you defended.\n\n## When To Use It / When Not To\n\n**Defend wider (mostly call) when:**\n- The small blind opens 2â€“2.5x\n- They have been stealing\n- There is a big-blind ante\n- Stacks are about 20â€“40bb, so flatting still leaves play\n- Your hand has some high-card strength, a pair, or suited connectivity (K9o, QTo, 87s, 55, A7o, JTs)\n\n**Fold more often when:**\n- The small blind is tight and sizes 3x or more\n- You have a true junk hand, not a \"feels weak but has equity\" hand\n- You are 12â€“15bb and the hand is not a shove. Then fold more of the medium offsuit kings and queens\n- You have been defending every orbit and they have started 3-barreling you. Adjust.\n\n**3-bet more when:**\n- They fold to 3-bets\n- You have a value hand that wants a call from worse (AQ+, 99+, strong suited aces)\n- You can add some suited blockers as bluffs versus that folding SB, not versus a station\n\n**3-bet less, call more when:**\n- They never fold to 3-bets\n- They call flop too much. Then your 3-bet-bluffs are just bigger pots OOP\n\n**Sizing if you 3-bet:**\n- About 2.8â€“3.2x their open at 25â€“40bb, smaller if you are shoving soon anyway\n- At 15â€“20bb, prefer a shove with the hands you 3-bet rather than a tiny 3-bet that leaves a bad SPR\n\n## One Thing To Remember\n\nOut of position is a cost you pay to realize a cheap price against a wide range. It is not a reason to auto-fold.\n\nBefore you dump K9o in the big blind, ask: how wide is this small blind, how big is the open, and do they fold to 3-bets? Most recs: call. Folders: 3-bet more. Nits with a big size: fold more.\n\n---\n\n## Caption (draft)\n\nThe small blind opens 2.25x. You look down at K9o in the big blind and fold because you are out of position.\n\nThat cost is real. It is not a fold button. You are getting a cheap price against the widest open in the game. Call more versus stations. 3-bet more versus folders. Auto-folding K9o, QTo, and 87s on a loop is how you donate the blinds.\n\nSave this one for your next MTT.\n\n#poker #pokerstrategy #mtt #texasholdem #pokerstudy #onlinepoker\n",
+  "example_spot": "- Blinds: 200 / 400 with a 400 big-blind ante\n- Effective stack: 32bb (12,800)\n- Hero: Big blind with Kâ™  9â™£\n- Folds to the small blind\n- SB (typical rec, has opened a few blinds lately) raises to 900 (2.25x)\n- Action on you.\n- Decision: fold, call, or 3-bet?\n\nKing-Nine offsuit is the kind of hand people fold \"because OOP\" and the kind of hand that should often continue versus this small blind, at this size, at this depth.",
+  "common_mistake": "The common mistake is not folding 72 offsuit. It is folding K9o, QTo, 87s, and 55 on a loop because \"I hate playing the big blind.\"\n\nA related mistake is the opposite slogan: 3-bet or fold, no calling. That turns a cheap defend into a bloated OOP pot against a calling station. You also 3-bet-bluff into someone who never folds, which is how \"aggressive BB play\" just donates.\n\nA third mistake: defending this wide, then auto-check-folding every flop. If you are going to take the price, you have to continue on the boards that hit you and on some boards where their steal range missed.",
+  "better_play": "Call.\n\nVersus this small blind, this size, this depth, King-Nine offsuit takes the price. You are not trying to win a huge pot. You are trying to realize equity against a wide range that will often c-bet once and go away.\n\n3-bet instead if you have seen this SB fold to 3-bets. Fold instead if they only open strong and they size 3x, or if you are 12â€“15bb and this is a shove-or-fold hand (K9o is then often a fold, sometimes a shove versus a very wide SB).\n\nAfter you call: continue on K-high and 9-high. Give up a lot of missed flops versus a delayed second barrel. Do not turn every check-raise into a bluff just because you defended.",
+  "when_to_use": "**Defend wider (mostly call) when:**\n- The small blind opens 2â€“2.5x\n- They have been stealing\n- There is a big-blind ante\n- Stacks are about 20â€“40bb, so flatting still leaves play\n- Your hand has some high-card strength, a pair, or suited connectivity (K9o, QTo, 87s, 55, A7o, JTs)\n\n**3-bet more when:**\n- They fold to 3-bets\n- You have a value hand that wants a call from worse (AQ+, 99+, strong suited aces)\n- You can add some suited blockers as bluffs versus that folding SB, not versus a station\n\n**Sizing if you 3-bet:**\n- About 2.8â€“3.2x their open at 25â€“40bb, smaller if you are shoving soon anyway\n- At 15â€“20bb, prefer a shove with the hands you 3-bet rather than a tiny 3-bet that leaves a bad SPR",
+  "when_not_to_use": "**Fold more often when:**\n- The small blind is tight and sizes 3x or more\n- You have a true junk hand, not a \"feels weak but has equity\" hand\n- You are 12â€“15bb and the hand is not a shove. Then fold more of the medium offsuit kings and queens\n- You have been defending every orbit and they have started 3-barreling you. Adjust.\n\n**3-bet less, call more when:**\n- They never fold to 3-bets\n- They call flop too much. Then your 3-bet-bluffs are just bigger pots OOP",
+  "one_thing_to_remember": "Out of position is a cost you pay to realize a cheap price against a wide range. It is not a reason to auto-fold.",
+  "instagram_caption": "The small blind opens 2.25x. You look down at K9o in the big blind and fold because you are out of position.\n\nThat cost is real. It is not a fold button. You are getting a cheap price against the widest open in the game. Call more versus stations. 3-bet more versus folders. Auto-folding K9o, QTo, and 87s on a loop is how you donate the blinds.\n\nSave this one for your next MTT.\n\n#poker #pokerstrategy #mtt #texasholdem #pokerstudy #onlinepoker",
+  "publication_status": "published",
+  "instagram_url": "https://www.instagram.com/p/DcoSLgpFoJT/",
+  "taxonomy_flags": [],
+  "source_paths": {
+    "lesson_md": "/workspace/mtt-course/lessons/003-bb-defend-vs-sb/lesson.md",
+    "slug": "003-bb-defend-vs-sb"
+  },
+  "published_at": "2026-08-29T15:42:13Z",
+  "resource_type": "quick-lesson",
+  "slug": "bb-defend-vs-sb",
+  "website": {
+    "status": "not_imported",
+    "published_at": null,
+    "url": null
+  },
+  "instagram": {
+    "status": "published",
+    "published_at": "2026-08-29T15:42:13Z",
+    "url": "https://www.instagram.com/p/DcoSLgpFoJT/"
+  }
+}
+
