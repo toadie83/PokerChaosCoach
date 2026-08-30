@@ -15,6 +15,11 @@ import {
   learningLabel,
   learningResourceInput,
 } from "../lib/learningPresentation.js";
+import {
+  learningImportErrorMessage,
+  learningImportIdentityFromText,
+  validateLearningImportFile,
+} from "../lib/learningImportClient.js";
 
 function arrayFromLines(value) {
   return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -61,45 +66,91 @@ function ResourcePreview({ resource }) {
 }
 
 function ImportWorkspace({ onImported }) {
+  const [inputMode, setInputMode] = useState("paste");
   const [source, setSource] = useState("");
-  const [parsedInput, setParsedInput] = useState(null);
+  const [importRequest, setImportRequest] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [warnings, setWarnings] = useState([]);
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
 
+  const resetValidation = () => {
+    setImportRequest(null);
+    setPreview(null);
+    setWarnings([]);
+    setStatus("idle");
+    setMessage("");
+  };
+
+  const selectMode = (mode) => {
+    setInputMode(mode);
+    setSelectedFile(null);
+    resetValidation();
+  };
+
+  const selectFile = async (event) => {
+    const file = event.target.files?.[0] || null;
+    resetValidation();
+    setSelectedFile(null);
+    if (!file) return;
+    try {
+      validateLearningImportFile(file);
+      const content = await file.text();
+      const identity = learningImportIdentityFromText(content);
+      const request = {
+        importDocument: {
+          mode: "file",
+          fileName: file.name,
+          mediaType: file.type || "",
+          size: file.size,
+          content,
+        },
+      };
+      setSelectedFile({ name: file.name, identity });
+      setImportRequest(request);
+      setMessage("JSON file selected. Preview and validate before saving.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error?.message || "The selected file is invalid.");
+    }
+  };
+
   const previewImport = async () => {
     setMessage("");
     setStatus("working");
     try {
-      const input = JSON.parse(source);
-      const resource = input?.resource || input;
-      const result = await requestPreviewLearningImport(resource);
-      setParsedInput(resource);
+      const request = inputMode === "file"
+        ? importRequest
+        : { importDocument: { mode: "paste", content: source } };
+      if (!request) throw new Error("Select a JSON file before previewing.");
+      const result = await requestPreviewLearningImport(request);
+      setImportRequest(request);
       setPreview(result.resource);
       setWarnings(result.warnings || []);
       setStatus("ready");
+      setMessage("Validation successful. Ready to save.");
     } catch (error) {
       setPreview(null);
       setWarnings([]);
-      setParsedInput(null);
+      if (inputMode !== "file") setImportRequest(null);
       setStatus("error");
-      setMessage(error?.message || "Import JSON is invalid.");
+      setMessage(learningImportErrorMessage(error));
     }
   };
 
   const saveImport = async () => {
-    if (!parsedInput) return;
+    if (!importRequest || !preview) return;
     setStatus("working");
     setMessage("");
     try {
-      const result = await requestImportLearningResource(parsedInput);
+      const result = await requestImportLearningResource(importRequest);
       setStatus("saved");
-      setMessage(`Imported ${result.resource.title}.`);
+      setMessage(`Imported ${result.resource.title} successfully.`);
       onImported(result.resource);
     } catch (error) {
       setStatus("error");
-      setMessage(error?.message || "The lesson could not be imported.");
+      setMessage(learningImportErrorMessage(error));
     }
   };
 
@@ -108,10 +159,36 @@ function ImportWorkspace({ onImported }) {
       <header><p className="tools-page-kicker">Structured ingestion</p><h1>Import Daily MTT Edge lesson</h1></header>
       <div className="learning-import-grid">
         <div>
-          <Field label="Lesson JSON" wide>
-            <textarea rows="24" value={source} onChange={(event) => setSource(event.target.value)} spellCheck="false" placeholder={'{\n  "externalId": "daily-mtt-edge-001",\n  "resourceType": "quick_lesson"\n}'} />
-          </Field>
-          {message ? <p className={status === "error" ? "learning-admin-error" : "learning-admin-success"}>{message}</p> : null}
+          <div className="learning-import-modes" role="group" aria-label="Import input method">
+            <button type="button" aria-pressed={inputMode === "paste"} className={inputMode === "paste" ? "active" : ""} onClick={() => selectMode("paste")}>Paste JSON or Markdown</button>
+            <button type="button" aria-pressed={inputMode === "file"} className={inputMode === "file" ? "active" : ""} onClick={() => selectMode("file")}>Upload JSON file</button>
+          </div>
+          {inputMode === "paste" ? (
+            <Field label="Lesson JSON or Markdown" wide>
+              <textarea
+                rows="24"
+                value={source}
+                onChange={(event) => { setSource(event.target.value); resetValidation(); }}
+                spellCheck="false"
+                placeholder={'{\n  "schema_version": 2,\n  "external_id": "daily-mtt-edge-005"\n}'}
+              />
+            </Field>
+          ) : (
+            <div className="learning-import-file-panel">
+              <Field label="Upload JSON file" wide>
+                <input type="file" accept=".json,application/json" onChange={selectFile} aria-label="Upload JSON file" />
+              </Field>
+              {selectedFile ? (
+                <dl className="learning-import-identity" aria-label="Selected lesson identity">
+                  <div><dt>Selected</dt><dd>{selectedFile.name}</dd></div>
+                  <div><dt>Lesson</dt><dd>{selectedFile.identity.lessonNumber ? `#${selectedFile.identity.lessonNumber} - ` : ""}{selectedFile.identity.title || "Untitled lesson"}</dd></div>
+                  <div><dt>External ID</dt><dd>{selectedFile.identity.externalId || "Not provided"}</dd></div>
+                  <div><dt>Category</dt><dd>{learningLabel(selectedFile.identity.category) || "Not provided"}</dd></div>
+                </dl>
+              ) : <p className="learning-admin-empty">Choose one JSON file up to 512 KB.</p>}
+            </div>
+          )}
+          {message ? <p role={status === "error" ? "alert" : "status"} className={status === "error" ? "learning-admin-error" : "learning-admin-success"}>{message}</p> : null}
           {warnings.length > 0 ? (
             <div className="learning-admin-warning" role="status">
               <strong>Import notes</strong>
@@ -119,7 +196,7 @@ function ImportWorkspace({ onImported }) {
             </div>
           ) : null}
           <div className="learning-admin-actions">
-            <button type="button" onClick={previewImport} disabled={status === "working"}>Preview and validate</button>
+            <button type="button" onClick={previewImport} disabled={status === "working" || (inputMode === "file" && !importRequest)}>Preview and validate</button>
             <button type="button" onClick={saveImport} disabled={!preview || status === "working"}>Save import</button>
           </div>
         </div>
