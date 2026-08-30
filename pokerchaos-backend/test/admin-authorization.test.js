@@ -52,6 +52,7 @@ test("scoped importer accounts are restricted to the two POST import routes", ()
   const allowed = [
     { method: "POST", path: "/admin/learning/import" },
     { method: "POST", path: "/admin/learning/import/preview" },
+    { method: "GET", path: "/me/entitlements" },
   ];
   for (const request of allowed) {
     assert.equal(scopedLearningImporterDenial({ ...request, entitlements: { learningImporter: true } }), null);
@@ -62,6 +63,7 @@ test("scoped importer accounts are restricted to the two POST import routes", ()
     { method: "POST", path: "/admin/learning" },
     { method: "PUT", path: "/admin/learning/resource-id" },
     { method: "POST", path: "/study-spots/analyse" },
+    { method: "POST", path: "/me/entitlements" },
     { method: "POST", path: "/admin/learning/import/preview/extra" },
   ];
   for (const request of denied) {

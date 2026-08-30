@@ -22,8 +22,10 @@ const LEARNING_IMPORT_ROUTES = new Set([
 ]);
 
 export function isLearningImportRequest(req) {
-  if (String(req?.method || "").toUpperCase() !== "POST") return false;
-  return LEARNING_IMPORT_ROUTES.has(String(req?.path || ""));
+  const method = String(req?.method || "").toUpperCase();
+  const path = String(req?.path || "");
+  if (method === "GET" && path === "/me/entitlements") return true;
+  return method === "POST" && LEARNING_IMPORT_ROUTES.has(path);
 }
 
 export function scopedLearningImporterDenial(req) {

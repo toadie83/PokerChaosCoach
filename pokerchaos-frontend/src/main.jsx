@@ -174,6 +174,13 @@ const SECTION_CONFIG = [
     component: AdminLearningPage,
     lockedText: "Administrator access is required.",
   },
+  {
+    path: "/admin/learning/import",
+    label: "Lesson Import",
+    importerOnly: true,
+    component: AdminLearningPage,
+    lockedText: "Learning import access is required.",
+  },
 ];
 const DYNAMIC_SECTION_CONFIG = [
   {
@@ -641,16 +648,25 @@ function SignedInShell() {
   }, []);
 
   const currentSection = resolveSectionConfig(routePath);
+  const isScopedLearningImporter = Boolean(
+    entitlements?.features?.learningImporter && !entitlements?.features?.admin,
+  );
   const canAccessSection = useCallback(
-    (section) =>
-      Boolean(
-        section?.adminOnly
-          ? entitlements?.features?.admin === true
-          : section?.viewableWhenDisabled ||
-              !section?.capability ||
-              canAccessCapability(entitlements, section.capability),
-      ),
-    [entitlements],
+    (section) => {
+      if (isScopedLearningImporter) {
+        return section?.path === "/admin/learning/import";
+      }
+      return Boolean(
+        section?.importerOnly
+          ? entitlements?.features?.admin === true || entitlements?.features?.learningImporter === true
+          : section?.adminOnly
+            ? entitlements?.features?.admin === true
+            : section?.viewableWhenDisabled ||
+                !section?.capability ||
+                canAccessCapability(entitlements, section.capability),
+      );
+    },
+    [entitlements, isScopedLearningImporter],
   );
   const enabledSections = useMemo(
     () => SECTION_CONFIG.filter(canAccessSection),
@@ -775,8 +791,13 @@ function SignedInShell() {
           </div>
           <div className="auth-bar-nav">
             {SECTION_CONFIG.filter(
-              (section) =>
-                !section.adminOnly || entitlements?.features?.admin === true,
+              (section) => {
+                if (isScopedLearningImporter) {
+                  return section.path === "/admin/learning/import";
+                }
+                if (section.importerOnly) return false;
+                return !section.adminOnly || entitlements?.features?.admin === true;
+              },
             ).map((section) => {
               const enabled = canAccessSection(section);
               const state = section.capability
