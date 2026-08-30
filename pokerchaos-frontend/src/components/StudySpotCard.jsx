@@ -1,4 +1,8 @@
-import { formatStackDepth, getResourceState } from "../lib/studySpotPresentation.js";
+import {
+  formatStackDepth,
+  getLearningResourceHref,
+  getResourceState,
+} from "../lib/studySpotPresentation.js";
 import { trackProductEvent } from "../lib/analytics.js";
 
 function positionLabel(spot) {
@@ -67,7 +71,7 @@ export default function StudySpotCard({
             <>
               <h3>{resourceState.resource.title}</h3>
               <a
-                href={resourceState.resource.canonicalPath || resourceState.resource.url}
+                href={getLearningResourceHref(resourceState.resource)}
                 onClick={() =>
                   trackProductEvent("study_resource_opened", {
                     spot_category: spot.category,

@@ -96,6 +96,46 @@ test("orchestrator persists useful no-resource spots without fabricating matches
   assert.equal(result.usage.total_tokens, 100);
 });
 
+test("Study Spots match only published resources and preserve their canonical lesson path", async () => {
+  const memory = memoryPersistence();
+  let loaderOptions = null;
+  let nextId = 0;
+  await analyseSavedTournamentForStudy({
+    userId: "free-user",
+    tournamentId: "tournament-1",
+    compactHands: [blindDefenceHand()],
+    model: "test-model",
+    classifyCandidates: keepEveryCandidate,
+    resourceLoader: async (options) => {
+      loaderOptions = options;
+      return [{
+        id: "lesson-1",
+        slug: "big-blind-defence",
+        canonicalPath: "/learn/big-blind-defence",
+        title: "Big blind defence",
+        category: "blind-vs-blind",
+        primaryTag: "bb-defence",
+        status: "published",
+        secondaryTags: [],
+        stackDepthTags: [],
+        heroPositionTags: ["BB"],
+        villainPositionTags: ["SB"],
+        opponentTypeTags: [],
+        studySpotTypes: ["preflop_uncertainty"],
+        priority: 100,
+      }];
+    },
+    persistence: memory.persistence,
+    idFactory: () => `published-${++nextId}`,
+  });
+
+  assert.deepEqual(loaderOptions, { publishedOnly: true });
+  assert.equal(
+    memory.state.completed.spots[0].resourceMatches[0]?.resource?.canonicalPath,
+    "/learn/big-blind-defence",
+  );
+});
+
 test("orchestrator completes honest zero-result reports without an AI call", async () => {
   const memory = memoryPersistence();
   let classifierCalled = false;
