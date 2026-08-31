@@ -51,8 +51,7 @@ import {
   DEFAULT_AUTH_ROUTE,
   normalizeAppRoutePath,
 } from "./lib/appRoutes.js";
-import mobileNavWordmark from "./assets/brand/playback-nav-image-mobile.png";
-import navIconMark from "./assets/brand/playback-nav-image-icon.png";
+import PlaybackBrand from "./components/PlaybackBrand.jsx";
 import "./styles.css";
 import "./study-spots.css";
 import "./learning-library.css";
@@ -409,6 +408,7 @@ function AppFooter({ onOpenAbout, onOpenDisclaimer }) {
   return (
     <footer className="app-footer">
       <div className="app-shell-container app-footer-inner">
+        <PlaybackBrand variant="mark" className="app-footer-brand" aria-hidden="true" />
         <a
           href="/disclaimer"
           className="app-footer-link"
@@ -793,7 +793,7 @@ function SignedInShell() {
       <div className="app-shell-container app-shell-header">
         <div className="auth-bar auth-bar-shell">
           <div className="auth-bar-brand">
-            <img src={navIconMark} alt="" className="auth-bar-brand-mark" />
+            <PlaybackBrand variant="mark" className="auth-bar-brand-mark" />
             <span className="auth-bar-brand-copy">
               <strong>Playback Poker</strong>
               <span>Smarter review for online poker players</span>
@@ -902,9 +902,8 @@ function SignedInShell() {
                 aria-label="Open utility menu"
                 onClick={() => setMobileUtilityOpen((value) => !value)}
               >
-                <img
-                  src={navIconMark}
-                  alt=""
+                <PlaybackBrand
+                  variant="mark"
                   className="mobile-utility-toggle-icon"
                   aria-hidden="true"
                 />
@@ -1096,8 +1095,8 @@ function SignedOutShell() {
   return (
     <div className="auth-gate-layout">
       <div className="auth-gate">
-        <img
-          src={mobileNavWordmark}
+        <PlaybackBrand
+          variant="mark"
           alt="Playback Poker"
           className="auth-gate-brand"
         />

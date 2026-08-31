@@ -1,5 +1,7 @@
-import { learningLabel } from "../../../lib/learningPresentation.js";
-import { isQuickLearningResource } from "./homepageData.js";
+import {
+  isQuickLearningResource,
+  learningLabel,
+} from "../../../lib/learningPresentation.js";
 
 function LearningCard({ resource }) {
   const isQuickLesson = isQuickLearningResource(resource);

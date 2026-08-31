@@ -1,12 +1,12 @@
 .home-page-shell.home-v2 {
-  --home-v2-ink: #101715;
-  --home-v2-charcoal: #0d1312;
-  --home-v2-charcoal-raised: #151e1b;
-  --home-v2-cream: #f4eddd;
-  --home-v2-green: #087a5a;
-  --home-v2-green-bright: #35c998;
-  --home-v2-green-dark: #056047;
-  --home-v2-display: "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif;
+  --home-v2-ink: var(--brand-text-inverse);
+  --home-v2-charcoal: var(--brand-surface-dark);
+  --home-v2-charcoal-raised: var(--brand-surface-elevated);
+  --home-v2-cream: var(--brand-text-primary);
+  --home-v2-green: var(--brand-accent-green-ink);
+  --home-v2-green-bright: var(--brand-accent-green);
+  --home-v2-green-dark: var(--brand-accent-green-deep);
+  --home-v2-display: var(--brand-font-display);
   padding: 12px clamp(16px, 2vw, 32px) 56px;
   background: #eef2f0;
   color: var(--home-v2-ink);
@@ -28,7 +28,7 @@
 }
 
 .home-v2 .home-brand-mark {
-  border-radius: 6px;
+  object-fit: contain;
 }
 
 .home-v2 .home-nav-link,

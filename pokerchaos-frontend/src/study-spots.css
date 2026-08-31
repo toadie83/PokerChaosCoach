@@ -102,8 +102,8 @@
 
 .study-field input:focus,
 .study-field textarea:focus {
-  border-color: #d9473f;
-  outline: 3px solid rgb(217 71 63 / 0.14);
+  border-color: var(--brand-accent-green-ink);
+  outline: 3px solid rgb(0 122 87 / 0.16);
 }
 
 .study-upload-support {
@@ -144,7 +144,7 @@
 }
 
 .study-progress span[data-state="active"] {
-  border-color: #d9473f;
+  border-color: var(--brand-accent-green-ink);
   color: var(--text-primary);
   font-weight: 750;
 }
@@ -161,9 +161,9 @@
 .study-report-history button {
   min-height: 42px;
   padding: 0 16px;
-  border: 1px solid #b9342d;
+  border: 1px solid var(--brand-accent-green-ink);
   border-radius: 6px;
-  background: #d9473f;
+  background: var(--brand-accent-green-ink);
   color: #fff;
   font: inherit;
   font-weight: 800;
@@ -368,7 +368,7 @@
 
 .study-spot-category {
   margin: 0;
-  color: #b9342d;
+  color: var(--brand-accent-green-ink);
   font-size: 0.7rem;
   font-weight: 850;
   text-transform: uppercase;
@@ -457,7 +457,7 @@
 .study-resource a {
   display: inline-block;
   margin-top: 8px;
-  color: #b9342d;
+  color: var(--brand-accent-green-ink);
   font-weight: 800;
 }
 
@@ -507,7 +507,7 @@
   gap: 28px;
   margin-top: 38px;
   padding: 28px;
-  border-top: 3px solid #d9473f;
+  border-top: 3px solid var(--brand-accent-green-ink);
   background: #fff;
 }
 
