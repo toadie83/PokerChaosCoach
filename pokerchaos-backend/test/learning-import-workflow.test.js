@@ -9,6 +9,8 @@ import {
 
 const fixtureUrl = new URL("./fixtures/daily-mtt-edge-003.production-v2.json", import.meta.url);
 const fixtureText = readFileSync(fixtureUrl, "utf8");
+const wildcardFixtureUrl = new URL("./fixtures/daily-mtt-edge-008.position-wildcard.json", import.meta.url);
+const wildcardFixtureText = readFileSync(wildcardFixtureUrl, "utf8");
 
 function fileRequest(content = fixtureText, fileName = "daily-mtt-edge-003.json") {
   return {
@@ -80,4 +82,28 @@ test("successful file import creates exactly one normalized resource", async () 
   assert.equal(created[0].id, "created-resource-id");
   assert.equal(created[0].externalId, "daily-mtt-edge-003");
   assert.equal(result.payload.imported, true);
+});
+
+test("file import persists null until the Instagram derivative is published", async () => {
+  const created = [];
+
+  const result = await saveLearningResourceImportRequest(
+    fileRequest(wildcardFixtureText, "daily-mtt-edge-008.json"),
+    {
+      findDuplicates: async () => [],
+      createId: () => "daily-mtt-edge-008-id",
+      createResource: async (resource) => {
+        created.push(resource);
+        return resource;
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].externalId, "daily-mtt-edge-008");
+  assert.equal(created[0].instagramUrl, null);
+  assert.deepEqual(created[0].heroPositionTags, ["any"]);
+  assert.deepEqual(created[0].villainPositionTags, ["any"]);
+  assert.equal(result.payload.resource.instagramUrl, null);
 });

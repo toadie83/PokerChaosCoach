@@ -116,7 +116,7 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
       ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS instagram_caption TEXT NOT NULL DEFAULT '',
-      ADD COLUMN IF NOT EXISTS instagram_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS instagram_url TEXT,
       ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT '';
   `);
 
@@ -138,6 +138,16 @@ export async function initDatabase() {
         ELSE opponent_type_tags
       END,
       source_url = CASE WHEN source_url = '' THEN url ELSE source_url END;
+  `);
+
+  await resolvedPool.query(`
+    ALTER TABLE learning_resources
+      ALTER COLUMN instagram_url DROP NOT NULL,
+      ALTER COLUMN instagram_url DROP DEFAULT;
+
+    UPDATE learning_resources
+    SET instagram_url = NULL
+    WHERE BTRIM(instagram_url) = '';
   `);
 
   await resolvedPool.query(`
@@ -758,7 +768,9 @@ function toLearningResourcePayload(row) {
     publishedAt: row.published_at || row.publish_date || null,
     publishDate: row.published_at || row.publish_date || null,
     instagramCaption: row.instagram_caption || "",
-    instagramUrl: row.instagram_url || "",
+    instagramUrl: typeof row.instagram_url === "string" && row.instagram_url.trim()
+      ? row.instagram_url.trim()
+      : null,
     sourceUrl: row.source_url || "",
     url: `/learn/${row.slug}`,
     priority: Number(row.priority) || 0,
@@ -803,7 +815,9 @@ function learningResourceWriteValues(resource) {
     published,
     publishedAt,
     resource.instagramCaption || "",
-    resource.instagramUrl || "",
+    typeof resource.instagramUrl === "string" && resource.instagramUrl.trim()
+      ? resource.instagramUrl.trim()
+      : null,
     resource.sourceUrl || "",
     canonicalPath,
     Number(resource.priority) || 0,
@@ -1999,6 +2013,19 @@ export async function listStudyReports(userId) {
     [userId],
   );
   return result.rows.map((row) => toStudyReportPayload(row));
+}
+
+export async function deleteStudyReport(userId, reportId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      DELETE FROM study_reports
+      WHERE id = $1 AND user_id = $2
+      RETURNING id;
+    `,
+    [reportId, userId],
+  );
+  return Boolean(result.rows[0]);
 }
 
 export async function saveStudyQueueItem(userId, studySpotId) {

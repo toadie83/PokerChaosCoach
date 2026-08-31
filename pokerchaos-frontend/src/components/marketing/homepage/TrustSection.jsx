@@ -1,24 +1,22 @@
 export default function TrustSection({ links }) {
   return (
-    <section className="home-section" id="trust">
-      <div className="home-trust-card">
-        <div className="home-trust-copy">
-          <p className="home-eyebrow">Trust and limitations</p>
-          <h2>Clear feedback, not fake certainty.</h2>
-          <p>
-            Playback Poker uses AI to interpret hand histories and explain
-            decision points clearly. It is designed to support your review
-            process, not replace your judgement or guarantee perfect GTO output.
-          </p>
-        </div>
-        <div className="home-trust-links">
+    <section className="home-v2-section home-v2-methodology" id="methodology">
+      <div>
+        <p className="home-v2-kicker">Constructive by design</p>
+        <h2>Not every Study Spot is a mistake.</h2>
+        <p>
+          Playback Poker looks for decisions with learning value, including
+          close spots, missed opportunities, and recurring patterns grounded in
+          the actual hand-history context.
+        </p>
+      </div>
+      <nav aria-label="Playback Poker methodology">
           {links.map((link) => (
-            <a className="home-trust-link" href={link.href} key={link.href}>
+            <a href={link.href} key={link.href}>
               {link.label}
             </a>
           ))}
-        </div>
-      </div>
+      </nav>
     </section>
   );
 }

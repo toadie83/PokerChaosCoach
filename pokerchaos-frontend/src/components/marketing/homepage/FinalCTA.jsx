@@ -1,18 +1,14 @@
 export default function FinalCTA({ primaryAction, secondaryAction }) {
   return (
-    <section className="home-section">
-      <div className="home-final-cta">
-        <div>
-          <p className="home-eyebrow">Ready to review</p>
-          <h2>Got a hand you&apos;re still thinking about?</h2>
-          <p>
-            Paste it into Playback Poker and get a clear review in minutes.
-          </p>
-        </div>
-        <div className="home-final-actions">
+    <section className="home-v2-final">
+      <div>
+        <p className="home-v2-kicker">Your game. Your study plan.</p>
+        <h2>Your next study session is already in your hand history.</h2>
+        <p>Upload a tournament and let Playback Poker find the spots worth revisiting.</p>
+      </div>
+      <div className="home-v2-actions">
           {primaryAction}
           {secondaryAction}
-        </div>
       </div>
     </section>
   );

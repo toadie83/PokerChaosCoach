@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  learningResourceInputFromCanonical,
   learningResourceValidationDetails,
   validateLearningResourceImport,
   validateLearningResourceInput,
@@ -43,6 +44,32 @@ function validResource(overrides = {}) {
     ...overrides,
   };
 }
+
+test("Instagram URLs normalize null and legacy empty strings while preserving valid URLs", () => {
+  for (const [instagramUrl, expected] of [
+    [null, null],
+    ["", null],
+    ["   ", null],
+    ["https://www.instagram.com/p/example/", "https://www.instagram.com/p/example/"],
+  ]) {
+    const parsed = validateLearningResourceInput(validResource({ instagramUrl }));
+    assert.equal(parsed.success, true, String(instagramUrl));
+    assert.equal(parsed.data.instagramUrl, expected);
+  }
+});
+
+test("an Instagram URL can be added after the canonical lesson is imported", () => {
+  const imported = validateLearningResourceInput(validResource({ instagramUrl: null }));
+  assert.equal(imported.success, true);
+  assert.equal(imported.data.instagramUrl, null);
+
+  const updated = validateLearningResourceInput({
+    ...learningResourceInputFromCanonical(imported.data),
+    instagramUrl: "https://www.instagram.com/p/published-later/",
+  });
+  assert.equal(updated.success, true);
+  assert.equal(updated.data.instagramUrl, "https://www.instagram.com/p/published-later/");
+});
 
 test("strict learning-resource validation accepts every future-proof resource type", () => {
   for (const resourceType of LEARNING_RESOURCE_TYPES) {
@@ -175,4 +202,42 @@ test("complete production Daily MTT Edge V2 payload remains import-compatible", 
   assert.equal(parsed.data.body, payload.canonical_lesson.trim());
   assert.deepEqual(parsed.data.studySpotTypes, ["interesting_spot"]);
   assert.deepEqual(parsed.warnings, []);
+});
+
+test("production V2 import accepts an unpublished Instagram derivative", () => {
+  const fixtureUrl = new URL("./fixtures/daily-mtt-edge-003.production-v2.json", import.meta.url);
+  const payload = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  payload.instagram_url = null;
+  payload.instagram.status = "not_published";
+  payload.instagram.published_at = null;
+  payload.instagram.url = null;
+
+  const parsed = validateLearningResourceImport(payload);
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data.instagramUrl, null);
+});
+
+test("production V2 re-import accepts Playback website importedAt metadata", () => {
+  const fixtureUrl = new URL("./fixtures/daily-mtt-edge-003.production-v2.json", import.meta.url);
+  const payload = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  payload.website.status = "imported";
+  payload.website.importedAt = "2026-08-31T08:11:33Z";
+
+  const parsed = validateLearningResourceImport(payload);
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data.externalId, "daily-mtt-edge-003");
+  assert.equal("importedAt" in parsed.data, false);
+});
+
+test("Daily MTT Edge 008 preserves any as a position wildcard", () => {
+  const fixtureUrl = new URL("./fixtures/daily-mtt-edge-008.position-wildcard.json", import.meta.url);
+  const payload = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  const parsed = validateLearningResourceImport(payload);
+
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data.externalId, "daily-mtt-edge-008");
+  assert.deepEqual(parsed.data.heroPositionTags, ["any"]);
+  assert.deepEqual(parsed.data.villainPositionTags, ["any"]);
+  assert.equal(parsed.data.heroPositionTags.includes("unknown"), false);
+  assert.equal(parsed.data.villainPositionTags.includes("unknown"), false);
 });

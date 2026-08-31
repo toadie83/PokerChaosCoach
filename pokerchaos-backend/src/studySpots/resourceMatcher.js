@@ -18,6 +18,12 @@ function contextCompatibility(resourceValues, spotValue, unknownValue = null) {
   return resourceValues.includes(spotValue) ? 1 : 0;
 }
 
+function positionCompatibility(resourceValues, spotValue) {
+  if (Array.isArray(resourceValues) && resourceValues.includes("any")) return 1;
+  if (spotValue === "any") return 1;
+  return contextCompatibility(resourceValues, spotValue, "unknown");
+}
+
 function overlapRatio(left, right) {
   const leftValues = Array.isArray(left) ? left : [];
   const rightSet = new Set(Array.isArray(right) ? right : []);
@@ -58,15 +64,13 @@ export function scoreLearningResource(spot, rawResource) {
     category: Number(categoryMatch),
     studySpotType: studySpotTypeMatch,
     stackDepth: contextCompatibility(resource.stackDepthTags, spot?.stackDepthTag),
-    heroPosition: contextCompatibility(
+    heroPosition: positionCompatibility(
       resource.heroPositionTags,
       spot?.heroPosition,
-      "unknown",
     ),
-    villainPosition: contextCompatibility(
+    villainPosition: positionCompatibility(
       resource.villainPositionTags,
       spot?.villainPosition,
-      "unknown",
     ),
     opponentType: contextCompatibility(
       resource.opponentTypeTags,

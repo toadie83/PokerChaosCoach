@@ -93,6 +93,11 @@ export async function requestStudyReport(reportId) {
   return getJson(`/study-spots/reports/${safeId}`);
 }
 
+export async function requestDeleteStudyReport(reportId) {
+  const safeId = encodeURIComponent(String(reportId || "").trim());
+  return deleteJson(`/study-spots/reports/${safeId}`);
+}
+
 export async function requestRetryStudyReport(reportId) {
   const safeId = encodeURIComponent(String(reportId || "").trim());
   return postJson(`/study-spots/reports/${safeId}/retry`, {});

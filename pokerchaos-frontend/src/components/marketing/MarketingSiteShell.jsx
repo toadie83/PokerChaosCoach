@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import MarketingSiteHeader from "./MarketingSiteHeader.jsx";
 
-export default function MarketingSiteShell({ currentPath = "/", children }) {
+export default function MarketingSiteShell({ currentPath = "/", pageClassName = "", children }) {
   useEffect(() => {
     document.body.classList.add("home-page-body");
     document.documentElement.classList.add("home-page-html");
@@ -12,7 +12,7 @@ export default function MarketingSiteShell({ currentPath = "/", children }) {
   }, []);
 
   return (
-    <main className="home-page-shell learning-page-shell">
+    <main className={`home-page-shell learning-page-shell ${pageClassName}`.trim()}>
       <div className="home-page-frame learning-page-frame">
         <MarketingSiteHeader currentPath={currentPath} />
         {children}

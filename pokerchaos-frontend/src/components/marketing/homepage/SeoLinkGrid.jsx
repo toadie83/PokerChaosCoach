@@ -1,18 +1,18 @@
 export default function SeoLinkGrid({ links }) {
   return (
-    <section className="home-section" id="seo-links">
-      <div className="home-section-heading">
-        <p className="home-eyebrow">Explore poker review tools</p>
-        <h2>Go deeper by workflow, site, or study goal.</h2>
+    <section className="home-v2-section home-v2-explore" id="explore">
+      <div className="home-v2-section-heading">
+        <p className="home-v2-kicker">Explore Playback Poker</p>
+        <h2>Practical tournament analysis by workflow.</h2>
       </div>
-      <div className="home-card-grid">
+      <nav className="home-v2-explore-links" aria-label="Poker study guides and tools">
         {links.map((link) => (
-          <a className="home-seo-card" href={link.href} key={link.href}>
-            <h3>{link.title}</h3>
-            <p>{link.description}</p>
+          <a href={link.href} key={link.href}>
+            <strong>{link.title}</strong>
+            <span>{link.description}</span>
           </a>
         ))}
-      </div>
+      </nav>
     </section>
   );
 }

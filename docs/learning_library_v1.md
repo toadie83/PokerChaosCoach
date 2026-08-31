@@ -83,6 +83,10 @@ LearningResource {
 }
 ```
 
+`instagramUrl` is a nullable URL. `null` means the canonical lesson has not yet
+been published to Instagram. Legacy empty strings are accepted at write/import
+boundaries and normalized to `null`.
+
 Adapt naming and types to existing project conventions.
 
 ## Controlled Taxonomy
@@ -153,11 +157,19 @@ Build a controlled taxonomy for Study Spots and learning resources.
 Also create controlled values for:
 
 - Stack-depth bands
-- Positions
+- Positions (`UTG`, `UTG+1`, `MP`, `LJ`, `HJ`, `CO`, `BTN`, `SB`, `BB`, `unknown`, and the LearningResource-only wildcard `any`)
 - Opponent types
 - Study-spot types
 
 Taxonomy should be extensible but should not allow arbitrary AI-generated tag drift.
+
+For LearningResource hero and villain position metadata, `any` and `unknown` have different meanings:
+
+- `any` means the lesson applies to every position and position is not a matching constraint.
+- `unknown` means the relevant position was genuinely unavailable.
+- Imports and persistence must preserve `any`; they must not normalise it to `unknown`.
+- `any` is mutually exclusive with concrete positions in each hero/villain position list.
+- Study Spot extraction continues to use concrete positions or `unknown`; `any` is resource metadata, not an observed hand position.
 
 ## Restricted Admin Workflow
 
@@ -250,6 +262,8 @@ Candidate factors can include:
 - Stack-depth match
 - Hero/villain position match
 - Opponent-type match
+
+A LearningResource hero or villain position value of `any` receives full compatibility for a Study Spot with any concrete position. It must not lower the resource's match quality. `unknown` retains its existing missing-information semantics and is not a wildcard.
 
 Return:
 

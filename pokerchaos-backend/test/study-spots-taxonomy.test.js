@@ -55,6 +55,18 @@ test("resource sanitizer removes unknown tags and clamps priority", () => {
   assert.ok(getStudySpotTaxonomy().categories.preflop.includes("reshove"));
 });
 
+test("LearningResource positions expose and preserve an exclusive any wildcard", () => {
+  const taxonomy = getStudySpotTaxonomy();
+  assert.ok(taxonomy.positionTags.includes("any"));
+
+  const resource = sanitizeLearningResource({
+    heroPositionTags: ["any", "BB"],
+    villainPositionTags: ["any", "unknown"],
+  });
+  assert.deepEqual(resource.heroPositionTags, ["any"]);
+  assert.deepEqual(resource.villainPositionTags, ["any"]);
+});
+
 test("V1 seed contains only real published study resources", () => {
   assert.equal(LEARNING_RESOURCE_SEED.length, 2);
   for (const resource of LEARNING_RESOURCE_SEED) {

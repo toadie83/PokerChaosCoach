@@ -235,3 +235,51 @@ export const TRUST_LINKS = [
   { href: "/ai-limitations", label: "AI Limitations" },
   { href: "/methodology", label: "Methodology" },
 ];
+
+export const STUDY_PREVIEW_SPOTS = [
+  {
+    category: "Blind vs blind",
+    title: "Big Blind Defence",
+    context: "K9o folded vs a 2.2x small-blind steal at 31 BB",
+    lesson: "Big Blind Defence vs a Small Blind Steal",
+  },
+  {
+    category: "Postflop",
+    title: "Continuation Betting",
+    context: "Low connected flop against a limp-call range",
+    lesson: "Continuation Betting vs Limp-Callers",
+  },
+  {
+    category: "Tournament",
+    title: "Stack Depth",
+    context: "21 BB opening decision with reshove pressure",
+    lesson: "Changing Strategy as Stacks Shorten",
+  },
+];
+
+export const PRODUCT_LOOP_STEPS = [
+  { number: "01", title: "Play", description: "Play your normal online MTT." },
+  { number: "02", title: "Upload", description: "Import the tournament hand history." },
+  { number: "03", title: "Discover", description: "Find decisions with real learning value." },
+  { number: "04", title: "Study", description: "Open lessons matched to those spots." },
+  { number: "05", title: "Improve", description: "Take the insight into your next session." },
+];
+
+export const TOOL_COMPARISON_ROWS = [
+  { label: "Find hands worth studying", studySpots: "Yes", review: "Yes" },
+  { label: "Match learning resources", studySpots: "Yes", review: "Yes" },
+  { label: "Detailed hand analysis", studySpots: "-", review: "Yes" },
+  { label: "Tournament-wide patterns", studySpots: "-", review: "Yes" },
+  { label: "Decision-by-decision review", studySpots: "-", review: "Yes" },
+  { label: "Access", studySpots: "Free", review: "Tier 1" },
+];
+
+export function selectHomepageLearningResources(resources, limit = 4) {
+  return (Array.isArray(resources) ? resources : [])
+    .filter((resource) => resource?.status === "published" && resource?.canonicalPath)
+    .slice(0, Math.max(0, limit));
+}
+
+export function isQuickLearningResource(resource) {
+  return resource?.resourceType === "quick_lesson" || resource?.contentType === "quick_lesson";
+}
