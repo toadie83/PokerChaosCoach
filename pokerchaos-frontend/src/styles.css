@@ -18,14 +18,37 @@
   --border-primary: #2a3446;
   --text-primary: #d6dce5;
   --text-muted: #94a3b8;
-  --accent-primary: #2d7ff9;
-  --accent-hover: #56a8ff;
+  --accent-primary: #007a57;
+  --accent-hover: #00a977;
   --success: #0f8f5b;
   --warning: #b88728;
   --danger: #a94442;
 
-  --accent-primary-rgb: 45 127 249;
-  --accent-hover-rgb: 86 168 255;
+  /* Playback Poker canonical brand aliases */
+  --brand-surface-base: #0b0e10;
+  --brand-surface-dark: #0b0e10;
+  --brand-surface-elevated: #14181c;
+  --brand-surface-light: #f7f8f6;
+  --brand-text-primary: #f4f1e6;
+  --brand-text-muted: #b8c0bc;
+  --brand-text-inverse: #101715;
+  --brand-accent-green: #00e39a;
+  --brand-accent-green-ink: #007a57;
+  --brand-accent-green-deep: #006548;
+  --brand-accent-green-soft: rgb(0 227 154 / 0.12);
+  --brand-accent-gold: #c8a24d;
+  --brand-accent-danger: #a94442;
+  --brand-border-subtle: rgb(244 241 230 / 0.15);
+  --brand-border-strong: rgb(0 227 154 / 0.52);
+  --brand-glow-green: 0 0 24px rgb(0 227 154 / 0.16);
+  --brand-focus-ring: 0 0 0 3px rgb(0 122 87 / 0.28);
+  --brand-font-display: Anton, "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+  --brand-font-body: Inter, Manrope, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --brand-card-radius: 8px;
+  --brand-control-radius: 6px;
+
+  --accent-primary-rgb: 0 122 87;
+  --accent-hover-rgb: 0 169 119;
   --text-primary-rgb: 214 220 229;
   --text-muted-rgb: 148 163 184;
   --border-primary-rgb: 42 52 70;
@@ -210,10 +233,10 @@
   --workspace-card-bg: linear-gradient(180deg, #ffffff 0%, #fbf7f1 100%);
   --workspace-card-soft-bg: #fffaf4;
   --workspace-border: rgb(16 24 32 / 0.08);
-  --workspace-border-strong: rgb(217 71 63 / 0.22);
-  --workspace-label: #8a5560;
-  --workspace-accent: #d9473f;
-  --workspace-accent-strong: #b9342d;
+  --workspace-border-strong: rgb(0 122 87 / 0.24);
+  --workspace-label: #52645e;
+  --workspace-accent: var(--brand-accent-green-ink);
+  --workspace-accent-strong: var(--brand-accent-green-deep);
   --workspace-shadow: 0 18px 48px rgb(16 24 32 / 0.08);
 
   --page-bg: var(--bg-primary);
@@ -250,22 +273,11 @@ body {
 }
 
 body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image: url("./assets/brand/playback-site-icon-image.png");
-  background-repeat: no-repeat;
-  background-position: center 56%;
-  background-size: min(56vw, 640px);
-  opacity: 0.06;
-  filter: saturate(0.9) contrast(0.94);
-  pointer-events: none;
-  z-index: 0;
+  content: none;
 }
 
 [data-theme="light"] body::before {
-  opacity: 0.032;
-  filter: saturate(0.7) contrast(0.92);
+  content: none;
 }
 
 h1,
@@ -665,8 +677,7 @@ h3,
 .auth-bar-brand-mark {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgb(16 24 32 / 0.12);
+  object-fit: contain;
 }
 
 .auth-bar-brand-copy {
@@ -1003,7 +1014,7 @@ h3,
 .mobile-utility-toggle-icon {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  object-fit: contain;
   opacity: 0.92;
 }
 
@@ -1141,6 +1152,13 @@ h3,
   gap: var(--spacing-4);
   padding: 0;
   box-sizing: border-box;
+}
+
+.app-footer-brand {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  object-fit: contain;
 }
 
 .app-footer-disclaimer {
@@ -1685,7 +1703,7 @@ h3,
 
 .auth-gate-brand {
   display: block;
-  width: min(280px, 100%);
+  width: min(132px, 42vw);
   height: auto;
   margin-inline: auto;
 }
@@ -10174,8 +10192,7 @@ body.home-page-body::before {
 .home-brand-mark {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgb(16 24 32 / 0.12);
+  object-fit: contain;
 }
 
 .home-brand-copy {

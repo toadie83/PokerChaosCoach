@@ -5,6 +5,10 @@ export function learningLabel(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+export function isQuickLearningResource(resource) {
+  return resource?.resourceType === "quick_lesson" || resource?.contentType === "quick_lesson";
+}
+
 export function toggleWildcardChoice(values, option, wildcard = "any") {
   const current = Array.isArray(values) ? values : [];
   if (option === wildcard) return current.includes(wildcard) ? [] : [wildcard];

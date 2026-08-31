@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 
 import { requestLearningResource } from "../../api/aiService.js";
-import { learningLabel, learningResourceSlugFromPath } from "../../lib/learningPresentation.js";
+import {
+  isQuickLearningResource,
+  learningLabel,
+  learningResourceSlugFromPath,
+} from "../../lib/learningPresentation.js";
 import { setLearningPageMeta } from "../../lib/learningPageMeta.js";
 import LearningLessonContent from "../learning/LearningLessonContent.jsx";
 import MarketingSiteShell from "./MarketingSiteShell.jsx";
@@ -59,7 +63,10 @@ export default function LearningResourcePage({ routePath = window.location.pathn
             <h2>Related lessons</h2>
             <div className="learning-resource-grid">
               {payload.relatedResources.map((related) => (
-                <article className="learning-resource-card" key={related.id}>
+                <article
+                  className={`learning-resource-card ${isQuickLearningResource(related) ? "learning-resource-card--quick" : "learning-resource-card--article"}`}
+                  key={related.id}
+                >
                   <p className="learning-card-meta"><span>{learningLabel(related.category)}</span></p>
                   <h3><a href={related.canonicalPath}>{related.title}</a></h3>
                   <p>{related.description}</p>

@@ -280,6 +280,4 @@ export function selectHomepageLearningResources(resources, limit = 4) {
     .slice(0, Math.max(0, limit));
 }
 
-export function isQuickLearningResource(resource) {
-  return resource?.resourceType === "quick_lesson" || resource?.contentType === "quick_lesson";
-}
+export { isQuickLearningResource } from "../../../lib/learningPresentation.js";

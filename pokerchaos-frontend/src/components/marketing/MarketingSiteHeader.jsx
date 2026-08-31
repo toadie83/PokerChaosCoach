@@ -1,6 +1,6 @@
 import { SignInButton, SignUpButton, useAuth } from "@clerk/react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import navIconMark from "../../assets/brand/playback-nav-image-icon.png";
+import PlaybackBrand from "../PlaybackBrand.jsx";
 import LearningDropdown from "./homepage/LearningDropdown.jsx";
 import { LEARNING_DROPDOWN_SECTIONS } from "./homepage/homepageData.js";
 
@@ -86,7 +86,7 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
   return (
     <header className="home-header" ref={headerRef}>
       <a className="home-brand" href="/" aria-label="Playback Poker homepage">
-        <img src={navIconMark} alt="" className="home-brand-mark" />
+        <PlaybackBrand variant="mark" className="home-brand-mark" />
         <span className="home-brand-copy">
           <strong>Playback Poker</strong>
           <span>MTT study, guided by your game</span>

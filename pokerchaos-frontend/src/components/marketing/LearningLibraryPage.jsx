@@ -6,9 +6,11 @@ import {
 } from "../../api/aiService.js";
 import {
   groupLearningResources,
+  isQuickLearningResource,
   learningLabel,
 } from "../../lib/learningPresentation.js";
 import { setLearningPageMeta } from "../../lib/learningPageMeta.js";
+import PlaybackBrand from "../PlaybackBrand.jsx";
 import MarketingSiteShell from "./MarketingSiteShell.jsx";
 
 export default function LearningLibraryPage() {
@@ -57,6 +59,7 @@ export default function LearningLibraryPage() {
     <MarketingSiteShell currentPath="/learn">
       <header className="learning-library-header">
         <div>
+          <PlaybackBrand variant="primary" className="learning-library-brand" alt="Playback Poker" />
           <p className="marketing-kicker">Learning Library</p>
           <h1>Lessons built around the decisions tournament players face.</h1>
           <p>Browse focused Quick Lessons, articles, and guides used by Study Spots.</p>
@@ -98,10 +101,13 @@ export default function LearningLibraryPage() {
           </div>
           <div className="learning-resource-grid">
             {items.map((resource) => (
-              <article className="learning-resource-card" key={resource.id}>
+              <article
+                className={`learning-resource-card ${isQuickLearningResource(resource) ? "learning-resource-card--quick" : "learning-resource-card--article"}`}
+                key={resource.id}
+              >
                 <div className="learning-card-meta">
                   <span>{learningLabel(resource.resourceType)}</span>
-                  {resource.series && resource.lessonNumber ? <span>{resource.series} #{resource.lessonNumber}</span> : null}
+                  {resource.series && resource.lessonNumber ? <span>{resource.series} #{String(resource.lessonNumber).padStart(3, "0")}</span> : null}
                 </div>
                 <h3><a href={resource.canonicalPath}>{resource.title}</a></h3>
                 <p>{resource.description}</p>
