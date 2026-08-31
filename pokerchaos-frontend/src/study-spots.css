@@ -120,6 +120,14 @@
   color: #9f2f29;
 }
 
+.study-form-notice {
+  margin: 16px 0 0;
+  padding: 11px 12px;
+  border-left: 3px solid #14785f;
+  background: rgb(20 120 95 / 0.08);
+  color: #0f6a54;
+}
+
 .study-progress {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -175,10 +183,10 @@
 }
 
 .study-report-page {
-  width: min(1040px, calc(100% - 32px));
+  width: min(1360px, calc(100% - 48px));
   min-height: 58vh;
   margin: 0 auto;
-  padding: 48px 0 80px;
+  padding: 42px 0 72px;
 }
 
 .study-report-header {
@@ -271,6 +279,10 @@
   gap: 16px;
 }
 
+.study-spot-list--report {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .study-spot-card {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
@@ -295,6 +307,46 @@
 .study-spot-content {
   min-width: 0;
   padding: 24px;
+}
+
+.study-spot-card--compact {
+  grid-template-columns: 42px minmax(0, 1fr);
+  box-shadow: 0 6px 18px rgb(15 23 42 / 0.05);
+}
+
+.study-spot-card--compact .study-spot-rank {
+  padding-top: 18px;
+}
+
+.study-spot-card--compact .study-spot-content {
+  padding: 17px 18px 18px;
+}
+
+.study-spot-card--compact .study-spot-heading {
+  gap: 10px;
+}
+
+.study-spot-card--compact .study-spot-heading h2 {
+  font-size: 1.05rem;
+}
+
+.study-spot-card--compact .study-spot-summary {
+  margin: 12px 0;
+  font-size: 0.9rem;
+}
+
+.study-spot-card--compact .study-spot-reason {
+  padding: 11px 12px;
+  font-size: 0.86rem;
+}
+
+.study-spot-card--compact .study-resource {
+  margin-top: 13px;
+  padding-top: 13px;
+}
+
+.study-spot-card--compact .study-spot-actions {
+  margin-top: 14px;
 }
 
 .study-spot-heading {
@@ -513,18 +565,35 @@
 
 .study-report-history {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .study-report-history article {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px;
+  gap: 18px;
+  padding: 13px 14px;
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--bg-elevated);
+}
+
+.study-history-page {
+  width: min(1360px, calc(100% - 48px));
+  padding-top: 42px;
+}
+
+.study-history-page .tools-page-header {
+  margin-bottom: 22px;
+}
+
+.study-history-page .tools-page-header h1 {
+  font-size: 2.4rem;
+}
+
+.study-report-history-copy {
+  min-width: 0;
 }
 
 .study-report-history p,
@@ -535,10 +604,48 @@
 }
 
 .study-report-history h2 {
-  margin: 3px 0;
+  margin: 2px 0 4px;
   color: var(--text-primary);
   font-size: 1rem;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.study-report-history-meta,
+.study-report-history-actions {
+  display: flex;
+  align-items: center;
+}
+
+.study-report-history-meta {
+  flex-wrap: wrap;
+  gap: 5px 14px;
+}
+
+.study-report-history-actions {
+  gap: 7px;
+}
+
+.study-report-history-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.study-report-history-actions button.study-report-remove {
+  border-color: #b9342d;
+  background: transparent;
+  color: #a8322c;
+}
+
+.study-report-history-actions button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+@media (max-width: 980px) {
+  .study-spot-list--report {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 760px) {
@@ -570,10 +677,14 @@
   }
 
   .study-spot-heading,
-  .study-review-upsell,
-  .study-report-history article {
+  .study-review-upsell {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .study-report-history article {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
   }
 
   .study-spot-heading {
@@ -581,8 +692,12 @@
   }
 
   .study-review-upsell button,
-  .study-report-history button {
+  .study-report-history-actions {
     width: 100%;
+  }
+
+  .study-report-history-actions button {
+    flex: 1 1 0;
   }
 }
 
@@ -590,6 +705,11 @@
   .study-report-page {
     width: calc(100% - 24px);
     padding: 32px 0 56px;
+  }
+
+  .study-history-page {
+    width: calc(100% - 24px);
+    padding-top: 32px;
   }
 
   .study-upload,

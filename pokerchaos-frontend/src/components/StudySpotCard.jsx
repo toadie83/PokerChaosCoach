@@ -21,6 +21,7 @@ export default function StudySpotCard({
   onStatusChange,
   onRemove,
   onOpenReport,
+  compact = false,
 }) {
   const resourceState = getResourceState(spot);
   const context = spot?.handContext || {};
@@ -29,7 +30,7 @@ export default function StudySpotCard({
   const metadata = [formatStackDepth(spot.stackDepthBb), positionLabel(spot)].filter(Boolean);
 
   return (
-    <article className="study-spot-card" data-spot-type={spot.type}>
+    <article className={`study-spot-card${compact ? " study-spot-card--compact" : ""}`} data-spot-type={spot.type}>
       <div className="study-spot-rank" aria-label={`Priority ${spot.rank || ""}`}>{spot.rank || "-"}</div>
       <div className="study-spot-content">
         <div className="study-spot-heading">

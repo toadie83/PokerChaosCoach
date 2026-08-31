@@ -1,53 +1,57 @@
 export default function HomeHero({
-  imageSrc,
-  trustMarkers,
+  spots,
   primaryAction,
   secondaryAction,
 }) {
   return (
-    <section className="home-hero" id="top">
-      <div className="home-hero-copy">
-        <p className="home-eyebrow">Smarter review for practical poker study</p>
-        <h1>Review poker hands in minutes, not hours.</h1>
-        <p className="home-hero-summary">
-          Upload a GGPoker or PokerStars hand history and get clear,
-          street-by-street feedback on your decisions, leaks, sizing, and missed
-          opportunities.
+    <section className="home-v2-hero" id="top">
+      <div className="home-v2-hero-copy">
+        <p className="home-v2-kicker">Playback Poker for MTT players</p>
+        <h1>Turn your tournaments into better decisions.</h1>
+        <p>
+          Upload your hand history. Playback Poker finds the decisions worth
+          studying and connects them to practical MTT lessons.
         </p>
-        <div className="home-hero-actions">
+        <div className="home-v2-actions">
           {primaryAction}
           {secondaryAction}
         </div>
-        <div className="home-trust-row" aria-label="Trust markers">
-          {trustMarkers.map((item) => (
-            <span className="home-trust-pill" key={item}>
-              {item}
-            </span>
-          ))}
+        <div className="home-v2-hero-proof" aria-label="Product access">
+          <span>Free for registered users</span>
+          <span>GGPoker and PokerStars MTT histories</span>
         </div>
       </div>
-      <div className="home-hero-visual">
-        <div className="home-hero-visual-card">
-          <div className="home-hero-visual-meta">
-            <span className="home-visual-badge">Hero Spot Review</span>
-            <span className="home-visual-badge home-visual-badge-soft">
-              GGPoker + PokerStars
-            </span>
+      <div className="home-v2-study-preview" aria-label="Example Playback Poker Study Spots report">
+        <header className="home-v2-preview-header">
+          <div>
+            <span className="home-v2-preview-status">Tournament uploaded</span>
+            <strong>Sunday Main Event</strong>
           </div>
-          <img
-            src={imageSrc}
-            alt="Playback Poker placeholder poker chip hero visual"
-            className="home-hero-chip-image"
-          />
-          <div className="home-hero-floating home-hero-floating-top">
-            <span className="home-floating-label">Street review</span>
-            <strong>Clear feedback, not solver noise</strong>
+          <div className="home-v2-preview-count">
+            <strong>6</strong>
+            <span>Study Spots found</span>
           </div>
-          <div className="home-hero-floating home-hero-floating-bottom">
-            <span className="home-floating-label">Takeaway</span>
-            <strong>Spot the leak before the next session</strong>
-          </div>
+        </header>
+        <div className="home-v2-preview-list">
+          {spots.map((spot, index) => (
+            <article className="home-v2-preview-row" key={spot.title}>
+              <span className="home-v2-preview-rank">{index + 1}</span>
+              <div>
+                <p>{spot.category}</p>
+                <h2>{spot.title}</h2>
+                <span>{spot.context}</span>
+              </div>
+              <div className="home-v2-preview-lesson">
+                <span>Recommended lesson</span>
+                <strong>{spot.lesson}</strong>
+              </div>
+            </article>
+          ))}
         </div>
+        <footer className="home-v2-preview-footer">
+          <span>Ranked by learning value</span>
+          <span>Matched to your game</span>
+        </footer>
       </div>
     </section>
   );

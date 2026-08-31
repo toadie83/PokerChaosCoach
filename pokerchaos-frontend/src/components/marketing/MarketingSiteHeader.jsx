@@ -57,9 +57,9 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
     };
   }, []);
 
-  const reviewAction = (className, label = "Review a Hand") =>
+  const studySpotsAction = (className, label = "Find Study Spots") =>
     isSignedIn ? (
-      <a className={className} href="/review">
+      <a className={className} href="/tools/study-spots">
         {label}
       </a>
     ) : (
@@ -72,7 +72,7 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
 
   const signInAction = (className) =>
     isSignedIn ? (
-      <a className={className} href="/review">
+      <a className={className} href="/tools">
         Open App
       </a>
     ) : (
@@ -89,7 +89,7 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
         <img src={navIconMark} alt="" className="home-brand-mark" />
         <span className="home-brand-copy">
           <strong>Playback Poker</strong>
-          <span>Smarter review for online poker players</span>
+          <span>MTT study, guided by your game</span>
         </span>
       </a>
       <button
@@ -104,19 +104,8 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
       </button>
       <div className={`home-nav-wrap ${menuOpen ? "is-open" : ""}`}>
         <nav className="home-nav" aria-label="Marketing navigation">
-          <a
-            className={`home-nav-link ${currentPath === "/review" ? "is-active" : ""}`}
-            href="/review"
-          >
-            Hand Review
-          </a>
-          <a
-            className={`home-nav-link ${
-              currentPath === "/supported-sites-formats" ? "is-active" : ""
-            }`}
-            href="/supported-sites-formats"
-          >
-            Supported Sites
+          <a className="home-nav-link" href="/#tools">
+            Product
           </a>
           <div className="home-nav-desktop-only">
             <LearningDropdown
@@ -170,13 +159,14 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
             className={`home-nav-link ${
               currentPath === "/how-playback-poker-works" ? "is-active" : ""
             }`}
-            href="/how-playback-poker-works"
+            href="/#how-it-works"
           >
             How It Works
           </a>
+          <a className="home-nav-link" href="/#methodology">About</a>
           {signInAction("home-nav-link")}
         </nav>
-        {reviewAction("home-button home-button-primary home-header-cta")}
+        {studySpotsAction("home-button home-button-primary home-header-cta")}
       </div>
     </header>
   );

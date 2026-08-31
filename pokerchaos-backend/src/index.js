@@ -33,6 +33,7 @@ import {
   createLearningResource,
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
+  deleteStudyReport,
   deleteTournamentPerformanceSnapshot,
   deleteTournamentUpload,
   ensureAiTrialCredits,
@@ -1656,6 +1657,49 @@ app.get(
       return res.status(500).json({
         error: "Failed to load Study Report.",
         code: "REPORT_READ_FAILED",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/study-spots/reports/:reportId",
+  requireAuth,
+  requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  async (req, res) => {
+    const parsed = studyReportIdParamSchema.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid report ID.",
+        code: "REPORT_NOT_FOUND",
+      });
+    }
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({
+        error: "Study Reports require a configured database.",
+        code: "DATABASE_UNAVAILABLE",
+      });
+    }
+    try {
+      const deleted = await deleteStudyReport(
+        req.auth?.userId || "",
+        parsed.data.reportId,
+      );
+      if (!deleted) {
+        return res.status(404).json({
+          error: "Study Report not found.",
+          code: "REPORT_NOT_FOUND",
+        });
+      }
+      return res.json({
+        ok: true,
+        deletedReportId: parsed.data.reportId,
+      });
+    } catch (error) {
+      console.error("[pokerchaos-backend] Study Report delete error", error);
+      return res.status(500).json({
+        error: "Failed to remove Study Report.",
+        code: "REPORT_DELETE_FAILED",
       });
     }
   },

@@ -1,35 +1,33 @@
 import { SignUpButton, useAuth } from "@clerk/react";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { requestLearningResources } from "../../api/aiService.js";
 import MarketingSiteShell from "./MarketingSiteShell.jsx";
+import DailyMttEdge from "./homepage/DailyMttEdge.jsx";
 import FinalCTA from "./homepage/FinalCTA.jsx";
-import FeatureCards from "./homepage/FeatureCards.jsx";
 import HomeHero from "./homepage/HomeHero.jsx";
 import HowItWorks from "./homepage/HowItWorks.jsx";
-import ProductPreview from "./homepage/ProductPreview.jsx";
+import LearningShowcase from "./homepage/LearningShowcase.jsx";
 import SeoLinkGrid from "./homepage/SeoLinkGrid.jsx";
-import SupportedSites from "./homepage/SupportedSites.jsx";
+import ToolComparison from "./homepage/ToolComparison.jsx";
+import ToolSelector from "./homepage/ToolSelector.jsx";
 import TrustSection from "./homepage/TrustSection.jsx";
 import {
-  HERO_TRUST_MARKERS,
-  HOW_IT_WORKS_STEPS,
-  PRODUCT_PREVIEW_NOTES,
-  PROBLEM_CARDS,
+  PRODUCT_LOOP_STEPS,
   SEO_LINKS,
-  SUPPORTED_FORMATS,
-  SUPPORTED_SITES,
+  STUDY_PREVIEW_SPOTS,
+  TOOL_COMPARISON_ROWS,
   TRUST_LINKS,
-  USE_CASE_CARDS,
+  selectHomepageLearningResources,
 } from "./homepage/homepageData.js";
+import "./homepage/homepage-v2.css";
 
-const HERO_IMAGE_SRC = "/images/homepage-poker-chip.png";
-const PAGE_TITLE = "Playback Poker | Review Poker Hands in Minutes";
+const PAGE_TITLE = "Playback Poker | MTT Study Spots and Tournament Review";
 const PAGE_DESCRIPTION =
-  "Upload GGPoker or PokerStars hand histories and get clear AI-powered poker reviews with street-by-street feedback, leak spotting, and practical study takeaways.";
+  "Upload a tournament poker hand history, find the decisions most worth studying, and connect your real MTT spots to practical lessons and deeper tournament review.";
 
 function upsertMetaTag({ name, property, content }) {
-  const selector = name
-    ? `meta[name="${name}"]`
-    : `meta[property="${property}"]`;
+  const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
   let metaTag = document.head.querySelector(selector);
   if (!metaTag) {
     metaTag = document.createElement("meta");
@@ -63,7 +61,6 @@ function upsertJsonLdScript(id, schema) {
 
 function setHomeMeta() {
   const pageUrl = `${window.location.origin}/`;
-
   document.title = PAGE_TITLE;
   upsertMetaTag({ name: "description", content: PAGE_DESCRIPTION });
   upsertMetaTag({ name: "robots", content: "index,follow" });
@@ -81,84 +78,90 @@ function setHomeMeta() {
     operatingSystem: "Web",
     url: pageUrl,
     description: PAGE_DESCRIPTION,
+    audience: { "@type": "Audience", audienceType: "Tournament poker players" },
+    featureList: [
+      "Tournament hand history analysis",
+      "Ranked MTT Study Spots",
+      "LearningResource matching",
+      "Detailed tournament review",
+    ],
   });
 }
 
 export default function HomePage() {
   const { isSignedIn } = useAuth();
+  const [learningResources, setLearningResources] = useState([]);
+  const [learningStatus, setLearningStatus] = useState("loading");
 
   useEffect(() => {
     setHomeMeta();
   }, []);
 
-  const reviewAction = (className, label = "Review a Hand") =>
+  useEffect(() => {
+    let cancelled = false;
+    requestLearningResources()
+      .then((payload) => {
+        if (cancelled) return;
+        setLearningResources(payload?.resources || []);
+        setLearningStatus("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLearningStatus("error");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const featuredResources = useMemo(
+    () => selectHomepageLearningResources(learningResources),
+    [learningResources],
+  );
+  const latestDailyLesson = useMemo(
+    () => learningResources.find((resource) => String(resource?.series || "").toLowerCase().includes("daily mtt edge")) || null,
+    [learningResources],
+  );
+
+  const studyAction = (className, label = "Find My Study Spots - Free") =>
     isSignedIn ? (
-      <a className={className} href="/review">
-        {label}
-      </a>
+      <a className={className} href="/tools/study-spots">{label}</a>
     ) : (
       <SignUpButton mode="modal">
-        <button type="button" className={className}>
-          {label}
-        </button>
+        <button type="button" className={className}>{label}</button>
+      </SignUpButton>
+    );
+
+  const reviewAction = (className, label = "Try Tournament Review") =>
+    isSignedIn ? (
+      <a className={className} href="/tools/tournament-review">{label}</a>
+    ) : (
+      <SignUpButton mode="modal">
+        <button type="button" className={className}>{label}</button>
       </SignUpButton>
     );
 
   return (
-    <MarketingSiteShell currentPath="/">
-        <HomeHero
-          imageSrc={HERO_IMAGE_SRC}
-          trustMarkers={HERO_TRUST_MARKERS}
-          primaryAction={reviewAction("home-button home-button-primary")}
-          secondaryAction={
-            <a
-              className="home-button home-button-secondary"
-              href="#how-it-works"
-            >
-              See How It Works
-            </a>
-          }
-        />
-
-        <FeatureCards
-          id="problem"
-          eyebrow="Why this exists"
-          title="Poker study is too slow for most players."
-          cards={PROBLEM_CARDS}
-        />
-
-        <HowItWorks
-          steps={HOW_IT_WORKS_STEPS}
-          primaryAction={reviewAction("home-button home-button-primary")}
-        />
-
-        <ProductPreview notes={PRODUCT_PREVIEW_NOTES} />
-
-        <FeatureCards
-          id="use-cases"
-          eyebrow="Use cases"
-          title="Built for the hands you keep thinking about."
-          cards={USE_CASE_CARDS}
-          compact
-        />
-
-        <SupportedSites sites={SUPPORTED_SITES} formats={SUPPORTED_FORMATS} />
-
+    <MarketingSiteShell currentPath="/" pageClassName="home-v2">
+      <HomeHero
+        spots={STUDY_PREVIEW_SPOTS}
+        primaryAction={studyAction("home-v2-button home-v2-button-primary")}
+        secondaryAction={<a className="home-v2-button home-v2-button-secondary" href="#how-it-works">Explore Playback Poker</a>}
+      />
+      <HowItWorks steps={PRODUCT_LOOP_STEPS} />
+      <ToolSelector
+        studyAction={studyAction("home-v2-button home-v2-button-primary", "Find my Study Spots")}
+        reviewAction={reviewAction("home-v2-button home-v2-button-secondary")}
+      />
+      <LearningShowcase resources={featuredResources} status={learningStatus} />
+      <DailyMttEdge latestLesson={latestDailyLesson} />
+      <div className="home-v2-depth">
+        <ToolComparison rows={TOOL_COMPARISON_ROWS} />
         <TrustSection links={TRUST_LINKS} />
-
-        <SeoLinkGrid links={SEO_LINKS} />
-
-        <FinalCTA
-          primaryAction={reviewAction("home-button home-button-primary")}
-          secondaryAction={
-            <a
-              className="home-button home-button-secondary"
-              href="/methodology"
-            >
-              Read the Methodology
-            </a>
-          }
-        />
+      </div>
+      <SeoLinkGrid links={SEO_LINKS} />
+      <FinalCTA
+        primaryAction={studyAction("home-v2-button home-v2-button-primary")}
+        secondaryAction={<a className="home-v2-button home-v2-button-secondary" href="/learn">Explore the Learning Library</a>}
+      />
     </MarketingSiteShell>
   );
 }

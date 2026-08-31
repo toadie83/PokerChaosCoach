@@ -15,6 +15,7 @@ import {
   filterAdminLearningResources,
   learningLabel,
   learningResourceInput,
+  toggleWildcardChoice,
 } from "../lib/learningPresentation.js";
 import {
   learningImportErrorMessage,
@@ -31,7 +32,7 @@ function Field({ label, children, wide = false }) {
   return <label className={`learning-admin-field ${wide ? "learning-admin-field--wide" : ""}`}><span>{label}</span>{children}</label>;
 }
 
-function ChoiceList({ label, options, value, onChange }) {
+function ChoiceList({ label, options, value, onChange, wildcard = null }) {
   const selected = new Set(Array.isArray(value) ? value : []);
   return (
     <fieldset className="learning-admin-choices">
@@ -42,9 +43,13 @@ function ChoiceList({ label, options, value, onChange }) {
             <input
               type="checkbox"
               checked={selected.has(option)}
-              onChange={() => onChange(selected.has(option) ? value.filter((item) => item !== option) : [...value, option])}
+              onChange={() => onChange(
+                wildcard
+                  ? toggleWildcardChoice(value, option, wildcard)
+                  : selected.has(option) ? value.filter((item) => item !== option) : [...value, option],
+              )}
             />
-            <span>{learningLabel(option)}</span>
+            <span>{option === wildcard ? "Any position" : learningLabel(option)}</span>
           </label>
         ))}
       </div>
@@ -436,8 +441,8 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
               <Field label="Instagram caption" wide><textarea rows="4" value={form.instagramCaption} onChange={(event) => update("instagramCaption", event.target.value)} /></Field>
               <ChoiceList label="Secondary tags" options={allTags.filter((tag) => tag !== form.primaryTag)} value={form.secondaryTags} onChange={(value) => update("secondaryTags", value)} />
               <ChoiceList label="Stack depth" options={taxonomy?.stackDepthTags || []} value={form.stackDepthTags} onChange={(value) => update("stackDepthTags", value)} />
-              <ChoiceList label="Hero positions" options={taxonomy?.positionTags || []} value={form.heroPositionTags} onChange={(value) => update("heroPositionTags", value)} />
-              <ChoiceList label="Villain positions" options={taxonomy?.positionTags || []} value={form.villainPositionTags} onChange={(value) => update("villainPositionTags", value)} />
+              <ChoiceList label="Hero positions" options={taxonomy?.positionTags || []} value={form.heroPositionTags} onChange={(value) => update("heroPositionTags", value)} wildcard="any" />
+              <ChoiceList label="Villain positions" options={taxonomy?.positionTags || []} value={form.villainPositionTags} onChange={(value) => update("villainPositionTags", value)} wildcard="any" />
               <ChoiceList label="Opponent types" options={taxonomy?.opponentTypes || []} value={form.opponentTypeTags} onChange={(value) => update("opponentTypeTags", value)} />
               <ChoiceList label="Study Spot types" options={taxonomy?.types || []} value={form.studySpotTypes} onChange={(value) => update("studySpotTypes", value)} />
             </div>

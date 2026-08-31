@@ -5,6 +5,15 @@ export function learningLabel(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+export function toggleWildcardChoice(values, option, wildcard = "any") {
+  const current = Array.isArray(values) ? values : [];
+  if (option === wildcard) return current.includes(wildcard) ? [] : [wildcard];
+  const withoutWildcard = current.filter((value) => value !== wildcard);
+  return withoutWildcard.includes(option)
+    ? withoutWildcard.filter((value) => value !== option)
+    : [...withoutWildcard, option];
+}
+
 export function groupLearningResources(resources) {
   const grouped = new Map();
   for (const resource of Array.isArray(resources) ? resources : []) {
@@ -84,10 +93,12 @@ export function emptyLearningResource() {
 
 export function learningResourceInput(resource = {}) {
   const defaults = emptyLearningResource();
-  return Object.fromEntries(
+  const input = Object.fromEntries(
     Object.keys(defaults).map((key) => [
       key,
       resource[key] === undefined ? defaults[key] : resource[key],
     ]),
   );
+  input.instagramUrl = resource.instagramUrl || "";
+  return input;
 }

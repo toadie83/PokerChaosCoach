@@ -139,11 +139,12 @@ export default function StudyReportPage({ routePath, navigate }) {
               <h2 id="study-queue-title">Study Queue</h2>
               <button type="button" onClick={() => navigate("/study")}>Open My Study</button>
             </div>
-            <div className="study-spot-list">
+            <div className="study-spot-list study-spot-list--report">
               {spots.map((spot) => (
                 <StudySpotCard
                   key={spot.id}
                   spot={spot}
+                  compact
                   saved={savedIds.has(spot.id)}
                   saving={savingId === spot.id}
                   onSave={saveSpot}

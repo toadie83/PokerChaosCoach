@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "external_id": "daily-mtt-edge-008",
+  "series": "daily-mtt-edge",
+  "lesson_number": "008",
+  "date": "2026-09-05",
+  "title": "Review the decision pattern, not just the seat",
+  "short_social_title": "The pattern matters more than the seat",
+  "category": "study",
+  "primary_study_tag": "review",
+  "secondary_study_tags": ["hand-review", "leak-detection"],
+  "stack_depth_bands": [],
+  "hero_positions": ["any"],
+  "villain_positions": ["any"],
+  "opponent_types": [],
+  "study_spot_types": ["recurring_pattern"],
+  "summary": "Review repeated decision patterns across positions when the lesson is not tied to a specific seat.",
+  "canonical_lesson": "A recurring decision pattern can be strategically useful across every table position. Treat the lesson as position-independent instead of inventing an unknown seat.",
+  "example_spot": "The same decision pattern appears in several hands with Hero and Villain occupying different seats.",
+  "common_mistake": "Restricting a general lesson to one observed position and missing equivalent decisions elsewhere.",
+  "better_play": "Match the strategic pattern across positions when position is intentionally not a constraint.",
+  "when_to_use": ["The strategic lesson applies regardless of seat"],
+  "when_not_to_use": ["Position materially changes the recommended range or action"],
+  "one_thing_to_remember": "Any position is a wildcard; unknown position is missing information.",
+  "instagram_caption": "",
+  "publication_status": "published",
+  "instagram_url": null,
+  "taxonomy_flags": [],
+  "source_paths": {
+    "slug": "008-position-independent-pattern"
+  },
+  "published_at": null,
+  "resource_type": "quick-lesson",
+  "slug": "008-position-independent-pattern",
+  "website": {
+    "status": "not_imported",
+    "published_at": null,
+    "url": null
+  },
+  "instagram": {
+    "status": "not_published",
+    "published_at": null,
+    "url": null
+  }
+}

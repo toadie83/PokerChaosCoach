@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   matchLearningResources,
   scoreLearningResource,
 } from "../src/studySpots/resourceMatcher.js";
+import { validateLearningResourceImport } from "../src/studySpots/learningResourceValidation.js";
 
 const spot = {
   category: "preflop",
@@ -114,4 +116,33 @@ test("every controlled context factor contributes deterministically", () => {
     });
     assert.ok(mismatched.score < exact.score, JSON.stringify(override));
   }
+});
+
+test("Daily MTT Edge 008 any positions match concrete positions without a quality penalty", () => {
+  const fixtureUrl = new URL("./fixtures/daily-mtt-edge-008.position-wildcard.json", import.meta.url);
+  const parsed = validateLearningResourceImport(JSON.parse(readFileSync(fixtureUrl, "utf8")));
+  assert.equal(parsed.success, true);
+
+  const concreteSpot = {
+    category: "study",
+    primaryTag: "review",
+    secondaryTags: ["hand-review"],
+    tags: ["review", "hand-review"],
+    type: "recurring_pattern",
+    stackDepthTag: "25-40",
+    heroPosition: "CO",
+    villainPosition: "BB",
+    opponentType: "aggressive",
+  };
+  const wildcard = scoreLearningResource(concreteSpot, parsed.data);
+  const exact = scoreLearningResource(concreteSpot, {
+    ...parsed.data,
+    heroPositionTags: ["CO"],
+    villainPositionTags: ["BB"],
+  });
+
+  assert.equal(wildcard.factors.heroPosition, 1);
+  assert.equal(wildcard.factors.villainPosition, 1);
+  assert.equal(wildcard.score, exact.score);
+  assert.equal(matchLearningResources(concreteSpot, [parsed.data])[0].quality, "recommended");
 });

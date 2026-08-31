@@ -40,6 +40,7 @@ export const STACK_DEPTH_TAGS = Object.freeze(["0-10", "10-15", "15-25", "25-40"
 export const POSITION_TAGS = Object.freeze([
   "UTG", "UTG+1", "MP", "LJ", "HJ", "CO", "BTN", "SB", "BB", "unknown",
 ]);
+export const LEARNING_RESOURCE_POSITION_TAGS = Object.freeze([...POSITION_TAGS, "any"]);
 export const OPPONENT_TYPES = Object.freeze([
   "unknown", "recreational", "tight", "loose", "aggressive", "passive",
   "calling-station", "overfolder", "underbluffer", "maniac", "nit", "limper",
@@ -55,6 +56,7 @@ const CATEGORY_SET = new Set(STUDY_SPOT_CATEGORIES);
 const TAG_SET = new Set(Object.values(STUDY_SPOT_TAGS).flat());
 const STACK_SET = new Set(STACK_DEPTH_TAGS);
 const POSITION_SET = new Set(POSITION_TAGS);
+const RESOURCE_POSITION_SET = new Set(LEARNING_RESOURCE_POSITION_TAGS);
 const OPPONENT_SET = new Set(OPPONENT_TYPES);
 const RESOURCE_TYPE_SET = new Set(LEARNING_RESOURCE_TYPES);
 const STATUS_SET = new Set(LEARNING_RESOURCE_STATUSES);
@@ -77,6 +79,11 @@ function cleanString(value) {
 function cleanStringList(values) {
   const list = Array.isArray(values) ? values : [];
   return Array.from(new Set(list.map(cleanString).filter(Boolean)));
+}
+
+function cleanResourcePositionTags(values) {
+  const positions = uniqueKnownValues(values, RESOURCE_POSITION_SET);
+  return positions.includes("any") ? ["any"] : positions;
 }
 
 export function getStackDepthTag(stackDepthBb) {
@@ -129,7 +136,7 @@ export function sanitizeLearningResource(input = {}) {
   ).filter((tag) => tag !== primaryTag);
   const tags = primaryTag ? [primaryTag, ...secondaryTags] : secondaryTags;
   const slug = cleanString(input.slug);
-  const heroPositionTags = uniqueKnownValues(input.heroPositionTags || input.positionTags, POSITION_SET);
+  const heroPositionTags = cleanResourcePositionTags(input.heroPositionTags || input.positionTags);
   const opponentTypeTags = uniqueKnownValues(input.opponentTypeTags || input.opponentTags, OPPONENT_SET);
   const publishedAt = input.publishedAt || input.publishDate || null;
 
@@ -152,7 +159,7 @@ export function sanitizeLearningResource(input = {}) {
     tags,
     stackDepthTags: uniqueKnownValues(input.stackDepthTags, STACK_SET),
     heroPositionTags,
-    villainPositionTags: uniqueKnownValues(input.villainPositionTags, POSITION_SET),
+    villainPositionTags: cleanResourcePositionTags(input.villainPositionTags),
     opponentTypeTags,
     studySpotTypes: uniqueKnownValues(input.studySpotTypes, TYPE_SET),
     positionTags: heroPositionTags,
@@ -169,7 +176,7 @@ export function sanitizeLearningResource(input = {}) {
     publishedAt,
     publishDate: publishedAt,
     instagramCaption: cleanString(input.instagramCaption),
-    instagramUrl: cleanString(input.instagramUrl),
+    instagramUrl: cleanString(input.instagramUrl) || null,
     sourceUrl: cleanString(input.sourceUrl || input.url),
     url: cleanString(input.url) || (slug ? `/learn/${slug}` : ""),
     priority: Math.max(0, Math.min(100, Number(input.priority) || 0)),
@@ -185,7 +192,7 @@ export function getStudySpotTaxonomy() {
       Object.entries(STUDY_SPOT_TAGS).map(([category, tags]) => [category, [...tags]]),
     ),
     stackDepthTags: [...STACK_DEPTH_TAGS],
-    positionTags: [...POSITION_TAGS],
+    positionTags: [...LEARNING_RESOURCE_POSITION_TAGS],
     opponentTypes: [...OPPONENT_TYPES],
     resourceTypes: [...LEARNING_RESOURCE_TYPES],
     resourceStatuses: [...LEARNING_RESOURCE_STATUSES],

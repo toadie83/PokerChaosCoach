@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   LEARNING_RESOURCE_STATUSES,
   LEARNING_RESOURCE_TYPES,
+  LEARNING_RESOURCE_POSITION_TAGS,
   OPPONENT_TYPES,
-  POSITION_TAGS,
   STACK_DEPTH_TAGS,
   STUDY_SPOT_CATEGORIES,
   STUDY_SPOT_TAGS,
@@ -21,6 +21,11 @@ const slugSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase words separated by hyphens.");
 const optionalText = (max) => z.string().trim().max(max).optional().default("");
 const stringList = z.array(z.string().trim().min(1).max(1000)).max(20).optional().default([]);
+const nullableUrl = z
+  .union([z.string().trim().url().max(500), z.string().trim().max(0), z.null()])
+  .optional()
+  .default(null)
+  .transform((value) => value || null);
 
 const externalLearningResourceSchemaV1 = z
   .object({
@@ -49,7 +54,7 @@ const externalLearningResourceSchemaV1 = z
     one_thing_to_remember: z.string().optional().default(""),
     instagram_caption: z.string().optional().default(""),
     publication_status: z.string().optional().default("draft"),
-    instagram_url: z.string().optional().default(""),
+    instagram_url: z.string().nullable().optional().default(null),
     taxonomy_flags: z.array(z.string()).optional().default([]),
     source_paths: z.record(z.unknown()).optional().default({}),
     published_at: z.string().nullable().optional(),
@@ -64,11 +69,15 @@ const externalPublishingChannelSchema = z
   })
   .strict();
 
+const externalWebsiteChannelSchema = externalPublishingChannelSchema.extend({
+  importedAt: z.string().datetime({ offset: true }).nullable().optional(),
+});
+
 const externalLearningResourceSchemaV2 = externalLearningResourceSchemaV1.extend({
   schema_version: z.literal(2),
   resource_type: z.string().trim().min(1).max(80),
   slug: slugSchema,
-  website: externalPublishingChannelSchema,
+  website: externalWebsiteChannelSchema,
   instagram: externalPublishingChannelSchema,
 });
 
@@ -100,6 +109,11 @@ function isoDateTime(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : source;
 }
 
+function normalizeNullableUrl(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || null;
+}
+
 function normalizeSeries(value) {
   return kebabCase(value) === "daily-mtt-edge" ? "Daily MTT Edge" : String(value || "").trim();
 }
@@ -111,7 +125,9 @@ function normalizeCategory(value) {
 }
 
 function normalizePosition(value) {
-  const normalized = String(value || "").trim().toUpperCase().replace(/^UTG1$/, "UTG+1");
+  const source = String(value || "").trim();
+  if (source.toLowerCase() === "any") return "any";
+  const normalized = source.toUpperCase().replace(/^UTG1$/, "UTG+1");
   return normalized === "UNKNOWN" ? "unknown" : normalized;
 }
 
@@ -163,7 +179,7 @@ function normalizeExternalLearningResourceV1(input) {
       status: kebabCase(input.publication_status).replace(/-/g, "_"),
       publishedAt: isoDateTime(input.published_at || input.date),
       instagramCaption: input.instagram_caption,
-      instagramUrl: input.instagram_url,
+      instagramUrl: normalizeNullableUrl(input.instagram_url),
       sourceUrl: "",
       priority: 0,
     },
@@ -179,9 +195,9 @@ function normalizeExternalLearningResourceV2(input) {
   const resourceType = kebabCase(input.resource_type).replace(/-/g, "_");
   normalized.resource.slug = kebabCase(input.slug);
   normalized.resource.resourceType = resourceType;
-  normalized.resource.instagramUrl = String(
-    input.instagram.url || input.instagram_url || "",
-  ).trim();
+  normalized.resource.instagramUrl = normalizeNullableUrl(
+    input.instagram.url || input.instagram_url,
+  );
   normalized.resource.publishedAt = isoDateTime(input.website.published_at);
   return normalized;
 }
@@ -200,8 +216,8 @@ export const learningResourceInputSchema = z
     primaryTag: z.enum(ALL_TAGS),
     secondaryTags: z.array(z.enum(ALL_TAGS)).max(12).optional().default([]),
     stackDepthTags: z.array(z.enum(STACK_DEPTH_TAGS)).max(STACK_DEPTH_TAGS.length).optional().default([]),
-    heroPositionTags: z.array(z.enum(POSITION_TAGS)).max(POSITION_TAGS.length).optional().default([]),
-    villainPositionTags: z.array(z.enum(POSITION_TAGS)).max(POSITION_TAGS.length).optional().default([]),
+    heroPositionTags: z.array(z.enum(LEARNING_RESOURCE_POSITION_TAGS)).max(LEARNING_RESOURCE_POSITION_TAGS.length).optional().default([]),
+    villainPositionTags: z.array(z.enum(LEARNING_RESOURCE_POSITION_TAGS)).max(LEARNING_RESOURCE_POSITION_TAGS.length).optional().default([]),
     opponentTypeTags: z.array(z.enum(OPPONENT_TYPES)).max(OPPONENT_TYPES.length).optional().default([]),
     studySpotTypes: z.array(z.enum(STUDY_SPOT_TYPES)).max(STUDY_SPOT_TYPES.length).optional().default([]),
     body: z.string().trim().min(1).max(30000),
@@ -214,7 +230,7 @@ export const learningResourceInputSchema = z
     status: z.enum(LEARNING_RESOURCE_STATUSES).optional().default("draft"),
     publishedAt: z.string().datetime({ offset: true }).nullable().optional(),
     instagramCaption: optionalText(2200),
-    instagramUrl: z.string().trim().url().max(500).or(z.literal("")).optional().default(""),
+    instagramUrl: nullableUrl,
     sourceUrl: z.string().trim().url().max(500).or(z.literal("")).optional().default(""),
     priority: z.number().int().min(0).max(100).optional().default(0),
   })
@@ -335,7 +351,7 @@ export function learningResourceInputFromCanonical(resource = {}) {
       ? new Date(resource.publishedAt).toISOString()
       : null,
     instagramCaption: resource.instagramCaption || "",
-    instagramUrl: resource.instagramUrl || "",
+    instagramUrl: normalizeNullableUrl(resource.instagramUrl),
     sourceUrl: resource.sourceUrl || "",
     priority: Number(resource.priority) || 0,
   };

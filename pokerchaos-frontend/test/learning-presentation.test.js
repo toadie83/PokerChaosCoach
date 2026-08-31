@@ -6,6 +6,7 @@ import {
   groupLearningResources,
   learningResourceInput,
   learningResourceSlugFromPath,
+  toggleWildcardChoice,
 } from "../src/lib/learningPresentation.js";
 
 test("admin library filters lessons by identity, category, and publication state", () => {
@@ -47,4 +48,19 @@ test("admin resource input strips read-only API fields", () => {
   assert.equal(input.title, "Example");
   assert.equal("id" in input, false);
   assert.equal("canonicalPath" in input, false);
+});
+
+test("admin resource input displays a nullable Instagram URL as an empty field", () => {
+  assert.equal(learningResourceInput({ instagramUrl: null }).instagramUrl, "");
+  assert.equal(
+    learningResourceInput({ instagramUrl: "https://www.instagram.com/p/example/" }).instagramUrl,
+    "https://www.instagram.com/p/example/",
+  );
+});
+
+test("admin position choices keep any mutually exclusive from concrete positions", () => {
+  assert.deepEqual(toggleWildcardChoice([], "any"), ["any"]);
+  assert.deepEqual(toggleWildcardChoice(["any"], "BB"), ["BB"]);
+  assert.deepEqual(toggleWildcardChoice(["BB"], "any"), ["any"]);
+  assert.deepEqual(toggleWildcardChoice(["any"], "any"), []);
 });
