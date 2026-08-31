@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   filterAdminLearningResources,
+  getLegacyLearningResourceRedirect,
   groupLearningResources,
   learningResourceInput,
   learningResourceSlugFromPath,
@@ -26,6 +27,23 @@ test("canonical learning paths resolve only one lesson slug", () => {
   assert.equal(learningResourceSlugFromPath("/learn/big-blind-defence"), "big-blind-defence");
   assert.equal(learningResourceSlugFromPath("/learn"), "");
   assert.equal(learningResourceSlugFromPath("/learn/a/extra"), "");
+});
+
+test("legacy LearningResource article pages redirect to the full article route", () => {
+  assert.equal(
+    getLegacyLearningResourceRedirect(
+      { resourceType: "article", canonicalPath: "/articles/how-pros-review-mtt-sessions" },
+      "/learn/how-pros-review-mtt-sessions",
+    ),
+    "/articles/how-pros-review-mtt-sessions",
+  );
+  assert.equal(
+    getLegacyLearningResourceRedirect(
+      { resourceType: "quick_lesson", canonicalPath: "/learn/dont-play-the-last-hand" },
+      "/learn/dont-play-the-last-hand",
+    ),
+    "",
+  );
 });
 
 test("resource grouping preserves API order within each category", () => {

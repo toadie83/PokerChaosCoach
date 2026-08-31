@@ -14,7 +14,7 @@ function LearningCard({ resource }) {
       <span className="home-v2-learning-category">{learningLabel(resource.category)}</span>
       <h3><a href={resource.canonicalPath}>{resource.title}</a></h3>
       <p>{resource.description}</p>
-      <a href={resource.canonicalPath}>Read lesson</a>
+      <a href={resource.canonicalPath}>{isQuickLesson ? "Read lesson" : "Read article"}</a>
     </article>
   );
 }

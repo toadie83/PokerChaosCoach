@@ -7,7 +7,9 @@ import {
 } from "./articleCatalog.js";
 
 function upsertMetaTag({ name, property, content }) {
-  const selector = name ? `meta[name="${name}"]` : `meta[property="${property}"]`;
+  const selector = name
+    ? `meta[name="${name}"]`
+    : `meta[property="${property}"]`;
   let metaTag = document.head.querySelector(selector);
   if (!metaTag) {
     metaTag = document.createElement("meta");
@@ -42,7 +44,8 @@ function upsertJsonLdScript(id, schema) {
 export default function ArticleDraftPage({ slug }) {
   const article = getArticleBySlug(slug);
   const [walkthroughIndex, setWalkthroughIndex] = useState(0);
-  const [isWalkthroughImageExpanded, setIsWalkthroughImageExpanded] = useState(false);
+  const [isWalkthroughImageExpanded, setIsWalkthroughImageExpanded] =
+    useState(false);
   const walkthroughSteps = Array.isArray(article?.walkthroughSteps)
     ? article.walkthroughSteps
     : [];
@@ -69,7 +72,9 @@ export default function ArticleDraftPage({ slug }) {
     const pagePath = buildArticlePath(article.slug);
     const pageUrl = `${window.location.origin}${pagePath}`;
     const pageTitle = `${article.title} | Playback Poker`;
-    const robotsValue = article.publishReady ? "index,follow" : "noindex,follow";
+    const robotsValue = article.publishReady
+      ? "index,follow"
+      : "noindex,follow";
 
     document.title = pageTitle;
     upsertMetaTag({ name: "description", content: article.excerpt });
@@ -129,13 +134,16 @@ export default function ArticleDraftPage({ slug }) {
       <section className="home-hero learning-story-hero">
         <div className="learning-story-copy">
           <p className="marketing-kicker">
-            {article.publishReady ? article.cluster : `${article.cluster} Draft`}
+            {article.publishReady
+              ? article.cluster
+              : `${article.cluster} Draft`}
           </p>
           <h1 className="marketing-title">{article.title}</h1>
           <p className="marketing-subtitle">{article.excerpt}</p>
           <div className="marketing-proof-row">
             <span className="marketing-pill">
-              Status: {article.publishReady ? "Publish Ready" : "Draft Framework"}
+              Status:{" "}
+              {article.publishReady ? "Publish Ready" : "Draft Framework"}
             </span>
             <span className="marketing-pill">
               Robots: {article.publishReady ? "index,follow" : "noindex,follow"}
@@ -162,10 +170,6 @@ export default function ArticleDraftPage({ slug }) {
             </span>
             <strong>{LANDING_PAGE_LABELS[article.primaryLandingPath]}</strong>
           </div>
-          <p className="learning-story-aside-copy">
-            This article now sits inside the same lighter product language as
-            the homepage and learning hub.
-          </p>
         </div>
       </section>
 
@@ -173,7 +177,9 @@ export default function ArticleDraftPage({ slug }) {
         <section className="home-section learning-story-section">
           <h2>{article.walkthroughTitle || "How-To Walkthrough"}</h2>
           {article.walkthroughIntro ? (
-            <p className="trust-walkthrough-intro">{article.walkthroughIntro}</p>
+            <p className="trust-walkthrough-intro">
+              {article.walkthroughIntro}
+            </p>
           ) : null}
 
           <div className="trust-walkthrough-stage">
@@ -181,7 +187,9 @@ export default function ArticleDraftPage({ slug }) {
               <button
                 type="button"
                 className="trust-walkthrough-media-trigger"
-                onClick={() => setIsWalkthroughImageExpanded((current) => !current)}
+                onClick={() =>
+                  setIsWalkthroughImageExpanded((current) => !current)
+                }
                 aria-label="Expand walkthrough image"
               >
                 <picture>
@@ -313,8 +321,12 @@ export default function ArticleDraftPage({ slug }) {
       <section className="home-section learning-story-section">
         <h2>Internal Links For This Article</h2>
         <div className="article-link-stack">
-          <a className="article-link article-link-strong" href={article.primaryLandingPath}>
-            Primary landing page: {LANDING_PAGE_LABELS[article.primaryLandingPath]}
+          <a
+            className="article-link article-link-strong"
+            href={article.primaryLandingPath}
+          >
+            Primary landing page:{" "}
+            {LANDING_PAGE_LABELS[article.primaryLandingPath]}
           </a>
           <a className="article-link" href="/">
             Homepage: Playback Poker
