@@ -1,4 +1,5 @@
 import pg from "pg";
+import { getLearningResourceCanonicalPath } from "./studySpots/taxonomy.js";
 
 const { Pool } = pg;
 
@@ -717,13 +718,18 @@ export async function deleteTournamentUpload(userId, tournamentId) {
 
 function toLearningResourcePayload(row) {
   if (!row) return null;
+  const canonicalPath = getLearningResourceCanonicalPath({
+    slug: row.slug,
+    resourceType: row.content_type,
+    sourceUrl: row.source_url,
+  });
   return {
     id: row.id,
     externalId: row.external_id || null,
     series: row.series || null,
     lessonNumber: row.lesson_number === null ? null : Number(row.lesson_number),
     slug: row.slug,
-    canonicalPath: `/learn/${row.slug}`,
+    canonicalPath,
     title: row.title,
     shortTitle: row.short_title || "",
     description: row.description,
@@ -772,7 +778,7 @@ function toLearningResourcePayload(row) {
       ? row.instagram_url.trim()
       : null,
     sourceUrl: row.source_url || "",
-    url: `/learn/${row.slug}`,
+    url: canonicalPath,
     priority: Number(row.priority) || 0,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -784,7 +790,7 @@ function learningResourceWriteValues(resource) {
   const publishedAt = published
     ? resource.publishedAt || new Date().toISOString()
     : null;
-  const canonicalPath = `/learn/${resource.slug}`;
+  const canonicalPath = getLearningResourceCanonicalPath(resource);
   return [
     resource.id,
     resource.externalId || null,

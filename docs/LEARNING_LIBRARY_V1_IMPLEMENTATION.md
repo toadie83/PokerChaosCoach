@@ -5,7 +5,7 @@ This checklist implements the goal in [`learning_library_v1.md`](./learning_libr
 ## Architecture Decisions
 
 - `LearningResource` is the canonical content record. Social posts and other distribution formats are optional metadata, not the resource identity.
-- Public canonical URLs are `/learn/:slug` and remain stable when external distribution URLs change.
+- Quick Lesson canonical URLs are `/learn/:slug`. Article resources backed by an existing same-site full article use `/articles/:slug`; the LearningResource retains taxonomy and matching metadata without duplicating the editorial body.
 - Study Spots produces controlled taxonomy and context first. `LearningResourceMatcher` is a separate deterministic stage.
 - Resource types are `quick_lesson`, `article`, `guide`, `video`, and `drill`.
 - Publication states are `draft` and `published`; only published records appear in public APIs or Study Spots matching.
@@ -55,7 +55,7 @@ This checklist implements the goal in [`learning_library_v1.md`](./learning_libr
 - [x] Add a public published-resource catalogue endpoint.
 - [x] Add a public published-resource lookup by slug.
 - [x] Return related published lessons without exposing drafts.
-- [x] Return canonical `/learn/:slug` paths in API payloads and Study Spot matches.
+- [x] Return resource-type-aware canonical paths in API payloads and Study Spot matches (`/learn/:slug` for lessons, existing `/articles/:slug` for article-backed resources).
 
 ## Study Spots Integration
 

@@ -9,6 +9,22 @@ export function isQuickLearningResource(resource) {
   return resource?.resourceType === "quick_lesson" || resource?.contentType === "quick_lesson";
 }
 
+export function isArticleLearningResource(resource) {
+  return resource?.resourceType === "article" || resource?.contentType === "article";
+}
+
+export function getLegacyLearningResourceRedirect(resource, currentPath = "") {
+  const canonicalPath = String(resource?.canonicalPath || "").trim();
+  if (
+    !isArticleLearningResource(resource) ||
+    !canonicalPath.startsWith("/articles/") ||
+    !String(currentPath).startsWith("/learn/")
+  ) {
+    return "";
+  }
+  return canonicalPath;
+}
+
 export function toggleWildcardChoice(values, option, wildcard = "any") {
   const current = Array.isArray(values) ? values : [];
   if (option === wildcard) return current.includes(wildcard) ? [] : [wildcard];

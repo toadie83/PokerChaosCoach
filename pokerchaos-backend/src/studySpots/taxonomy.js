@@ -60,6 +60,7 @@ const RESOURCE_POSITION_SET = new Set(LEARNING_RESOURCE_POSITION_TAGS);
 const OPPONENT_SET = new Set(OPPONENT_TYPES);
 const RESOURCE_TYPE_SET = new Set(LEARNING_RESOURCE_TYPES);
 const STATUS_SET = new Set(LEARNING_RESOURCE_STATUSES);
+const PLAYBACK_POKER_HOSTS = new Set(["playbackpoker.com", "www.playbackpoker.com"]);
 const LEGACY_RESOURCE_TYPE_MAP = Object.freeze({
   daily_edge: "quick_lesson",
   interactive: "drill",
@@ -136,6 +137,7 @@ export function sanitizeLearningResource(input = {}) {
   ).filter((tag) => tag !== primaryTag);
   const tags = primaryTag ? [primaryTag, ...secondaryTags] : secondaryTags;
   const slug = cleanString(input.slug);
+  const sourceUrl = cleanString(input.sourceUrl || input.url);
   const heroPositionTags = cleanResourcePositionTags(input.heroPositionTags || input.positionTags);
   const opponentTypeTags = uniqueKnownValues(input.opponentTypeTags || input.opponentTags, OPPONENT_SET);
   const publishedAt = input.publishedAt || input.publishDate || null;
@@ -147,7 +149,7 @@ export function sanitizeLearningResource(input = {}) {
     lessonNumber: Number.isInteger(Number(input.lessonNumber)) && Number(input.lessonNumber) > 0
       ? Number(input.lessonNumber) : null,
     slug,
-    canonicalPath: slug ? `/learn/${slug}` : "",
+    canonicalPath: getLearningResourceCanonicalPath({ slug, resourceType, sourceUrl }),
     title: cleanString(input.title),
     shortTitle: cleanString(input.shortTitle),
     description: cleanString(input.description),
@@ -177,12 +179,29 @@ export function sanitizeLearningResource(input = {}) {
     publishDate: publishedAt,
     instagramCaption: cleanString(input.instagramCaption),
     instagramUrl: cleanString(input.instagramUrl) || null,
-    sourceUrl: cleanString(input.sourceUrl || input.url),
+    sourceUrl,
     url: cleanString(input.url) || (slug ? `/learn/${slug}` : ""),
     priority: Math.max(0, Math.min(100, Number(input.priority) || 0)),
     createdAt: input.createdAt || null,
     updatedAt: input.updatedAt || null,
   };
+}
+
+export function getLearningResourceCanonicalPath({ slug, resourceType, sourceUrl } = {}) {
+  const normalizedSlug = cleanString(slug);
+  const learningPath = normalizedSlug ? `/learn/${normalizedSlug}` : "";
+  if (!normalizedSlug || resourceType !== "article" || !sourceUrl) return learningPath;
+
+  try {
+    const source = String(sourceUrl).trim();
+    const parsed = new URL(source, "https://www.playbackpoker.com");
+    const isSameSite = source.startsWith("/") || PLAYBACK_POKER_HOSTS.has(parsed.hostname.toLowerCase());
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    const expectedPath = `/articles/${normalizedSlug}`;
+    return isSameSite && pathname === expectedPath ? expectedPath : learningPath;
+  } catch {
+    return learningPath;
+  }
 }
 
 export function getStudySpotTaxonomy() {

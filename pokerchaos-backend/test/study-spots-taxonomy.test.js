@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  getLearningResourceCanonicalPath,
   getStackDepthTag,
   getStudySpotTaxonomy,
   sanitizeLearningResource,
@@ -80,5 +81,47 @@ test("V1 seed contains only real published study resources", () => {
       resource.slug.includes("export"),
     ),
     false,
+  );
+});
+
+test("article-backed resources resolve to their existing full article route", () => {
+  assert.equal(
+    getLearningResourceCanonicalPath({
+      slug: "how-pros-review-mtt-sessions",
+      resourceType: "article",
+      sourceUrl: "https://www.playbackpoker.com/articles/how-pros-review-mtt-sessions",
+    }),
+    "/articles/how-pros-review-mtt-sessions",
+  );
+  assert.equal(
+    LEARNING_RESOURCE_SEED.find(({ slug }) => slug === "how-pros-review-mtt-sessions")?.canonicalPath,
+    "/articles/how-pros-review-mtt-sessions",
+  );
+});
+
+test("article routing fails closed for external, mismatched, and non-article sources", () => {
+  assert.equal(
+    getLearningResourceCanonicalPath({
+      slug: "example",
+      resourceType: "article",
+      sourceUrl: "https://example.com/articles/example",
+    }),
+    "/learn/example",
+  );
+  assert.equal(
+    getLearningResourceCanonicalPath({
+      slug: "example",
+      resourceType: "article",
+      sourceUrl: "/articles/something-else",
+    }),
+    "/learn/example",
+  );
+  assert.equal(
+    getLearningResourceCanonicalPath({
+      slug: "example",
+      resourceType: "quick_lesson",
+      sourceUrl: "/articles/example",
+    }),
+    "/learn/example",
   );
 });

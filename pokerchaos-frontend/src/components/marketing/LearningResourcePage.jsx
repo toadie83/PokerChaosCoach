@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { requestLearningResource } from "../../api/aiService.js";
 import {
+  getLegacyLearningResourceRedirect,
   isQuickLearningResource,
   learningLabel,
   learningResourceSlugFromPath,
@@ -22,6 +23,11 @@ export default function LearningResourcePage({ routePath = window.location.pathn
     requestLearningResource(slug)
       .then((result) => {
         if (cancelled) return;
+        const redirectPath = getLegacyLearningResourceRedirect(result.resource, routePath);
+        if (redirectPath) {
+          window.location.replace(redirectPath);
+          return;
+        }
         setPayload(result);
         setStatus("ready");
         setLearningPageMeta({
@@ -39,7 +45,7 @@ export default function LearningResourcePage({ routePath = window.location.pathn
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [routePath, slug]);
 
   if (status !== "ready") {
     return (
