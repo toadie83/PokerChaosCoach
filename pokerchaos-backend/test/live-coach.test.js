@@ -573,6 +573,143 @@ test("live Coach fallback remains position-aware when a model response is unusab
   );
 });
 
+test("20 BB BTN fallback uses the exact RFI anchor instead of folding", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "As", card2: "3h" },
+    openSizeBB: 2.2,
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      tableSize: 8,
+      decisionKind: "unopened",
+      heroSeat: "BTN",
+      effectiveStackBB: 20,
+      legalActions: ["fold", "open", "jam"],
+      heroCards: ["As", "3h"],
+    },
+  };
+  const guidance = __liveCoachTestables.buildLivePreflopGuidance(context);
+  const fallback = __liveCoachTestables.liveCoachFallbackAction(
+    context.decisionNode.legalActions,
+    guidance,
+  );
+  const result = __liveCoachTestables.buildResponse(
+    null,
+    completion,
+    "Balance range discipline.",
+    fallback,
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(guidance.deterministicAnchor.handCode, "A3o");
+  assert.equal(fallback, "open");
+  assert.equal(result.hero_action, "open");
+  assert.equal(result.sizing_bb, 2.2);
+  assert.equal(result.fallback_source, "live_preflop_anchor");
+  assert.match(result.reasoning, /inside the conservative BTN first-in/i);
+});
+
+test("20 BB BB fallback preserves a priced Q9s defense", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "Qs", card2: "9s" },
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      tableSize: 8,
+      decisionKind: "facing_open",
+      heroSeat: "BB",
+      opponentSeat: "BTN",
+      effectiveStackBB: 20,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+      heroCards: ["Qs", "9s"],
+      facingAction: {
+        type: "open",
+        actorSeat: "BTN",
+        toAmountBB: 2.2,
+        callAmountBB: 1.2,
+      },
+    },
+  };
+  const guidance = __liveCoachTestables.buildLivePreflopGuidance(context);
+  const fallback = __liveCoachTestables.liveCoachFallbackAction(
+    context.decisionNode.legalActions,
+    guidance,
+  );
+  const result = __liveCoachTestables.buildResponse(
+    null,
+    completion,
+    "Balance range discipline.",
+    fallback,
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(fallback, "call");
+  assert.equal(result.hero_action, "call");
+  assert.equal(result.sizing_bb, 1.2);
+  assert.equal(result.fallback_source, "live_preflop_anchor");
+});
+
+test("selective SB blocker fallback produces a coherent 3-bet size", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "As", card2: "4s" },
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      tableSize: 8,
+      decisionKind: "facing_open",
+      heroSeat: "SB",
+      opponentSeat: "BTN",
+      effectiveStackBB: 40,
+      maxHeroTotalToBB: 40,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+      heroCards: ["As", "4s"],
+      facingAction: {
+        type: "open",
+        actorSeat: "BTN",
+        toAmountBB: 2.2,
+        callAmountBB: 1.7,
+      },
+    },
+  };
+  const guidance = __liveCoachTestables.buildLivePreflopGuidance(context);
+  const fallback = __liveCoachTestables.liveCoachFallbackAction(
+    context.decisionNode.legalActions,
+    guidance,
+  );
+  const result = __liveCoachTestables.buildResponse(
+    null,
+    completion,
+    "Fallback",
+    fallback,
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(fallback, "3-bet");
+  assert.equal(result.hero_action, "3-bet");
+  assert.equal(result.sizing_bb, 7.7);
+  assert.equal(result.fallback_source, "live_preflop_anchor");
+});
+
+test("structural range labels no longer call suited aces or small pairs trash", () => {
+  assert.notEqual(
+    __liveCoachTestables.categorizeRangeHand("As4s").tier,
+    "trash",
+  );
+  assert.notEqual(
+    __liveCoachTestables.categorizeRangeHand("4s4h").tier,
+    "trash",
+  );
+});
+
 test("Cash Game Crusher rules cover range construction across the full hand lifecycle", () => {
   const rules = __liveCoachTestables.cashGameLifecycleRules;
   assert.match(rules, /linear monetary value/i);

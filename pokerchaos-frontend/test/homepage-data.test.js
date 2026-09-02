@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  STUDY_PREVIEW_SPOTS,
+  TOURNAMENT_ANALYSIS_STEPS,
   isQuickLearningResource,
   selectHomepageLearningResources,
 } from "../src/components/marketing/homepage/homepageData.js";
@@ -36,4 +38,28 @@ test("homepage distinguishes quick lessons from long-form articles", () => {
   assert.equal(isQuickLearningResource({ contentType: "quick_lesson" }), true);
   assert.equal(isQuickLearningResource({ resourceType: "article" }), false);
   assert.equal(isQuickLearningResource(null), false);
+});
+
+test("homepage study plan preview stays concise and lesson-led", () => {
+  assert.equal(STUDY_PREVIEW_SPOTS.length, 3);
+  for (const spot of STUDY_PREVIEW_SPOTS) {
+    assert.ok(spot.category);
+    assert.ok(spot.context);
+    assert.ok(spot.reason);
+    assert.ok(spot.lesson);
+    assert.ok(spot.href);
+  }
+});
+
+test("homepage analysis preview exposes the complete five-stage journey", () => {
+  assert.deepEqual(
+    TOURNAMENT_ANALYSIS_STEPS.map((step) => step.title),
+    [
+      "Validating tournament",
+      "Reading hand history",
+      "Identifying useful study spots",
+      "Matching Learning Library resources",
+      "Building your lesson plan",
+    ],
+  );
 });

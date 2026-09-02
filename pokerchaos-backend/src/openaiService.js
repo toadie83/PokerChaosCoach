@@ -17,6 +17,10 @@ import {
   buildBountyTournamentGuidance,
 } from "./bountyTournamentService.js";
 import {
+  buildLivePreflopAnchor,
+  describeStructuralPreflopHand,
+} from "./livePreflopBaselineService.js";
+import {
   STUDY_SPOT_CATEGORIES,
   STUDY_SPOT_TAGS,
   STUDY_SPOT_TYPES,
@@ -782,11 +786,16 @@ function categorizeRangeHand(compact) {
       return { tier: "premium", label: `${hi}${hi} premium pair` };
     if (hiVal >= 11) return { tier: "strong", label: `${hi}${hi} strong pair` };
     if (hiVal >= 9) return { tier: "medium", label: `${hi}${hi} medium pair` };
-    if (hiVal >= 6) return { tier: "marginal", label: `${hi}${hi} small pair` };
-    return { tier: "trash", label: `${hi}${hi} bottom pair` };
+    return { tier: "speculative", label: `${hi}${hi} small pocket pair` };
   }
 
   if (suited) {
+    if (hi === "A" && loVal >= 10) {
+      return { tier: "strong", label: `${hi}${lo}s strong suited ace` };
+    }
+    if (hi === "A") {
+      return { tier: "medium", label: `${hi}${lo}s playable suited ace` };
+    }
     if (hiVal >= 13 && loVal >= 11)
       return { tier: "premium", label: `${hi}${lo}s premium suited` };
     if (hiVal >= 12 && loVal >= 9)
@@ -795,6 +804,9 @@ function categorizeRangeHand(compact) {
       return { tier: "medium", label: `${hi}${lo}s playable suited connector` };
     if (hiVal >= 10 && loVal >= 6 && gap <= 4)
       return { tier: "marginal", label: `${hi}${lo}s speculative suited` };
+    if (gap <= 2) {
+      return { tier: "speculative", label: `${hi}${lo}s connected suited hand` };
+    }
     return { tier: "trash", label: `${hi}${lo}s weak suited` };
   }
 
@@ -803,6 +815,9 @@ function categorizeRangeHand(compact) {
     return { tier: "strong", label: `${hi}${lo}o strong offsuit broadway` };
   if (hiVal >= 13 && loVal >= 10 && gap <= 2)
     return { tier: "medium", label: `${hi}${lo}o playable offsuit broadway` };
+  if (hi === "A") {
+    return { tier: "speculative", label: `${hi}${lo}o position-sensitive offsuit ace` };
+  }
   if (hiVal >= 12 && loVal >= 9 && gap <= 3)
     return { tier: "marginal", label: `${hi}${lo}o marginal offsuit` };
   return { tier: "trash", label: `${hi}${lo}o offsuit trash` };
@@ -922,9 +937,12 @@ const LIVE_MADE_HAND_SAFETY_RULES = `Postflop made-hand safety:
 
 const LIVE_PREFLOP_POSITION_RULES = `Preflop range posture:
 - Do not default to a premium-only strategy or try to force an arbitrary VPIP. Card distribution varies, but a balanced baseline must include positional opens, calls, and blind defenses.
+- preflopBaseline.deterministicAnchor is the conservative chip-EV action anchor for the exact hand, seat, size and depth when applicable. Use its verdict, recommendedActions and fallbackAction before any generic hand label. Depart only for a concrete supplied exception such as a materially larger size, callers, explicit exploit evidence, or genuine payout pressure, and state that exception.
 - At roughly 30 BB or deeper, an unopened BTN is a wide steal spot and an unopened CO is meaningfully wider than middle position. Marginal hand labels do not override position: all pairs, suited aces, many offsuit aces, broadways, suited kings/queens, and connected suited hands can be legitimate late-position opens.
-- At roughly 25 BB or deeper, defend the BB substantially against 2-2.5 BB BTN/CO opens using calls and 3-bets; do not fold playable suited, connected, broadway, ace-x, king-x, or pair classes merely because they are non-premium. The SB should retain a selective call/3-bet continuing range.
-- Preserve in-position calls with hands that realize equity well when stack depth and price support them. Tighten progressively below about 25 BB and prioritize coherent jam/reshove or disciplined fold lines at genuinely short depth.
+- At roughly 20 BB or deeper, defend the BB substantially against 2-2.5 BB BTN/CO opens using calls and 3-bets; do not fold playable suited, connected, broadway, ace-x, king-x, or pair classes merely because they are non-premium. The SB should retain a selective call/3-bet continuing range.
+- A 13-20 BB stack is shallow, not premium-only. Preserve positional opens and priced blind continues, while shifting some calls and small raises into coherent jams. Reserve pure shove-or-fold compression mainly for genuinely very short stacks or action that creates commitment.
+- Preserve in-position calls with hands that realize equity well when stack depth and price support them. Against late opens, retain value 3-bets plus selected suited-ace blocker 3-bets; against 3-bets, protect legal calling ranges with suitable pairs, suited broadways and suited aces instead of using fold-or-4-bet only.
+- When bountyLens.materialAtDecision is false, bounty format is context only: it must not tighten ordinary RFI, blind-defence, call or non-all-in 3-bet ranges.
 - Antes, smaller opens, position, and weaker opponent ranges widen participation; multiway action, larger opens, and poor realization tighten it. A user-selected tournament stage supplies only qualitative pressure; exact ICM requires payout and field data, and ICM never applies to cash decisions.`;
 
 function selectedTournamentStageGuidance(context = {}) {
@@ -958,13 +976,23 @@ function buildLivePreflopGuidance(context = {}) {
   const opponentSeat = String(
     decision?.facingAction?.actorSeat || decision?.opponentSeat || context?.opponentSeat || "",
   ).toUpperCase();
+  const decisionKind = String(decision?.decisionKind || "").toLowerCase();
   const effectiveRaw = Number(
-    decision?.effectiveStackBB ?? context?.stackInfo?.effective ?? context?.heroStackBehindBB,
+    decisionKind === "unopened"
+      ? decision?.startingHeroStackBB ??
+        context?.stackInfo?.heroStarting ??
+        context?.heroStackBB ??
+        decision?.heroStackBehindBB ??
+        context?.heroStackBehindBB ??
+        decision?.effectiveStackBB ??
+        context?.stackInfo?.effective
+      : decision?.effectiveStackBB ??
+        context?.stackInfo?.effective ??
+        context?.heroStackBehindBB,
   );
   const effectiveStackBB = Number.isFinite(effectiveRaw) && effectiveRaw >= 0
     ? effectiveRaw
     : null;
-  const decisionKind = String(decision?.decisionKind || "").toLowerCase();
   const facingSizeRaw = Number(
     decision?.facingAction?.toAmountBB ?? decision?.facingAction?.amountBB,
   );
@@ -995,6 +1023,7 @@ function buildLivePreflopGuidance(context = {}) {
       )
     : false;
   const hasAntes = Number(decision?.anteBB ?? context?.anteBB) > 0;
+  const deterministicAnchor = buildLivePreflopAnchor(context);
   const depthBand = effectiveStackBB === null
     ? "unknown"
     : effectiveStackBB <= 20
@@ -1011,6 +1040,8 @@ function buildLivePreflopGuidance(context = {}) {
     playersYetToActSeats,
     playersYetToActCount,
     heroMaximumExposureBB,
+    deterministicAnchor,
+    fallbackAction: deterministicAnchor?.fallbackAction || null,
   };
 
   if (hasOverjamRestriction) {
@@ -1021,7 +1052,7 @@ function buildLivePreflopGuidance(context = {}) {
       ...common,
       situation: "short_opener_players_behind_overjam",
       baseline:
-        `The short effective stack applies only against the opener; Hero's full ${heroMaximumExposureBB ?? "deeper"} BB remains exposed while ${playersBehindLabel} can still act with unknown stacks. Do not default to a full Hero-stack jam with non-premium hands. Preserve calls or a normal non-all-in 3-bet with a fold plan versus a cold 4-bet/reshove, and reserve jams for hands robust against both the opener and players-behind continuing ranges.`,
+        `The short effective stack applies only against the opener; Hero's full ${heroMaximumExposureBB ?? "deeper"} BB remains exposed while ${playersBehindLabel} can still act with unknown stacks. Do not default to a full Hero-stack jam with non-premium hands. Preserve calls or a normal non-all-in 3-bet with a fold plan versus a cold 4-bet/reshove, and reserve jams for hands robust against both the opener and players-behind continuing ranges. ${deterministicAnchor?.rationale || ""}`.trim(),
     };
   }
 
@@ -1058,15 +1089,7 @@ function buildLivePreflopGuidance(context = {}) {
             ? "At short depth, prefer a coherent value reshove-or-fold posture rather than speculative cold-calling."
             : "At medium/deep depth, do not turn ordinary one-villain continues into automatic cold 4-bets or jams."
         }`,
-    };
-  }
-
-  if (depthBand === "short") {
-    return {
-      ...common,
-      situation: decisionKind || "preflop",
-      baseline:
-        "Short-stack discipline applies: remove speculative deep-stack calls, protect fold equity, and prefer coherent open-jam, reshove, raise-call, or fold decisions.",
+      fallbackAction: deterministicAnchor?.fallbackAction || null,
     };
   }
 
@@ -1076,7 +1099,7 @@ function buildLivePreflopGuidance(context = {}) {
         ...common,
         situation: "unopened_btn",
         baseline:
-          "Use a wide first-in BTN steal baseline, not a premium-only range. All pairs, all suited aces, most offsuit aces including A3o, broadways, suited kings/queens, and many connected suited hands are routine open candidates; fold only the genuinely weakest combinations.",
+          `${deterministicAnchor?.rationale || "Use a wide first-in BTN steal baseline, not a premium-only range."} All pairs, all suited aces, most offsuit aces including A3o, broadways, suited kings/queens, and many connected suited hands are routine candidates at suitable depths.`,
       };
     }
     if (heroSeat === "CO") {
@@ -1084,7 +1107,7 @@ function buildLivePreflopGuidance(context = {}) {
         ...common,
         situation: "unopened_co",
         baseline:
-          "Use an assertive CO opening baseline: all pairs, suited aces, stronger offsuit aces including A8o, broadways, suited kings/queens/jacks, and playable suited connectors belong in the opening conversation.",
+          `${deterministicAnchor?.rationale || "Use an assertive CO opening baseline."} All pairs, suited aces, stronger offsuit aces including A8o, broadways, suited kings/queens/jacks, and playable suited connectors belong in the opening conversation.`,
       };
     }
     if (heroSeat === "SB") {
@@ -1092,15 +1115,17 @@ function buildLivePreflopGuidance(context = {}) {
         ...common,
         situation: "unopened_sb",
         baseline:
-          "When folded to the SB, steal materially wider than from middle position while accounting for being out of position if called; use a consistent small open size and retain jams only for suitable depths.",
+          `${deterministicAnchor?.rationale || "When folded to the SB, steal materially wider than from middle position."} Account for being out of position if called; use a consistent small open size and retain jams only for suitable depths.`,
       };
     }
     return {
       ...common,
       situation: "unopened_other",
-      baseline: hasAntes
-        ? "Antes improve the reward for first-in aggression; widen selectively by position without turning early-position ranges loose."
-        : "Use a position-appropriate first-in range; late position should be visibly wider than early and middle position.",
+      baseline: `${deterministicAnchor?.rationale || "Use a position-appropriate first-in range."} ${
+        hasAntes
+          ? "Antes improve the reward for first-in aggression without turning early-position ranges loose."
+          : "Late position should be visibly wider than early and middle position."
+      }`,
     };
   }
 
@@ -1110,9 +1135,15 @@ function buildLivePreflopGuidance(context = {}) {
       ...common,
       situation: "bb_defend_vs_late_open",
       baseline:
-        facingSizeBB !== null && facingSizeBB <= 2.5
-          ? "The BB is receiving a strong price against a late-position small open. Continue broadly through calls and selective 3-bets with pairs, aces, broadways, suited kings/queens, and connected suited hands; avoid reflex overfolding."
-          : "Defend the BB against the late-position range, but tighten as the open grows; retain calls and 3-bets for hands with suitable equity realization and blockers.",
+        `${deterministicAnchor?.rationale || ""} ${
+          facingSizeBB !== null && facingSizeBB <= 2.5
+            ? "The BB is receiving a strong price against a late-position small open. Continue broadly through calls and selective 3-bets; avoid reflex overfolding."
+            : "Tighten as the open grows while retaining suitable calls and 3-bets."
+        } ${
+          depthBand === "short"
+            ? "At shallow depth remove speculative deep-stack calls, but preserve the position- and price-qualified continues in the exact anchor."
+            : ""
+        }`.trim(),
     };
   }
   if (facingOpen && heroSeat === "SB" && ["BTN", "CO"].includes(opponentSeat)) {
@@ -1120,7 +1151,7 @@ function buildLivePreflopGuidance(context = {}) {
       ...common,
       situation: "sb_defend_vs_late_open",
       baseline:
-        "Against a late-position steal, keep a real SB continuing range: mix selective calls with linear and blocker-driven 3-bets instead of folding every non-premium hand, while respecting poor out-of-position realization.",
+        `${deterministicAnchor?.rationale || ""} Against a late-position steal, keep a real SB continuing range: mix selective calls with linear and blocker-driven 3-bets instead of folding every non-premium hand, while respecting poor out-of-position realization.`.trim(),
     };
   }
   if (facingOpen && ["BTN", "CO"].includes(heroSeat)) {
@@ -1128,7 +1159,24 @@ function buildLivePreflopGuidance(context = {}) {
       ...common,
       situation: "in_position_vs_open",
       baseline:
-        "At medium/deep depth, preserve an in-position calling range with pairs, suited broadways, suited aces, and connected suited hands when the opener, price, and players behind allow; mix value and blocker 3-bets rather than using fold-or-3-bet only.",
+        `${deterministicAnchor?.rationale || ""} Preserve an in-position calling range with pairs, suited broadways, suited aces, and connected suited hands when the opener, price, depth, and players behind allow; mix value and blocker 3-bets rather than using fold-or-3-bet only.`.trim(),
+    };
+  }
+
+  if (decisionKind === "facing_3bet" && deterministicAnchor?.applicable) {
+    return {
+      ...common,
+      situation: "facing_3bet_after_open",
+      baseline: deterministicAnchor.rationale,
+    };
+  }
+
+  if (depthBand === "short") {
+    return {
+      ...common,
+      situation: decisionKind || "preflop",
+      baseline:
+        `${deterministicAnchor?.rationale || ""} Shallow-stack discipline changes sizing and commitment, but does not erase position-appropriate opens or priced defenses. Prefer coherent open, jam, reshove, raise-call, call, or fold branches from the exact anchor.`.trim(),
     };
   }
 
@@ -1136,7 +1184,7 @@ function buildLivePreflopGuidance(context = {}) {
     ...common,
     situation: decisionKind || "preflop",
     baseline:
-      "Use position, price, stack depth, and range interaction. Do not collapse a medium/deep preflop strategy into premium hands only.",
+      `${deterministicAnchor?.rationale || ""} Use position, price, stack depth, and range interaction. Do not collapse the strategy into premium hands only.`.trim(),
   };
 }
 
@@ -1147,6 +1195,14 @@ function liveCoachFallbackAction(legalActions = [], preflopGuidance = null) {
     ),
   );
   const situation = String(preflopGuidance?.situation || "");
+  const anchoredFallback = String(
+    preflopGuidance?.fallbackAction ||
+      preflopGuidance?.deterministicAnchor?.fallbackAction ||
+      "",
+  ).toLowerCase();
+  if (anchoredFallback && legal.has(anchoredFallback)) {
+    return anchoredFallback;
+  }
   if (
     ["unopened_btn", "unopened_co", "unopened_sb"].includes(situation) &&
     legal.has("open")
@@ -1262,6 +1318,103 @@ function applyLiveDecisionSafety(response = {}, context = {}) {
     alternative_action: alternativeAction,
     alternative_sizing: null,
     safety_override: "protected_ace_high_flush",
+  };
+}
+
+function applyAnchoredPreflopFallback(
+  response = {},
+  context = {},
+  usedFallback = false,
+) {
+  if (!usedFallback) return response;
+  const guidance = buildLivePreflopGuidance(context);
+  const anchor = guidance?.deterministicAnchor;
+  if (!anchor?.applicable || !anchor?.fallbackAction) return response;
+  if (
+    String(response?.hero_action || "").toLowerCase() !==
+    String(anchor.fallbackAction).toLowerCase()
+  ) {
+    return response;
+  }
+
+  const decision = context?.decisionNode || {};
+  const action = String(anchor.fallbackAction).toLowerCase();
+  const legalActions = Array.isArray(decision?.legalActions)
+    ? decision.legalActions.map((item) => String(item || "").toLowerCase())
+    : [];
+  const firstFinitePositive = (...values) => {
+    for (const value of values) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    }
+    return null;
+  };
+  let sizingBB = null;
+  let sizing = "";
+  if (action === "open") {
+    sizingBB = firstFinitePositive(context?.openSizeBB, context?.openSize, 2.2);
+    sizing = `Open to ${sizingBB} BB`;
+  } else if (action === "call") {
+    sizingBB = firstFinitePositive(
+      decision?.facingAction?.callAmountBB,
+      decision?.potOdds?.callAmountBB,
+    );
+    sizing = sizingBB !== null ? `Call ${sizingBB} BB` : "Call";
+  } else if (["3-bet", "4-bet", "raise"].includes(action)) {
+    const facingToBB = firstFinitePositive(decision?.facingAction?.toAmountBB);
+    const heroSeat = String(decision?.heroSeat || context?.heroSeat || "").toUpperCase();
+    const multiplier = action === "4-bet"
+      ? 2.2
+      : ["SB", "BB"].includes(heroSeat)
+        ? 3.5
+        : 3;
+    const strategicTarget = facingToBB !== null
+      ? Number((facingToBB * multiplier).toFixed(2))
+      : null;
+    const minimumTarget = firstFinitePositive(decision?.minimumRaiseToBB);
+    sizingBB = firstFinitePositive(strategicTarget, minimumTarget);
+    if (sizingBB !== null && minimumTarget !== null) {
+      sizingBB = Math.max(sizingBB, minimumTarget);
+    }
+    const maximumTarget = firstFinitePositive(decision?.maxHeroTotalToBB);
+    if (sizingBB !== null && maximumTarget !== null) {
+      sizingBB = Math.min(sizingBB, maximumTarget);
+    }
+    sizing = sizingBB !== null
+      ? `${action === "raise" ? "Raise" : action} to ${sizingBB} BB`
+      : action;
+  } else if (action === "jam") {
+    sizingBB = firstFinitePositive(
+      decision?.maxHeroTotalToBB,
+      decision?.heroMaximumExposureBB,
+      decision?.heroStackBehindBB,
+    );
+    sizing = sizingBB !== null ? `All-in to ${sizingBB} BB` : "All-in";
+  }
+
+  const alternativeAction = (Array.isArray(anchor?.recommendedActions)
+    ? anchor.recommendedActions
+    : []
+  )
+    .map((item) => String(item || "").toLowerCase())
+    .find((item) => item !== action && legalActions.includes(item));
+
+  return {
+    ...response,
+    sizing,
+    sizing_bb: sizingBB,
+    confidence: ["low", "medium", "high"].includes(anchor.confidence)
+      ? anchor.confidence
+      : "medium",
+    flavor_text:
+      anchor.verdict === "fold"
+        ? `${anchor.handCode} is outside the conservative ${anchor.spot.replaceAll("_", " ")} anchor.`
+        : `${anchor.handCode} follows the conservative ${anchor.spot.replaceAll("_", " ")} continue.`,
+    reasoning: `${anchor.rationale} The model response was unusable, so the deterministic preflop anchor supplied the safe legal fallback rather than a generic fold.`,
+    alternative_action: alternativeAction || response?.alternative_action || null,
+    alternative_sizing: null,
+    fallback_source: "live_preflop_anchor",
+    preflop_anchor_version: anchor.version,
   };
 }
 
@@ -1460,6 +1613,11 @@ function buildResponse(
         VALID_ACTIONS.includes(action) &&
         (normalizedLegal.length === 0 || normalizedLegal.includes(action)),
     ) || normalizedLegal[0] || "fold";
+  const requestedAction = normalizeAction(parsed?.hero_action);
+  const requestedActionIsLegal =
+    VALID_ACTIONS.includes(requestedAction) &&
+    (normalizedLegal.length === 0 || normalizedLegal.includes(requestedAction));
+  const usedActionFallback = !requestedActionIsLegal;
   let hero_action = normalizeAction(parsed?.hero_action || fallback);
   if (
     !VALID_ACTIONS.includes(hero_action) ||
@@ -1504,7 +1662,7 @@ function buildResponse(
         total_tokens: completion.usage.total_tokens ?? null,
       }
     : null;
-  const response = {
+  let response = {
     hero_action,
     sizing,
     sizing_bb,
@@ -1517,6 +1675,11 @@ function buildResponse(
     legal_actions: normalizedLegal,
     usage,
   };
+  response = applyAnchoredPreflopFallback(
+    response,
+    context || {},
+    usedActionFallback,
+  );
   return context ? applyLiveDecisionSafety(response, context) : response;
 }
 
@@ -1561,10 +1724,12 @@ export const __liveCoachTestables = {
   buildIncompleteLiveCoachResponse,
   buildResponse,
   applyLiveDecisionSafety,
+  applyAnchoredPreflopFallback,
   cashGameFallbackAction,
   cashGameLifecycleRules: CASH_GAME_LIFECYCLE_RULES,
   categorizeRangeHand,
   describeHandFeatures,
+  describeStructuralPreflopHand,
   liveCoachFallbackAction,
   protectedAceHighFlush,
   liveDecisionResponseSchema,
@@ -8704,13 +8869,14 @@ async function runChaosCoach(context = {}, instruction, model) {
   const styleTone = buildStyleTone(context?.style);
   const stageLens = selectedTournamentStageGuidance(context);
   const bountyLens = selectedBountyTournamentGuidance(context);
+  const preflopBaseline = buildLivePreflopGuidance(context);
   const system = `You are ChaosCoach - a strategy-first poker coach with high-energy presentation.
 Use supplied hole cards, board cards, legal actions, position, pot, sizing and stacks before adding personality.
 Never recommend an action outside context.decisionNode.legalActions.
 Do not invent missing cards, math, positions, or odds; lower confidence when state is incomplete.
 ${LIVE_STACK_LEVERAGE_RULES}
 ${LIVE_MADE_HAND_SAFETY_RULES}
-${buildLivePreflopGuidance(context) ? LIVE_PREFLOP_POSITION_RULES : ""}
+${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
 You always respond with valid JSON only - no markdown or commentary.
@@ -8783,7 +8949,7 @@ Rules:
     stakeTier !== "unknown" ? stakeGuidanceMap[stakeTier] || null : null;
   const chaosContext = {
     ...(context || {}),
-    preflopBaseline: buildLivePreflopGuidance(context),
+    preflopBaseline,
     stageLens,
     bountyLens,
   };
@@ -8808,7 +8974,10 @@ Instruction: ${
     parsed,
     completion,
     "Choose the strongest legal line and apply pressure only when the state supports it.",
-    "check",
+    liveCoachFallbackAction(
+      context?.decisionNode?.legalActions,
+      preflopBaseline,
+    ),
     context?.decisionNode?.legalActions,
     context,
   );
@@ -9042,6 +9211,7 @@ async function runExploitDetective(context = {}, instruction, model) {
   const stacks = stackSnapshot(context);
   const stageLens = selectedTournamentStageGuidance(context);
   const bountyLens = selectedBountyTournamentGuidance(context);
+  const preflopBaseline = buildLivePreflopGuidance(context);
   const decisionKind = String(
     context?.decisionNode?.decisionKind || "",
   ).toLowerCase();
@@ -9081,7 +9251,7 @@ async function runExploitDetective(context = {}, instruction, model) {
     board: context?.board,
     handFeatures: handFeatures || undefined,
     decisionNode: context?.decisionNode,
-    preflopBaseline: buildLivePreflopGuidance(context),
+    preflopBaseline,
     relativePosition: context?.relativePosition,
     potSize: context?.potSize,
     stacks,
@@ -9094,7 +9264,7 @@ async function runExploitDetective(context = {}, instruction, model) {
 Reference specific leaks (over-folding, calling wide, over-aggression) and adjust aggression, sizing, and trap frequency accordingly.
 ${LIVE_STACK_LEVERAGE_RULES}
 ${LIVE_MADE_HAND_SAFETY_RULES}
-${buildLivePreflopGuidance(context) ? LIVE_PREFLOP_POSITION_RULES : ""}
+${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
 Respond only with strict JSON (no markdown).
@@ -9132,7 +9302,10 @@ ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${
     parsed,
     completion,
     "Exploit their leak with precision.",
-    "check",
+    liveCoachFallbackAction(
+      context?.decisionNode?.legalActions,
+      preflopBaseline,
+    ),
     context?.decisionNode?.legalActions,
     context,
   );
@@ -9373,9 +9546,13 @@ async function runRangeProfessor(context = {}, instruction, model) {
   if (turnCard) boardSummary.push(`Turn: ${turnCard}`);
   if (riverCard) boardSummary.push(`River: ${riverCard}`);
   const handFeatures = describeHandFeatures(context?.heroCards, context?.board);
+  const preflopAnchor = preflopBaseline?.deterministicAnchor || null;
   const focusLines = [
     `Hero hand: ${readable}${descriptor ? ` (${descriptor})` : ""}`,
-    `Hand tier: ${handCategory.label} (tier=${handCategory.tier})`,
+    `Structural hand class: ${preflopAnchor?.handClass?.label || handCategory.label}`,
+    preflopAnchor?.applicable
+      ? `Deterministic preflop anchor: ${preflopAnchor.verdict}; recommended ${preflopAnchor.recommendedActions.join("/")}; fallback ${preflopAnchor.fallbackAction}.`
+      : "",
     "Hero profile: balanced aggression; manage pot size when nut edge is unclear.",
     stacks.hero ? `Hero stack: ${stacks.hero} BB` : "",
     stacks.villain ? `Villain stack: ${stacks.villain} BB` : "",
@@ -9446,6 +9623,8 @@ async function runRangeProfessor(context = {}, instruction, model) {
     heroHand: compact,
     heroCards: context?.heroCards,
     handTier: handCategory.tier,
+    structuralPreflopHand:
+      preflopAnchor?.handClass || describeStructuralPreflopHand(preflopAnchor?.handCode),
     handDescription: handCategory.label,
     seatCategory: posCategory,
     actionContext: actionInfo,
@@ -9506,7 +9685,7 @@ Rules:
 - Consider hero hand ${readable} and anticipate likely villain responses for the next decisions.
 - When board cards are present, state hero's current made hand class (e.g. top pair, two pair, set, straight) before discussing draw potential.
 - Use solver-baseline lines first; call out exploitative departures and rationale when you recommend them.
-- On preflop nodes, apply preflopBaseline before the generic tier label. A hand labelled marginal or trash in isolation may still be a standard BTN/CO open or priced blind defend.
+- On preflop nodes, preflopBaseline.deterministicAnchor outranks the generic structural hand label. Treat chart-qualified opens and conservative continue anchors as real range members, not exceptions requiring premium cards.
 - Pair plus strong draw combinations (e.g. pair + flush draw or pair + open-ended) typically continue versus single raises; only fold with clear GTO justification (stack, range disadvantage, extreme sizing).
 - When the board shows three or more of a suit, tighten calling frequencies without that suit blocker; default to folding two-pair or weaker versus large raises unless blockers or sizing justify a hero call.
 - Preflop: protect a calling range. In position versus 3-bets, mix flats with suited broadways, pocket pairs, and Axs; out of position, defend with suited broadways/pairs that play well post-flop while keeping 4-bet traps for premiums.
@@ -9514,8 +9693,8 @@ Rules:
 - In bloated or multiway pots without the nuts, lean on pot-control or disciplined folds unless range/nut dynamics justify pressure; detail loss-mitigation plans.
 - Reference blockers, equity shifts, or nut advantages from the board only as supporting evidence; don't ignore positional/range foundations.
 - Mention plan adjustments when facing calls, raises, or folds.
-- Default to folding hands marked tier=trash or tier=marginal when facing strong action unless clear exploitative rationale exists; explain any deviation.
-- Early and middle positions require tighter continuing ranges against opens.`;
+- Structural labels describe card shape, not the action. Never infer fold from a label alone; use the exact anchor, opener position, size, callers, stack depth, and legal actions.
+- Early and middle positions require tighter continuing ranges against opens than late positions, but still retain the pairs, suited aces, suited broadways and connected suited hands included by the supplied anchor.`;
 
   const user = `Context: ${JSON.stringify(rangeContext, null, 2)}
 ${focusLines.length ? `Notes:\n${focusLines.join("\n")}\n` : ""}Instruction: ${

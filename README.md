@@ -56,6 +56,7 @@ npm run dev
 
 ## API Overview
 
+- `POST /public/study-plan/analyse` is the anonymous Homepage V2 flow. It parses one tournament, returns up to three ephemeral Study Spots with sanitized links to published learning resources, and does not create a tournament, report, or study queue record. Requests are rate-limited per client.
 - `GET /me/entitlements` returns current feature flags for the signed-in user.
 - `POST /prompts` (requires `coach` entitlement) accepts `{ context: { ... } }` and returns a short ChaosCoach line from OpenAI.
 - `POST /hand-history/parse` (requires `review` entitlement) accepts GG hand-history text and returns parsed hands with Hero preflop filtering.
@@ -64,6 +65,8 @@ npm run dev
 - `POST /tournaments/upload` (requires `review` entitlement) accepts tournament hand-history text, parses it, and upserts by `(user_id, tournament_id)`.
 - `GET /tournaments` (requires `review` entitlement) lists saved tournament uploads for the current user (ordered by tournament played date, then most recently updated).
 - `GET /tournaments/:tournamentId` (requires `review` entitlement) loads one saved tournament (summary, opponent snapshot, parsed hands).
+
+The anonymous flow can be tuned with `FREE_STUDY_RATE_LIMIT_MAX` (default `3`) and `FREE_STUDY_RATE_LIMIT_WINDOW_MS` (default 24 hours). The browser also caps successful anonymous plans at three before presenting free registration. See `docs/homepage-v2-free-flow.md` for the acquisition-flow and privacy boundaries.
 
 ## Postgres Setup
 

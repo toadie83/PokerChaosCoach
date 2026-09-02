@@ -24,6 +24,10 @@ export async function requestStudySpotAnalysis(payload) {
   return postJson("/study-spots/analyse", payload);
 }
 
+export async function requestFreeStudyPlan(payload) {
+  return postJson("/public/study-plan/analyse", payload, { cache: "no-store" });
+}
+
 export async function requestLearningResources(filters = {}) {
   const params = new URLSearchParams();
   for (const key of ["category", "resourceType", "tag", "search"]) {

@@ -18,6 +18,8 @@ import StudySpotsEntryPage from "./components/StudySpotsEntryPage.jsx";
 import ToolsHub from "./components/ToolsHub.jsx";
 import AdminLearningPage from "./components/AdminLearningPage.jsx";
 import HomePage from "./components/marketing/HomePage.jsx";
+import FreeStudyPlanPage from "./components/marketing/FreeStudyPlanPage.jsx";
+import FreeUploadPrivacyPage from "./components/marketing/FreeUploadPrivacyPage.jsx";
 import AiPokerHandAnalyzerPage from "./components/marketing/AiPokerHandAnalyzerPage.jsx";
 import GgPokerHandReviewToolPage from "./components/marketing/GgPokerHandReviewToolPage.jsx";
 import PokerLeakFinderPage from "./components/marketing/PokerLeakFinderPage.jsx";
@@ -78,6 +80,14 @@ const MARKETING_PAGE_CONFIG = [
   {
     path: "/",
     component: HomePage,
+  },
+  {
+    path: "/free-study-plan",
+    component: FreeStudyPlanPage,
+  },
+  {
+    path: "/free-upload-privacy",
+    component: FreeUploadPrivacyPage,
   },
   {
     path: "/ai-poker-hand-analyzer",

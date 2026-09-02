@@ -239,30 +239,62 @@ export const TRUST_LINKS = [
 export const STUDY_PREVIEW_SPOTS = [
   {
     category: "Blind vs blind",
-    title: "Big Blind Defence",
-    context: "K9o folded vs a 2.2x small-blind steal at 31 BB",
+    title: "BB defended too tightly versus SB steals",
+    context: "Big blind vs small blind · 18–24 BB",
+    reason: "Several playable hands were folded in position-aware defence spots.",
     lesson: "Big Blind Defence vs a Small Blind Steal",
+    lessonType: "Quick Lesson · 6 min",
+    href: "/learn",
   },
   {
     category: "Postflop",
-    title: "Continuation Betting",
-    context: "Low connected flop against a limp-call range",
+    title: "Automatic c-bet into a connected calling range",
+    context: "Single-raised pot · Multiway flop",
+    reason: "The board favoured the callers more often than the preflop raiser.",
     lesson: "Continuation Betting vs Limp-Callers",
+    lessonType: "Daily MTT Edge · 4 min",
+    href: "/learn",
   },
   {
     category: "Tournament",
-    title: "Stack Depth",
-    context: "21 BB opening decision with reshove pressure",
+    title: "21 BB open facing significant reshove pressure",
+    context: "Middle position · Late stage",
+    reason: "The effective stacks made raise-fold frequency especially important.",
     lesson: "Changing Strategy as Stacks Shorten",
+    lessonType: "Study Article · 9 min",
+    href: "/learn",
+  },
+];
+
+export const TOURNAMENT_ANALYSIS_STEPS = [
+  {
+    title: "Validating tournament",
+    description: "Checking file format and tournament integrity",
+  },
+  {
+    title: "Reading hand history",
+    description: "Structuring hands, positions, stacks, and actions",
+  },
+  {
+    title: "Identifying useful study spots",
+    description: "Finding decisions with the highest learning value",
+  },
+  {
+    title: "Matching Learning Library resources",
+    description: "Connecting each spot to practical MTT lessons",
+  },
+  {
+    title: "Building your lesson plan",
+    description: "Prioritising what to study first",
   },
 ];
 
 export const PRODUCT_LOOP_STEPS = [
-  { number: "01", title: "Play", description: "Play your normal online MTT." },
-  { number: "02", title: "Upload", description: "Import the tournament hand history." },
-  { number: "03", title: "Discover", description: "Find decisions with real learning value." },
-  { number: "04", title: "Study", description: "Open lessons matched to those spots." },
-  { number: "05", title: "Improve", description: "Take the insight into your next session." },
+  { icon: "upload", title: "Upload", description: "Drop in a recent tournament export." },
+  { icon: "search", title: "Find Study Spots", description: "Identify decisions with genuine learning value." },
+  { icon: "match", title: "Match Lessons", description: "Connect those decisions to relevant Playback Poker lessons." },
+  { icon: "plan", title: "Build Your Plan", description: "Receive a focused 2–3 lesson starting point." },
+  { icon: "play", title: "Play Again", description: "Take those ideas into your next tournament." },
 ];
 
 export const TOOL_COMPARISON_ROWS = [

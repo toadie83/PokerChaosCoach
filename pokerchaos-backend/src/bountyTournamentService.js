@@ -75,7 +75,38 @@ export function buildBountyTournamentGuidance(context = {}) {
   const decision = context?.decisionNode || {};
   const coverageRole = deriveCoverageRole(context);
   const playerContext = decisionPlayerContext(context);
+  const street = String(decision?.street || context?.street || "").toLowerCase();
+  const decisionKind = String(decision?.decisionKind || "").toLowerCase();
   const facingAllIn = Boolean(decision?.facingAction?.allIn);
+  const legalActions = new Set(
+    (Array.isArray(decision?.legalActions) ? decision.legalActions : []).map(
+      (action) => String(action || "").toLowerCase(),
+    ),
+  );
+  const effectiveStackBB = finiteNonNegative(decision?.effectiveStackBB);
+  const spr = finiteNonNegative(
+    decision?.spr ?? decision?.effectiveStackToPotRatio,
+  );
+  const canCommitNow = legalActions.has("jam") || legalActions.has("call");
+  const shallowReshoveCandidate =
+    street === "preflop" &&
+    Boolean(decision?.facingAction) &&
+    legalActions.has("jam") &&
+    effectiveStackBB !== null &&
+    effectiveStackBB <= 20;
+  const lowSprCommitmentCandidate =
+    street !== "preflop" &&
+    canCommitNow &&
+    spr !== null &&
+    spr <= 1;
+  const materialAtDecision =
+    facingAllIn || shallowReshoveCandidate || lowSprCommitmentCandidate;
+  const ordinaryPreflopNode =
+    street === "preflop" &&
+    ["unopened", "facing_open", "facing_open_callers", "facing_3bet"].includes(
+      decisionKind,
+    ) &&
+    !materialAtDecision;
   const directKnockoutOpportunity =
     coverageRole === "covers_villain" && facingAllIn;
   const heroBountyAtRisk =
@@ -84,7 +115,11 @@ export function buildBountyTournamentGuidance(context = {}) {
 
   let decisionAdjustment =
     "Do not alter the normal chip-EV action solely because a bounty is enabled.";
-  if (directKnockoutOpportunity && playerContext.actionClosed && !playerContext.multiway) {
+  if (!materialAtDecision) {
+    decisionAdjustment = ordinaryPreflopNode
+      ? "The bounty is not material to this ordinary preflop node. Preserve the normal chip-EV RFI, call, blind-defence, and non-all-in 3-bet ranges; do not tighten because Hero is covered or the bounty amount is unknown."
+      : "No immediate knockout or stack-commitment decision exists. Keep the normal chip-EV action and bluff frequency; bounty format is context only on this node.";
+  } else if (directKnockoutOpportunity && playerContext.actionClosed && !playerContext.multiway) {
     decisionAdjustment =
       "Hero covers the all-in opponent and action is closed heads-up. A close chip-EV fold may continue slightly wider for the knockout incentive, but a clear fold remains a fold.";
   } else if (directKnockoutOpportunity) {
@@ -95,7 +130,7 @@ export function buildBountyTournamentGuidance(context = {}) {
       "Hero covers the named opponent, so future all-in and isolation decisions can receive a small knockout incentive; ordinary non-commitment actions should remain range- and pot-driven.";
   } else if (coverageRole === "covered_by_villain") {
     decisionAdjustment =
-      "Hero cannot currently win this covering opponent's bounty. Expect the covering player to continue somewhat wider for Hero's bounty, reducing Hero's bluff fold equity.";
+      "At this commitment node Hero cannot currently win the covering opponent's bounty. Expect the covering player to continue somewhat wider for Hero's bounty, reducing Hero's bluff fold equity only in this marginal commitment branch without tightening unrelated ordinary preflop ranges.";
   } else if (coverageRole === "equal_stacks") {
     decisionAdjustment =
       "The stacks are effectively equal, so knockout eligibility depends on exact commitments. Treat bounty upside as uncertain and avoid widening without a clearly closed all-in node.";
@@ -112,6 +147,10 @@ export function buildBountyTournamentGuidance(context = {}) {
     certainty: "qualitative_no_bounty_amount",
     coverageRole,
     facingAllIn,
+    materialAtDecision,
+    ordinaryPreflopNode,
+    shallowReshoveCandidate,
+    lowSprCommitmentCandidate,
     directKnockoutOpportunity,
     heroBountyAtRisk,
     ...playerContext,
@@ -120,6 +159,7 @@ export function buildBountyTournamentGuidance(context = {}) {
     guardrails: [
       "Bounty value is not part of potBB, contestablePotBB, or the displayed raw pot-odds percentage. Never add a fictional BB amount or quote a bounty-adjusted equity threshold.",
       "Use the bounty adjustment only to resolve close decisions. It cannot turn a materially losing chip-EV continue into a confident call or jam.",
+      "When materialAtDecision is false, preserve normal chip-EV opens, blind defenses, calls, 3-bets, and bluffs. Coverage and a missing bounty amount are not reasons to tighten that ordinary node.",
       "A positive knockout adjustment requires Hero to cover the opponent and be able to eliminate them in this pot.",
       "When Hero is covered, the main adjustment is reduced fold equity because opponents can pursue Hero's bounty; Hero does not gain the covering opponent's bounty by surviving.",
       "Players behind, unknown stacks, and multiway action override simple isolation or call-wider heuristics.",
@@ -131,10 +171,11 @@ export function buildBountyTournamentGuidance(context = {}) {
 
 export const BOUNTY_TOURNAMENT_LIFECYCLE_RULES = `Bounty-tournament rules when no bounty amounts are supplied:
 - Treat bounty guidance as a qualitative overlay on the supplied chip-EV decision, never as fabricated pot equity or extra BB in potBB.
+- Check bountyLens.materialAtDecision first. When false, use normal chip-EV RFI, defend, call and 3-bet ranges and normal heads-up bluff construction; do not tighten simply because Hero is covered, coverage is unknown, or bounty amounts are missing.
 - Apply a positive knockout adjustment only when Hero covers the opponent and can eliminate them in the current pot.
 - Widen only close all-in continues, isolations, or reshoves. The cleanest adjustment is heads-up with action closed; a clear chip-EV fold remains a fold.
 - If players remain behind or the pot is multiway, evaluate all live ranges and Hero's maximum exposure. Bounty interest is not permission to overjam through covering stacks.
-- When the opponent covers Hero, Hero has no immediate bounty upside against that opponent. Expect somewhat wider calls or reshoves from covering players and reduce marginal bluff aggression accordingly.
+- When the opponent covers Hero at a material commitment node, Hero has no immediate bounty upside against that opponent. Expect somewhat wider calls or reshoves from covering players and reduce marginal bluff aggression only in that affected commitment branch.
 - Bounty formats can create wider short-stack shoves, calls, and overcalls, but do not apply a blanket aggression increase to ordinary opens or postflop small pots.
 - Keep displayed pot odds raw. Never quote an exact bounty-adjusted equity requirement without the actual bounty and payout inputs.
 - Combine bounty incentives with the selected tournament stage. Do not erase bubble or final-table risk premiums, and do not claim solved PKO ICM.
