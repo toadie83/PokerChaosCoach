@@ -26,11 +26,11 @@ const STAGE_PROFILES = Object.freeze({
     label: "Early / Re-entry",
     riskPremium: "low_approximate",
     objective:
-      "Accumulate through clean value and positional advantage without treating re-entry as permission for marginal stack-offs.",
+      "Use ordinary tournament chip-EV ranges with low approximate risk premium, accumulating through position, range pressure, clean value, and selective bluffs without forcing marginal stack-offs.",
     preflop:
-      "Keep early-position ranges disciplined, favor playable and nut-producing hands when deep, and isolate loose limpers with a value-led range and coherent size.",
+      "Do not tighten routine RFI, blind-defence, call, or 3-bet ranges merely because the tournament is early. Keep early-position construction sound, preserve late-position steals and priced defenses, use selected blocker 3-bets, isolate loose limpers, and exploit deep stacks with playable in-position hands.",
     postflop:
-      "High SPR increases one-pair caution. Build large pots with robust value and strong draws, trim multiway bluffs, and value bet calling-heavy fields.",
+      "High SPR increases one-pair caution but does not eliminate heads-up semi-bluffs or range-pressure bets. Build large pots with robust value and strong draws, trim weak multiway bluffs, and value bet calling-heavy fields.",
   },
   middle_accumulation: {
     label: "Middle / Accumulation",

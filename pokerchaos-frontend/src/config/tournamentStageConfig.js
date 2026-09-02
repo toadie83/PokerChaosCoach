@@ -14,7 +14,7 @@ export const TOURNAMENT_STAGE_OPTIONS = Object.freeze([
     label: "Early / Re-entry",
     shortLabel: "Early",
     description:
-      "Low approximate ICM pressure: prioritize clean value, position, and high-SPR discipline.",
+      "Low approximate ICM pressure: use normal chip-EV ranges, positional pressure, selective bluffs, and high-SPR discipline.",
   },
   {
     code: "middle_accumulation",
