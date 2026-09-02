@@ -10,8 +10,8 @@ export default function DailyMttEdge({ latestLesson }) {
     <section className="home-v2-daily">
       <div className="home-v2-daily-intro">
         <p className="home-v2-kicker">Daily MTT Edge</p>
-        <h2>A new practical MTT lesson every day.</h2>
-        <p>Short lessons across preflop, postflop, tournament theory, hand reading, and exploitative play.</p>
+        <h2>One practical tournament lesson every day.</h2>
+        <p>Keep learning between reviews with one focused idea you can take into your next MTT.</p>
       </div>
       <a className="home-v2-daily-cover" href={lessonPath}>
         <span className="home-v2-daily-cover-meta">
@@ -27,7 +27,7 @@ export default function DailyMttEdge({ latestLesson }) {
         </span>
       </a>
       <div className="home-v2-daily-actions">
-        <a className="home-v2-button home-v2-button-secondary" href="/learn">Browse Daily MTT Edge</a>
+        <a className="home-v2-button home-v2-button-secondary" href="/learn">Open in Learning Library</a>
         {latestLesson?.instagramUrl ? (
           <a href={latestLesson.instagramUrl} target="_blank" rel="noreferrer">View on Instagram</a>
         ) : null}

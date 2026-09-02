@@ -14,7 +14,7 @@ const options = {
     "/tools/coach",
   ],
   authenticatedPrefixes: ["/tools/study-spots/reports"],
-  marketingPaths: ["/", "/articles"],
+  marketingPaths: ["/", "/articles", "/free-study-plan", "/free-upload-privacy"],
   marketingPrefixes: ["/learn"],
 };
 
@@ -33,6 +33,8 @@ test("unknown authenticated routes fail to the Tools Hub", () => {
 test("known product and marketing routes remain stable", () => {
   assert.equal(normalizeAppRoutePath("/tools/study-spots/", options), "/tools/study-spots");
   assert.equal(normalizeAppRoutePath("/articles", options), "/articles");
+  assert.equal(normalizeAppRoutePath("/free-study-plan", options), "/free-study-plan");
+  assert.equal(normalizeAppRoutePath("/free-upload-privacy", options), "/free-upload-privacy");
   assert.equal(normalizeAppRoutePath("/learn/big-blind-defence", options), "/learn/big-blind-defence");
   assert.equal(
     normalizeAppRoutePath("/tools/study-spots/reports/abc-123", options),

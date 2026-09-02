@@ -26,7 +26,11 @@ function isLearningPath(pathname) {
   return LEARNING_ACTIVE_PATHS.has(pathname);
 }
 
-export default function MarketingSiteHeader({ currentPath = "/" }) {
+export default function MarketingSiteHeader({
+  currentPath = "/",
+  primaryCtaLabel = "Find Study Spots",
+  primaryCtaHref = "",
+}) {
   const { isSignedIn } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [learningOpen, setLearningOpen] = useState(false);
@@ -166,7 +170,11 @@ export default function MarketingSiteHeader({ currentPath = "/" }) {
           <a className="home-nav-link" href="/#methodology">About</a>
           {signInAction("home-nav-link")}
         </nav>
-        {studySpotsAction("home-button home-button-primary home-header-cta")}
+        {primaryCtaHref ? (
+          <a className="home-button home-button-primary home-header-cta" href={primaryCtaHref}>
+            {primaryCtaLabel}
+          </a>
+        ) : studySpotsAction("home-button home-button-primary home-header-cta", primaryCtaLabel)}
       </div>
     </header>
   );

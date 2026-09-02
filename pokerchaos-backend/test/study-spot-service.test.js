@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { analyseSavedTournamentForStudy } from "../src/studySpots/service.js";
+import {
+  analyseFreeStudySpotsUpload,
+  analyseSavedTournamentForStudy,
+  toPublicLearningResourceSummary,
+} from "../src/studySpots/service.js";
 
 function blindDefenceHand() {
   return {
@@ -72,6 +76,21 @@ function keepEveryCandidate(candidates) {
     })),
     usage: { total_tokens: 100 },
   });
+}
+
+function publicTournamentHistory() {
+  return `PokerStars Hand #3001: Tournament #T300, Hold'em No Limit - Level I (50/100) - 2026/08/29 20:00:00
+Table 'Final' 2-max Seat #1 is the button
+Seat 1: Villain (5000 in chips)
+Seat 2: Hero (3100 in chips)
+Villain: posts small blind 50
+Hero: posts big blind 100
+*** HOLE CARDS ***
+Dealt to Hero [Kh 9d]
+Villain: raises 120 to 220
+Hero: folds
+*** SUMMARY ***
+Total pot 200 | Rake 0`;
 }
 
 test("orchestrator persists useful no-resource spots without fabricating matches", async () => {
@@ -206,4 +225,53 @@ test("orchestrator retries one transient classification failure", async () => {
   assert.equal(attempts, 2);
   assert.equal(result.report.status, "complete");
   assert.equal(memory.state.failed, null);
+});
+
+test("public free analysis returns an ephemeral three-spot learning preview", async () => {
+  let nextId = 0;
+  const result = await analyseFreeStudySpotsUpload({
+    historyText: publicTournamentHistory(),
+    heroName: "Hero",
+    tournamentName: "Sunday Test",
+    model: "test-model",
+    classifyCandidates: keepEveryCandidate,
+    resources: [{
+      id: "lesson-1",
+      slug: "big-blind-defence",
+      canonicalPath: "/learn/big-blind-defence",
+      title: "Big blind defence",
+      description: "Defend the right hands blind versus blind.",
+      category: "preflop",
+      primaryTag: "big-blind-defence",
+      secondaryTags: [],
+      tags: ["big-blind-defence"],
+      stackDepthTags: [],
+      heroPositionTags: [],
+      villainPositionTags: [],
+      opponentTypeTags: [],
+      studySpotTypes: [],
+      resourceType: "quick_lesson",
+      status: "published",
+      published: true,
+      priority: 100,
+      body: "Full lesson content is intentionally not returned in the preview.",
+    }],
+    idFactory: () => `public-${++nextId}`,
+  });
+
+  assert.equal(result.report.status, "complete");
+  assert.equal(result.report.handsAnalysed, 1);
+  assert.ok(result.report.spots.length <= 3);
+  assert.equal(result.tournament.name, "Sunday Test");
+  assert.equal("tournamentId" in result.tournament, false);
+
+  const resource = toPublicLearningResourceSummary({
+    id: "lesson-1",
+    slug: "big-blind-defence",
+    canonicalPath: "/learn/big-blind-defence",
+    title: "Big blind defence",
+    body: "Full lesson content is intentionally not returned in the preview.",
+  });
+  assert.equal(resource.canonicalPath, "/learn/big-blind-defence");
+  assert.equal("body" in resource, false);
 });

@@ -92,9 +92,11 @@ import {
   telemetryKey,
 } from "./studySpots/telemetry.js";
 import {
+  analyseFreeStudySpotsUpload,
   analyseSavedTournamentForStudy,
   analyseStudySpotsUpload,
 } from "./studySpots/service.js";
+import { createPublicStudyRateLimiter } from "./publicStudyRateLimit.js";
 import {
   TournamentUploadError,
   saveTournamentHistory,
@@ -136,6 +138,19 @@ const studySpotsAiModel = String(
 )
   .trim()
   .toLowerCase();
+const freeStudyRateLimitMaxRaw = Number(process.env.FREE_STUDY_RATE_LIMIT_MAX);
+const freeStudyRateLimitMax =
+  Number.isFinite(freeStudyRateLimitMaxRaw) && freeStudyRateLimitMaxRaw > 0
+    ? Math.floor(freeStudyRateLimitMaxRaw)
+    : 3;
+const freeStudyRateLimitWindowMsRaw = Number(
+  process.env.FREE_STUDY_RATE_LIMIT_WINDOW_MS,
+);
+const freeStudyRateLimitWindowMs =
+  Number.isFinite(freeStudyRateLimitWindowMsRaw) &&
+  freeStudyRateLimitWindowMsRaw >= 1000
+    ? Math.floor(freeStudyRateLimitWindowMsRaw)
+    : 24 * 60 * 60 * 1000;
 const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
 const stripeWebhookSecret = String(
   process.env.STRIPE_WEBHOOK_SECRET || "",
@@ -243,6 +258,10 @@ async function getStripeClient() {
 }
 
 const app = express();
+const publicStudyRateLimit = createPublicStudyRateLimiter({
+  limit: freeStudyRateLimitMax,
+  windowMs: freeStudyRateLimitWindowMs,
+});
 
 app.use(
   cors({
@@ -1511,6 +1530,80 @@ app.get(
       return res.status(500).json({
         error: "Failed to list learning resources.",
         code: "LEARNING_RESOURCE_LIST_FAILED",
+      });
+    }
+  },
+);
+
+app.post(
+  "/public/study-plan/analyse",
+  publicStudyRateLimit,
+  async (req, res) => {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({
+        error: "Free tournament analysis is temporarily unavailable.",
+        code: "DATABASE_UNAVAILABLE",
+      });
+    }
+    const parsed = studySpotsAnalyseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body.",
+        code: "MALFORMED_UPLOAD",
+        details: parsed.error.flatten(),
+      });
+    }
+    const analysisStartedAt = Date.now();
+    logStudyTelemetry("study_spots_upload_started", {
+      uploadSource: "public_homepage",
+      inputBytes: Buffer.byteLength(parsed.data.historyText, "utf8"),
+      retry: false,
+    });
+    try {
+      const result = await analyseFreeStudySpotsUpload({
+        ...parsed.data,
+        uploadSource: "public_homepage",
+        model: studySpotsAiModel,
+      });
+      logStudyTelemetry("study_spots_analysis_completed", {
+        handCount: result.report?.handsAnalysed,
+        candidateCount: result.report?.candidateCount,
+        spotCount: result.report?.spotCount,
+        durationMs: Date.now() - analysisStartedAt,
+        pipelineVersion: result.report?.pipelineVersion,
+        model: studySpotsAiModel,
+        promptTokens: result.usage?.prompt_tokens,
+        completionTokens: result.usage?.completion_tokens,
+        totalTokens: result.usage?.total_tokens,
+        retry: false,
+      });
+      return res.json({
+        report: result.report,
+        tournament: result.tournament,
+      });
+    } catch (error) {
+      if (error instanceof TournamentUploadError) {
+        logStudyTelemetry("study_spots_parse_failed", {
+          errorCode: error.code,
+          detectedSite: detectStudyUploadSite(parsed.data.historyText),
+          durationMs: Date.now() - analysisStartedAt,
+        });
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...error.details,
+        });
+      }
+      logStudyTelemetry("study_spots_analysis_failed", {
+        stage: "public_classification",
+        errorCode: "ANALYSIS_FAILED",
+        durationMs: Date.now() - analysisStartedAt,
+        retry: false,
+      });
+      console.error("[pokerchaos-backend] Free Study Plan analysis error", error);
+      return res.status(502).json({
+        error: "Your free Study Plan could not be completed. Please try again.",
+        code: "ANALYSIS_FAILED",
       });
     }
   },
