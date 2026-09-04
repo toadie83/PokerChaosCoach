@@ -69,7 +69,11 @@ export function resolveLearningResourceImportRequest(input) {
   if (!input || typeof input !== "object" || Array.isArray(input) || !("importDocument" in input)) {
     return input;
   }
-  if (Object.keys(input).some((key) => key !== "importDocument")) {
+  if (Object.keys(input).some((key) => ![
+    "importDocument",
+    "contentGapId",
+    "contentGapBriefId",
+  ].includes(key))) {
     throw new LearningResourceImportDocumentError(
       "Import document requests cannot include additional top-level fields.",
       "LEARNING_IMPORT_DOCUMENT_INVALID",
@@ -128,4 +132,38 @@ export function resolveLearningResourceImportRequest(input) {
     "Import document mode must be 'paste' or 'file'.",
     "LEARNING_IMPORT_DOCUMENT_INVALID",
   );
+}
+
+export function resolveLearningResourceImportContentGapId(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  if (input.contentGapId === undefined || input.contentGapId === null || input.contentGapId === "") {
+    return null;
+  }
+  const contentGapId = String(input.contentGapId).trim();
+  if (!/^gap_[a-f0-9]{32}$/.test(contentGapId)) {
+    throw new LearningResourceImportDocumentError(
+      "The selected content gap reference is invalid.",
+      "LEARNING_IMPORT_CONTENT_GAP_INVALID",
+    );
+  }
+  return contentGapId;
+}
+
+export function resolveLearningResourceImportContentGapBriefId(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  if (
+    input.contentGapBriefId === undefined ||
+    input.contentGapBriefId === null ||
+    input.contentGapBriefId === ""
+  ) {
+    return null;
+  }
+  const contentGapBriefId = String(input.contentGapBriefId).trim();
+  if (!/^brief_[a-f0-9]{32}$/.test(contentGapBriefId)) {
+    throw new LearningResourceImportDocumentError(
+      "The selected Study Spot brief reference is invalid.",
+      "LEARNING_IMPORT_CONTENT_GAP_BRIEF_INVALID",
+    );
+  }
+  return contentGapBriefId;
 }

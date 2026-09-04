@@ -212,6 +212,42 @@ Design this so an authenticated automation agent such as Grok Bot can eventually
 
 Do not expose a broad unrestricted admin API.
 
+### Content-gap lesson workflow
+
+Learning Admin turns unmatched Study Spots into a small editorial queue. A gap is
+identified by `category + primaryTag + studySpotType` and has the lifecycle:
+
+```text
+open -> in_progress -> complete
+```
+
+The gap remains an editorial grouping, but lesson work is performed against its
+individual Study Spot briefs. The detail view provides Grok Bot with strategic
+context rather than user or tournament data:
+
+- number of Study Spots and total repeated decisions;
+- common stack bands, positions, opponent types, and secondary tags;
+- one actionable anonymised brief per Study Spot containing the summary, learning
+  rationale, cards/board/action evidence, and no account, report, tournament, or
+  hand identifiers;
+- an independent `open`, `in_progress`, or `covered` state and linked lesson for
+  every brief, including separate website and Instagram publication status.
+
+`Create lesson via JSON import` opens the existing structured import screen with
+the selected gap and Study Spot brief carried as workflow metadata. Grok's lesson JSON remains
+unchanged. Preview and taxonomy validation run normally; saving the import links
+the new resource only to that brief and changes it to `in_progress`. After saving,
+the editor returns to Content Gaps to review the result and manually mark the selected
+Study Spot `covered`.
+
+Coverage is an explicit editorial decision and remains available independently of
+the linked lesson's draft/published state. A grouped gap becomes `complete` only
+when all its Study Spot briefs are covered. This allows BB-versus-BTN and BB-versus-CO spots—or different hand
+classes inside the same broad topic—to produce different lessons. Instagram
+publication is deliberately independent and may remain pending. A new unmatched
+Study Spot automatically reopens its grouped gap. Historical Study Report match
+snapshots remain immutable.
+
 ## Public Learning Library
 
 Create:

@@ -38,6 +38,7 @@ This checklist implements the goal in [`learning_library_v1.md`](./learning_libr
 - [x] Enforce unique slug, external ID, and series/lesson number constraints where values are present.
 - [x] Add create, update, get-by-ID, get-by-slug, list, and publication repository operations.
 - [x] Aggregate content gaps by primary tag and study-spot type with occurrence count, first seen, and last seen.
+- [x] Add category-safe content-gap lifecycle state and per-Study-Spot briefs with anonymised authoring context, JSON-import handoff, individual coverage controls, and independent Instagram status.
 - [x] Keep content-gap occurrence writes idempotent for report retries.
 - [x] Extend the database verifier for canonical resources, duplicate constraints, publication, and content-gap aggregation.
 

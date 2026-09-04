@@ -106,6 +106,11 @@ test("scoped learning managers can use Learning Library routes but nothing else"
     { method: "POST", path: "/admin/learning" },
     { method: "PUT", path: "/admin/learning/resource-id" },
     { method: "POST", path: "/admin/learning/resource-id/publish" },
+    { method: "POST", path: "/admin/learning/content-gaps/gap-id/link" },
+    { method: "POST", path: "/admin/learning/content-gaps/gap-id/complete" },
+    { method: "POST", path: "/admin/learning/content-gaps/gap-id/reopen" },
+    { method: "POST", path: "/admin/learning/content-gaps/gap-id/briefs/brief-id/covered" },
+    { method: "POST", path: "/admin/learning/content-gaps/gap-id/briefs/brief-id/reopen" },
   ]) {
     assert.equal(scopedLearningAccessDenial({
       ...request,

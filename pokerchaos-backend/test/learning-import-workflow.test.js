@@ -24,6 +24,9 @@ function fileRequest(content = fixtureText, fileName = "daily-mtt-edge-003.json"
   };
 }
 
+const contentGapId = "gap_0123456789abcdef0123456789abcdef";
+const contentGapBriefId = "brief_0123456789abcdef0123456789abcdef";
+
 test("Grok JSON file runs through normalization and taxonomy validation", async () => {
   const result = await previewLearningResourceImportRequest(fileRequest());
   assert.equal(result.ok, true);
@@ -106,4 +109,80 @@ test("file import persists null until the Instagram derivative is published", as
   assert.deepEqual(created[0].heroPositionTags, ["any"]);
   assert.deepEqual(created[0].villainPositionTags, ["any"]);
   assert.equal(result.payload.resource.instagramUrl, null);
+});
+
+test("Grok import metadata links the saved JSON lesson to its selected content gap", async () => {
+  const created = [];
+  const request = { ...fileRequest(), contentGapId };
+  const gap = { id: contentGapId, primaryTag: "bb-defence", status: "open" };
+
+  const result = await saveLearningResourceImportRequest(request, {
+    findDuplicates: async () => [],
+    getContentGap: async (id) => id === contentGapId ? gap : null,
+    createId: () => "gap-resource-id",
+    createResource: async (resource, context) => {
+      created.push({ resource, context });
+      return resource;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.contentGapId, contentGapId);
+  assert.equal(created[0].context.contentGapId, contentGapId);
+  assert.equal(created[0].resource.id, "gap-resource-id");
+});
+
+test("content-gap import fails cleanly when the selected gap no longer exists", async () => {
+  const result = await previewLearningResourceImportRequest(
+    { ...fileRequest(), contentGapId },
+    { getContentGap: async () => null },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 404);
+  assert.equal(result.payload.code, "CONTENT_GAP_NOT_FOUND");
+});
+
+test("content-gap import rejects malformed workflow references without changing lesson JSON", async () => {
+  const result = await previewLearningResourceImportRequest({
+    ...fileRequest(),
+    contentGapId: "not-a-gap",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.payload.code, "LEARNING_IMPORT_CONTENT_GAP_INVALID");
+});
+
+test("Grok JSON import can target one Study Spot brief inside a grouped content gap", async () => {
+  const created = [];
+  const result = await saveLearningResourceImportRequest(
+    { ...fileRequest(), contentGapId, contentGapBriefId },
+    {
+      findDuplicates: async () => [],
+      getContentGap: async () => ({
+        id: contentGapId,
+        briefs: [{ id: contentGapBriefId, title: "BB versus BTN with a suited connector" }],
+      }),
+      createId: () => "specific-spot-resource-id",
+      createResource: async (resource, context) => {
+        created.push({ resource, context });
+        return resource;
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.contentGapBriefId, contentGapBriefId);
+  assert.equal(created[0].context.contentGapBriefId, contentGapBriefId);
+});
+
+test("Grok JSON import cannot attach a lesson to a brief from another gap", async () => {
+  const result = await previewLearningResourceImportRequest(
+    { ...fileRequest(), contentGapId, contentGapBriefId },
+    { getContentGap: async () => ({ id: contentGapId, briefs: [] }) },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 404);
+  assert.equal(result.payload.code, "CONTENT_GAP_BRIEF_NOT_FOUND");
 });

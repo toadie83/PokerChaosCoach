@@ -6,7 +6,9 @@ import {
   requestAdminLearningTaxonomy,
   requestCreateLearningResource,
   requestImportLearningResource,
+  requestMarkContentGapBriefCovered,
   requestPreviewLearningImport,
+  requestReopenContentGapBrief,
   requestSetLearningResourcePublished,
   requestUpdateLearningResource,
 } from "../api/aiService.js";
@@ -23,6 +25,108 @@ import {
   validateLearningImportFile,
 } from "../lib/learningImportClient.js";
 import LearningLessonContent from "./learning/LearningLessonContent.jsx";
+
+const CONTENT_GAP_IMPORT_SESSION_KEY = "playback-learning-content-gap-import";
+
+function takeContentGapImportContext() {
+  try {
+    const stored = window.sessionStorage.getItem(CONTENT_GAP_IMPORT_SESSION_KEY);
+    window.sessionStorage.removeItem(CONTENT_GAP_IMPORT_SESSION_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setContentGapImportContext(gap, brief = null) {
+  try {
+    if (gap) {
+      window.sessionStorage.setItem(CONTENT_GAP_IMPORT_SESSION_KEY, JSON.stringify({
+        id: gap.id,
+        status: gap.status,
+        category: gap.category,
+        primaryTag: gap.primaryTag,
+        studySpotType: gap.studySpotType,
+        studySpotCount: gap.studySpotCount,
+        decisionCount: gap.decisionCount,
+        brief: brief ? {
+          id: brief.id,
+          status: brief.status,
+          title: brief.title,
+          summary: brief.summary,
+          whyStudyThis: brief.whyStudyThis,
+          occurrenceCount: brief.occurrenceCount,
+          stackDepthBb: brief.stackDepthBb,
+          stackDepthTag: brief.stackDepthTag,
+          heroPosition: brief.heroPosition,
+          villainPosition: brief.villainPosition,
+          opponentType: brief.opponentType,
+          tags: brief.tags,
+          handContext: brief.handContext,
+        } : null,
+      }));
+    }
+    else window.sessionStorage.removeItem(CONTENT_GAP_IMPORT_SESSION_KEY);
+  } catch {
+    // Importing still works without the optional cross-page context.
+  }
+}
+
+function conciseDate(value) {
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not recorded" : date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+async function copyTextToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  const copied = document.execCommand("copy");
+  field.remove();
+  if (!copied) throw new Error("Copy is unavailable in this browser.");
+}
+
+function studySpotBriefText(gap, brief) {
+  const cards = brief.handContext?.heroCards?.join(" ") || "Not recorded";
+  const board = brief.handContext?.board?.join(" ") || "Not recorded";
+  const evidence = Object.entries(brief.handContext?.evidence || {})
+    .map(([key, value]) => `${learningLabel(key)}: ${value}`)
+    .join("; ") || "Not recorded";
+  return [
+    "PLAYBACK POKER — STUDY SPOT LESSON BRIEF",
+    `Topic: ${learningLabel(gap.primaryTag)}`,
+    `Category: ${learningLabel(gap.category)}`,
+    `Study Spot type: ${learningLabel(gap.studySpotType)}`,
+    `Specific spot: ${brief.title}`,
+    `Observed decisions represented: ${brief.occurrenceCount}`,
+    `Summary: ${brief.summary}`,
+    `Why this is worth studying: ${brief.whyStudyThis}`,
+    `Hero hand: ${cards}`,
+    `Board: ${board}`,
+    `Street: ${learningLabel(brief.handContext?.street) || "Not recorded"}`,
+    `Action taken: ${learningLabel(brief.handContext?.actionTaken) || "Not recorded"}`,
+    `Stack: ${brief.stackDepthBb ? `${brief.stackDepthBb}bb` : learningLabel(brief.stackDepthTag) || "Not recorded"}`,
+    `Positions: ${learningLabel(brief.heroPosition)} vs ${learningLabel(brief.villainPosition)}`,
+    `Opponent type: ${learningLabel(brief.opponentType)}`,
+    `Tags: ${(brief.tags || []).map(learningLabel).join(", ") || "None"}`,
+    `Evidence: ${evidence}`,
+    "",
+    "Create one focused MTT lesson for this specific Study Spot. Do not assume it also covers other hands grouped under the same content gap.",
+  ].join("\n");
+}
 
 function arrayFromLines(value) {
   return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -111,7 +215,11 @@ function LearningResourcePreviewModal({ resource, onClose }) {
   );
 }
 
-function ImportWorkspace({ onImported }) {
+function ImportWorkspace({ onImported, navigate }) {
+  const [contentGap, setContentGap] = useState(() => {
+    const context = takeContentGapImportContext();
+    return context?.brief ? { ...context, selectedBriefId: context.brief.id } : context;
+  });
   const [inputMode, setInputMode] = useState("paste");
   const [source, setSource] = useState("");
   const [importRequest, setImportRequest] = useState(null);
@@ -120,6 +228,23 @@ function ImportWorkspace({ onImported }) {
   const [warnings, setWarnings] = useState([]);
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
+  const [importedResource, setImportedResource] = useState(null);
+  const selectedBriefId = contentGap?.selectedBriefId || contentGap?.brief?.id || null;
+  const selectedBrief = contentGap?.briefs?.find((brief) => brief.id === selectedBriefId)
+    || contentGap?.brief
+    || null;
+
+  const updateContentGap = (gap) => setContentGap(gap
+    ? { ...gap, selectedBriefId }
+    : null);
+
+  const withContentGap = (request) => contentGap?.id
+    ? {
+        ...request,
+        contentGapId: contentGap.id,
+        ...(selectedBriefId ? { contentGapBriefId: selectedBriefId } : {}),
+      }
+    : request;
 
   const resetValidation = () => {
     setImportRequest(null);
@@ -144,7 +269,7 @@ function ImportWorkspace({ onImported }) {
       validateLearningImportFile(file);
       const content = await file.text();
       const identity = learningImportIdentityFromText(content);
-      const request = {
+      const request = withContentGap({
         importDocument: {
           mode: "file",
           fileName: file.name,
@@ -152,7 +277,7 @@ function ImportWorkspace({ onImported }) {
           size: file.size,
           content,
         },
-      };
+      });
       setSelectedFile({ name: file.name, identity });
       setImportRequest(request);
       setMessage("JSON file selected. Preview and validate before saving.");
@@ -168,11 +293,12 @@ function ImportWorkspace({ onImported }) {
     try {
       const request = inputMode === "file"
         ? importRequest
-        : { importDocument: { mode: "paste", content: source } };
+        : withContentGap({ importDocument: { mode: "paste", content: source } });
       if (!request) throw new Error("Select a JSON file before previewing.");
       const result = await requestPreviewLearningImport(request);
       setImportRequest(request);
       setPreview(result.resource);
+      if (result.contentGap) updateContentGap(result.contentGap);
       setWarnings(result.warnings || []);
       setStatus("ready");
       setMessage("Validation successful. Ready to save.");
@@ -191,6 +317,8 @@ function ImportWorkspace({ onImported }) {
     setMessage("");
     try {
       const result = await requestImportLearningResource(importRequest);
+      setImportedResource(result.resource);
+      if (result.contentGap) updateContentGap(result.contentGap);
       setStatus("saved");
       setMessage(`Imported ${result.resource.title} successfully.`);
       onImported(result.resource);
@@ -200,9 +328,32 @@ function ImportWorkspace({ onImported }) {
     }
   };
 
+  const detachContentGap = () => {
+    setContentGap(null);
+    setImportRequest((current) => current?.importDocument
+      ? { importDocument: current.importDocument }
+      : current);
+    setContentGapImportContext(null);
+  };
+
   return (
     <section className="learning-import-workspace">
-      <header><p className="tools-page-kicker">Structured ingestion</p><h1>Import Daily MTT Edge lesson</h1></header>
+      <header>
+        <p className="tools-page-kicker">Structured ingestion</p>
+        <h1>{contentGap ? "Import lesson for Study Spot" : "Import Daily MTT Edge lesson"}</h1>
+      </header>
+      {contentGap ? (
+        <div className="learning-import-gap-context">
+          <div>
+            <span className={`learning-gap-status learning-gap-status--${selectedBrief?.status || contentGap.status}`}>{learningLabel(selectedBrief?.status || contentGap.status)}</span>
+            <p>Creating a lesson for this Study Spot</p>
+            <h2>{selectedBrief?.title || learningLabel(contentGap.primaryTag)}</h2>
+            <span>{learningLabel(contentGap.primaryTag)} · {learningLabel(contentGap.category)} · {learningLabel(selectedBrief?.heroPosition)} vs {learningLabel(selectedBrief?.villainPosition)}</span>
+            <small>Saving links the lesson to this exact brief. You can publish it and close the brief here after import.</small>
+          </div>
+          <button type="button" onClick={detachContentGap}>Detach Study Spot</button>
+        </div>
+      ) : null}
       <div className="learning-import-grid">
         <div>
           <div className="learning-import-modes" role="group" aria-label="Import input method">
@@ -245,10 +396,212 @@ function ImportWorkspace({ onImported }) {
             <button type="button" onClick={previewImport} disabled={status === "working" || (inputMode === "file" && !importRequest)}>Preview and validate</button>
             <button type="button" onClick={saveImport} disabled={!preview || status === "working"}>Save import</button>
           </div>
+          {contentGap && importedResource ? (
+            <div className="learning-import-completion">
+              <strong>{importedResource.title} is linked to this Study Spot.</strong>
+              <p>Return to Content Gaps to review the lesson and manually mark the Study Spot as covered. Publication and Instagram remain separate editorial actions.</p>
+              <button type="button" className="learning-import-return" onClick={() => navigate("/admin/learning")}>Return to content gaps</button>
+            </div>
+          ) : null}
         </div>
         <div>{preview ? <ResourcePreview resource={preview} /> : <p className="learning-admin-empty">A validated preview will appear here before anything is saved.</p>}</div>
       </div>
     </section>
+  );
+}
+
+function ContentGapPanel({ gaps, onImport, onCover, onReopenBrief, onEditResource }) {
+  const [filter, setFilter] = useState("active");
+  const [expandedId, setExpandedId] = useState("");
+  const [copiedId, setCopiedId] = useState("");
+  const counts = {
+    open: gaps.filter((gap) => gap.status === "open").length,
+    in_progress: gaps.filter((gap) => gap.status === "in_progress").length,
+    complete: gaps.filter((gap) => gap.status === "complete").length,
+  };
+  const visible = gaps.filter((gap) => filter === "all"
+    || (filter === "active" && gap.status !== "complete")
+    || gap.status === filter);
+
+  const copyBrief = async (gap, brief) => {
+    try {
+      await copyTextToClipboard(studySpotBriefText(gap, brief));
+      setCopiedId(brief.id);
+    } catch {
+      setCopiedId("");
+    }
+  };
+
+  return (
+    <section className="learning-gap-panel" aria-label="Content gap briefs">
+      <div className="learning-gap-filters" role="group" aria-label="Filter content gaps">
+        {[
+          ["active", `Active ${counts.open + counts.in_progress}`],
+          ["complete", `Complete ${counts.complete}`],
+          ["all", `All ${gaps.length}`],
+        ].map(([value, label]) => (
+          <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}>{label}</button>
+        ))}
+      </div>
+      <div className="learning-gap-results">
+        {visible.map((gap) => {
+          const expanded = expandedId === gap.id;
+          const briefs = gap.briefs || gap.examples || [];
+          const coveredCount = briefs.filter((brief) => brief.status === "covered").length;
+          return (
+            <article className={`learning-gap-card learning-gap-card--${gap.status}`} key={gap.id}>
+              <button type="button" className="learning-gap-card-summary" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? "" : gap.id)}>
+                <span className={`learning-gap-status learning-gap-status--${gap.status}`}>{learningLabel(gap.status)}</span>
+                <strong>{learningLabel(gap.primaryTag)}</strong>
+                <span>{learningLabel(gap.category)} · {learningLabel(gap.studySpotType)}</span>
+                <span><b>{gap.decisionCount}</b> decisions · <b>{coveredCount}/{briefs.length}</b> Study Spots covered</span>
+              </button>
+              {expanded ? (
+                <div className="learning-gap-detail">
+                  <dl className="learning-gap-metrics">
+                    <div><dt>First seen</dt><dd>{conciseDate(gap.firstSeen)}</dd></div>
+                    <div><dt>Latest</dt><dd>{conciseDate(gap.lastSeen)}</dd></div>
+                  </dl>
+                  {[gap.stackDepthTags, gap.heroPositions, gap.villainPositions, gap.secondaryTags].some((items) => items?.length) ? (
+                    <div className="learning-gap-tags">
+                      {[
+                        ...(gap.stackDepthTags || []),
+                        ...(gap.heroPositions || []),
+                        ...(gap.villainPositions || []),
+                        ...(gap.secondaryTags || []),
+                      ].map((tag, index) => <span key={`${tag}-${index}`}>{learningLabel(tag)}</span>)}
+                    </div>
+                  ) : null}
+                  <div className="learning-gap-briefs">
+                    <div className="learning-gap-briefs-heading">
+                      <h3>Study Spot briefs</h3>
+                      <span>Each spot can produce a different lesson.</span>
+                    </div>
+                    {briefs.map((brief) => {
+                      const linkedLesson = (gap.linkedResources || []).find(
+                        (resource) => resource.id === brief.linkedResource?.id,
+                      ) || brief.linkedResource;
+                      return (
+                        <section className={`learning-gap-brief learning-gap-brief--${brief.status}`} key={brief.id}>
+                          <header>
+                            <span className={`learning-gap-status learning-gap-status--${brief.status}`}>{learningLabel(brief.status)}</span>
+                            <strong>{brief.title}</strong>
+                            <small>{brief.occurrenceCount} decision{brief.occurrenceCount === 1 ? "" : "s"} represented</small>
+                          </header>
+                          <div className="learning-gap-brief-body">
+                            <p>{brief.summary}</p>
+                            <p>{brief.whyStudyThis}</p>
+                            {(brief.handContext?.heroCards?.length || brief.handContext?.board?.length) ? (
+                              <code>
+                                {brief.handContext.heroCards?.length ? `Hero ${brief.handContext.heroCards.join(" ")}` : ""}
+                                {brief.handContext.board?.length ? ` · Board ${brief.handContext.board.join(" ")}` : ""}
+                              </code>
+                            ) : null}
+                            <span>{brief.stackDepthBb ? `${brief.stackDepthBb}bb · ` : ""}{learningLabel(brief.heroPosition)} vs {learningLabel(brief.villainPosition)} · {learningLabel(brief.handContext?.street)}</span>
+                          </div>
+                          {linkedLesson ? (
+                            <div className="learning-gap-brief-lesson">
+                              <span><b>Linked lesson</b><strong>{linkedLesson.title}</strong><small>{learningLabel(linkedLesson.status)} · {linkedLesson.instagramUrl ? "Instagram published" : "Instagram pending"}</small></span>
+                              <button type="button" onClick={() => onEditResource(linkedLesson)}>Edit lesson</button>
+                            </div>
+                          ) : null}
+                          <footer>
+                            <button type="button" onClick={() => copyBrief(gap, brief)}>{copiedId === brief.id ? "Text copied" : "Copy text"}</button>
+                            {brief.status !== "covered" ? <button type="button" onClick={() => onImport(gap, brief)}>Create lesson via JSON</button> : null}
+                            {brief.status === "covered" ? (
+                              <button type="button" className="learning-gap-cover-action learning-gap-cover-action--secondary" onClick={() => onReopenBrief(gap.id, brief.id)}>Reopen</button>
+                            ) : (
+                              <button type="button" className="learning-gap-cover-action" onClick={() => onCover(gap.id, brief.id)}>Mark as covered</button>
+                            )}
+                          </footer>
+                          {brief.status !== "covered" ? (
+                            <p className="learning-gap-brief-note">Coverage is a manual editorial decision{linkedLesson ? `; the linked lesson is currently ${learningLabel(linkedLesson.status)}.` : ". No lesson is linked yet."}</p>
+                          ) : null}
+                        </section>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+        {visible.length === 0 ? <p className="learning-admin-empty">No content gaps match this view.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function ContentGapWorkspaceModal({ gaps, onClose, onImport, onCover, onReopenBrief, onEditResource }) {
+  const modalRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const activeCount = gaps.filter((gap) => gap.status !== "complete").length;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(modalRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ) || []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    closeButtonRef.current?.focus();
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop learning-gap-modal-backdrop" onClick={onClose}>
+      <section
+        ref={modalRef}
+        className="modal learning-gap-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="content-gap-modal-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-header learning-gap-modal-header">
+          <div>
+            <p>Editorial queue <span aria-hidden="true">&middot;</span> {activeCount} active</p>
+            <h2 className="modal-title" id="content-gap-modal-title">Content gaps</h2>
+            <span>Open a gap to work through each Study Spot as its own lesson brief.</span>
+          </div>
+          <button ref={closeButtonRef} type="button" className="learning-admin-modal-close" onClick={onClose}>Close</button>
+        </header>
+        <div className="modal-body learning-gap-modal-body">
+          <ContentGapPanel
+            gaps={gaps}
+            onImport={onImport}
+            onCover={onCover}
+            onReopenBrief={onReopenBrief}
+            onEditResource={onEditResource}
+          />
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -262,6 +615,7 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
   const [form, setForm] = useState(emptyLearningResource());
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewResource, setPreviewResource] = useState(null);
+  const [contentGapsOpen, setContentGapsOpen] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [libraryCategory, setLibraryCategory] = useState("all");
   const [libraryStatus, setLibraryStatus] = useState("all");
@@ -309,6 +663,8 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
     [libraryCategory, libraryQuery, libraryStatus, resources],
   );
   const closeResourcePreview = useCallback(() => setPreviewResource(null), []);
+  const closeContentGaps = useCallback(() => setContentGapsOpen(false), []);
+  const activeGapCount = gaps.filter((gap) => gap.status !== "complete").length;
 
   const selectResource = (resource) => {
     setSelectedId(resource.id);
@@ -350,6 +706,40 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
     }
   };
 
+  const openGenericImport = () => {
+    setContentGapImportContext(null);
+    navigate("/admin/learning/import");
+  };
+
+  const openGapImport = (gap, brief) => {
+    setContentGapImportContext(gap, brief);
+    navigate("/admin/learning/import");
+  };
+
+  const coverBrief = async (gapId, briefId) => {
+    setMessage("");
+    try {
+      await requestMarkContentGapBriefCovered(gapId, briefId);
+      await load();
+      setMessage("Study Spot marked as covered.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error?.message || "The Study Spot could not be marked as covered.");
+    }
+  };
+
+  const reopenBrief = async (gapId, briefId) => {
+    setMessage("");
+    try {
+      await requestReopenContentGapBrief(gapId, briefId);
+      await load();
+      setMessage("Study Spot reopened.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error?.message || "The Study Spot could not be reopened.");
+    }
+  };
+
   if (importMode) {
     return (
       <main className="learning-admin-page">
@@ -357,7 +747,7 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
           {canManage ? <button type="button" onClick={() => navigate("/admin/learning")}>Resource manager</button> : null}
           <button type="button" className="active">JSON import</button>
         </div>
-        <ImportWorkspace onImported={() => {}} />
+        <ImportWorkspace onImported={() => {}} navigate={navigate} />
       </main>
     );
   }
@@ -366,9 +756,20 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
     <main className="learning-admin-page">
       <header className="learning-admin-header">
         <div><p className="tools-page-kicker">Restricted admin</p><h1>Learning resources</h1><p>Manage canonical lessons used by Study Spots and the public library.</p></div>
-        <div className="learning-admin-actions"><button type="button" onClick={newResource}>New resource</button><button type="button" onClick={() => navigate("/admin/learning/import")}>Import JSON</button></div>
+        <div className="learning-admin-actions"><button type="button" onClick={newResource}>New resource</button><button type="button" onClick={openGenericImport}>Import JSON</button></div>
       </header>
       {message ? <p className={status === "error" ? "learning-admin-error" : "learning-admin-success"}>{message}</p> : null}
+      <section className="learning-gap-launcher" aria-labelledby="content-gap-launcher-title">
+        <div>
+          <p className="tools-page-kicker">Editorial queue</p>
+          <h2 id="content-gap-launcher-title">Content gaps</h2>
+          <span>Review Study Spot briefs without crowding the resource manager.</span>
+        </div>
+        <div className="learning-gap-launcher-actions">
+          <span className="learning-gap-active-count"><strong>{activeGapCount}</strong> active</span>
+          <button type="button" onClick={() => setContentGapsOpen(true)}>Open content gaps</button>
+        </div>
+      </section>
       <div className="learning-admin-layout">
         <aside className="learning-admin-list">
           <div className="learning-admin-list-heading"><h2>Library</h2><span aria-live="polite">{visibleResources.length} / {resources.length}</span></div>
@@ -449,13 +850,23 @@ export default function AdminLearningPage({ entitlements, routePath, navigate })
           )}
           <div className="learning-admin-actions learning-admin-actions--sticky"><button type="button" onClick={save} disabled={status === "saving"}>{status === "saving" ? "Saving..." : "Save resource"}</button></div>
         </section>
-
-        <aside className="learning-gap-panel">
-          <div className="learning-admin-list-heading"><h2>Content gaps</h2><span>{gaps.length}</span></div>
-          {gaps.slice(0, 20).map((gap) => <div className="learning-gap-item" key={`${gap.primaryTag}-${gap.studySpotType}`}><strong>{learningLabel(gap.primaryTag)}</strong><span>{learningLabel(gap.studySpotType)} / {gap.occurrenceCount} occurrences</span></div>)}
-          {gaps.length === 0 ? <p>No unmatched Study Spot topics yet.</p> : null}
-        </aside>
       </div>
+      {contentGapsOpen ? (
+        <ContentGapWorkspaceModal
+          gaps={gaps}
+          onClose={closeContentGaps}
+          onImport={(gap, brief) => {
+            closeContentGaps();
+            openGapImport(gap, brief);
+          }}
+          onCover={coverBrief}
+          onReopenBrief={reopenBrief}
+          onEditResource={(resource) => {
+            closeContentGaps();
+            selectResource(resource);
+          }}
+        />
+      ) : null}
       {previewResource ? <LearningResourcePreviewModal resource={previewResource} onClose={closeResourcePreview} /> : null}
     </main>
   );

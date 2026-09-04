@@ -31,6 +31,8 @@ import {
 } from "./capabilityService.js";
 import {
   createLearningResource,
+  createLearningResourceForGap,
+  completeContentGap,
   consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
   deleteStudyReport,
@@ -40,6 +42,7 @@ import {
   findLearningResourceDuplicates,
   getLearningResourceById,
   getLearningResourceBySlug,
+  getContentGapById,
   getStudyReport,
   getAiHandReviewsForTournament,
   getMonthlyAiUsage,
@@ -51,12 +54,16 @@ import {
   insertTournamentPerformanceSnapshot,
   isDatabaseConfigured,
   listContentGaps,
+  linkContentGapResource,
+  markContentGapBriefCovered,
   listLearningResources,
   listStudyQueueItems,
   listStudyReports,
   listTournamentPerformanceSnapshots,
   listTournamentUploads,
   recordAiUsageEvent,
+  reopenContentGap,
+  reopenContentGapBrief,
   deleteStudyQueueItem,
   saveStudyQueueItem,
   seedLearningResources,
@@ -1280,6 +1287,18 @@ function databaseRequiredForLearning(res) {
 }
 
 function sendLearningWriteFailure(res, error) {
+  if (error?.code === "CONTENT_GAP_NOT_FOUND" || error?.code === "LEARNING_RESOURCE_NOT_FOUND") {
+    return res.status(404).json({ error: error.message, code: error.code });
+  }
+  if (error?.code === "CONTENT_GAP_BRIEF_NOT_FOUND") {
+    return res.status(404).json({ error: error.message, code: error.code });
+  }
+  if (error?.code === "CONTENT_GAP_BRIEF_REQUIRES_PUBLISHED_RESOURCE") {
+    return res.status(409).json({ error: error.message, code: error.code });
+  }
+  if (error?.code === "CONTENT_GAP_REQUIRES_PUBLISHED_RESOURCE") {
+    return res.status(409).json({ error: error.message, code: error.code });
+  }
   if (error?.code === "23505") {
     return res.status(409).json({
       error: "A learning resource already uses one of these identifiers.",
@@ -1411,13 +1430,78 @@ app.get("/admin/learning", requireAuth, requireLearningManager, async (req, res)
   }
 });
 
-app.get("/admin/learning/content-gaps", requireAuth, requireLearningManager, async (_req, res) => {
+app.get("/admin/learning/content-gaps", requireAuth, requireLearningManager, async (req, res) => {
   if (databaseRequiredForLearning(res)) return;
   try {
-    return res.json({ gaps: await listContentGaps() });
+    const requestedStatus = String(req.query?.status || "").trim();
+    const status = ["open", "in_progress", "complete"].includes(requestedStatus)
+      ? requestedStatus
+      : null;
+    return res.json({ gaps: await listContentGaps({ status }) });
   } catch (error) {
     console.error("[pokerchaos-backend] Content gap list error", error);
     return res.status(500).json({ error: "Content gaps could not be loaded.", code: "CONTENT_GAP_LIST_FAILED" });
+  }
+});
+
+app.post("/admin/learning/content-gaps/:id/link", requireAuth, requireLearningManager, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const gap = await linkContentGapResource(
+      String(req.params?.id || "").trim(),
+      String(req.body?.resourceId || "").trim(),
+    );
+    return res.json({ gap });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/content-gaps/:id/complete", requireAuth, requireLearningManager, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    return res.json({ gap: await completeContentGap(String(req.params?.id || "").trim()) });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/content-gaps/:id/reopen", requireAuth, requireLearningManager, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    const gap = await reopenContentGap(String(req.params?.id || "").trim());
+    if (!gap) return res.status(404).json({ error: "Content gap not found.", code: "CONTENT_GAP_NOT_FOUND" });
+    return res.json({ gap });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/content-gaps/:id/briefs/:briefId/covered", requireAuth, requireLearningManager, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    return res.json({
+      gap: await markContentGapBriefCovered(
+        String(req.params?.id || "").trim(),
+        String(req.params?.briefId || "").trim(),
+      ),
+    });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
+  }
+});
+
+app.post("/admin/learning/content-gaps/:id/briefs/:briefId/reopen", requireAuth, requireLearningManager, async (req, res) => {
+  if (databaseRequiredForLearning(res)) return;
+  try {
+    return res.json({
+      gap: await reopenContentGapBrief(
+        String(req.params?.id || "").trim(),
+        String(req.params?.briefId || "").trim(),
+      ),
+    });
+  } catch (error) {
+    return sendLearningWriteFailure(res, error);
   }
 });
 
@@ -1433,9 +1517,16 @@ app.post("/admin/learning/import/preview", requireAuth, requireLearningImporter,
   try {
     const validation = await previewLearningResourceImportRequest(req.body, {
       findDuplicates: (resource) => findLearningResourceDuplicates(resource),
+      getContentGap: getContentGapById,
     });
     if (!validation.ok) return res.status(validation.status).json(validation.payload);
-    return res.json({ valid: true, resource: validation.resource, duplicates: [], warnings: validation.warnings });
+    return res.json({
+      valid: true,
+      resource: validation.resource,
+      contentGap: validation.contentGap,
+      duplicates: [],
+      warnings: validation.warnings,
+    });
   } catch (error) {
     return sendLearningWriteFailure(res, error);
   }
@@ -1446,7 +1537,10 @@ app.post("/admin/learning/import", requireAuth, requireLearningImporter, async (
   try {
     const result = await saveLearningResourceImportRequest(req.body, {
       findDuplicates: (resource) => findLearningResourceDuplicates(resource),
-      createResource: createLearningResource,
+      getContentGap: getContentGapById,
+      createResource: (resource, { contentGapId, contentGapBriefId } = {}) => contentGapId
+        ? createLearningResourceForGap(resource, contentGapId, contentGapBriefId)
+        : createLearningResource(resource),
       createId: randomUUID,
     });
     if (!result.ok) return res.status(result.status).json(result.payload);

@@ -26,6 +26,22 @@ const nullableUrl = z
   .optional()
   .default(null)
   .transform((value) => value || null);
+const sourceUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((value) => {
+    if (!value) return true;
+    if (value.startsWith("/") && !value.startsWith("//")) return !/\s/.test(value);
+    try {
+      new URL(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Enter a full URL or a site path beginning with /.")
+  .optional()
+  .default("");
 
 const externalLearningResourceSchemaV1 = z
   .object({
@@ -231,7 +247,7 @@ export const learningResourceInputSchema = z
     publishedAt: z.string().datetime({ offset: true }).nullable().optional(),
     instagramCaption: optionalText(2200),
     instagramUrl: nullableUrl,
-    sourceUrl: z.string().trim().url().max(500).or(z.literal("")).optional().default(""),
+    sourceUrl,
     priority: z.number().int().min(0).max(100).optional().default(0),
   })
   .strict()
