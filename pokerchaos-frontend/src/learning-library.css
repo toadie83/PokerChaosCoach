@@ -30,7 +30,7 @@
 
 .learning-library-header,
 .learning-library-section,
-.learning-category-tabs,
+.learning-filter-panel,
 .learning-empty,
 .learning-state,
 .learning-lesson-page {
@@ -152,14 +152,78 @@
   box-shadow: var(--ring-focus);
 }
 
-.learning-category-tabs {
-  display: flex;
-  gap: var(--spacing-2);
-  overflow-x: auto;
-  padding-block: var(--spacing-4);
+.learning-filter-panel {
+  display: grid;
+  gap: 6px;
+  box-sizing: border-box;
+  margin-top: var(--spacing-4);
+  padding: 8px 10px;
+  border: 1px solid #dfe5e2;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 76%);
+  box-shadow: 0 8px 28px rgb(16 24 32 / 4%);
 }
 
-.learning-category-tabs button,
+.learning-filter-group {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.learning-filter-group + .learning-filter-group {
+  padding-top: 6px;
+  border-top: 1px solid #edf0ee;
+}
+
+.learning-filter-label {
+  padding-left: 4px;
+  color: #76847e;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.learning-filter-options {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.learning-filter-options::-webkit-scrollbar {
+  display: none;
+}
+
+.learning-filter-options button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #42514b;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.learning-filter-options button:hover {
+  background: #edf4f1;
+  color: var(--brand-accent-green-ink);
+}
+
+.learning-filter-options button.active {
+  background: var(--brand-accent-green-ink);
+  color: #fff;
+  box-shadow: 0 2px 7px rgb(6 103 76 / 18%);
+}
+
 .learning-admin-subnav button,
 .learning-admin-actions button,
 .learning-admin-editor-heading button,
@@ -177,7 +241,6 @@
   cursor: pointer;
 }
 
-.learning-category-tabs button.active,
 .learning-admin-subnav button.active,
 .learning-admin-actions button:first-child {
   border-color: var(--accent-primary);
@@ -185,12 +248,7 @@
   color: #fff;
 }
 
-.learning-category-tabs button.active {
-  border-color: var(--brand-accent-green-ink);
-  background: var(--brand-accent-green-ink);
-}
-
-.learning-category-tabs button:focus-visible,
+.learning-filter-options button:focus-visible,
 .learning-resource-card a:focus-visible,
 .learning-lesson-header > a:focus-visible {
   outline: none;
@@ -1878,7 +1936,7 @@
 
   .learning-library-header,
   .learning-library-section,
-  .learning-category-tabs,
+  .learning-filter-panel,
   .learning-empty,
   .learning-state,
   .learning-lesson-page {
