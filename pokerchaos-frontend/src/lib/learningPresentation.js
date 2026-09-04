@@ -13,6 +13,27 @@ export function isArticleLearningResource(resource) {
   return resource?.resourceType === "article" || resource?.contentType === "article";
 }
 
+function normalizedLearningSeries(resource) {
+  return String(resource?.series || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+export function filterLearningResourcesByCollection(resources, collection = "all") {
+  const available = Array.isArray(resources) ? resources : [];
+  if (collection === "all") return available;
+  if (collection === "articles") return available.filter(isArticleLearningResource);
+  if (collection === "daily-mtt-edge") {
+    return available.filter((resource) => normalizedLearningSeries(resource) === "daily mtt edge");
+  }
+  if (collection === "real-hand-lessons") {
+    return available.filter((resource) => ["real hand lesson", "real hand lessons"].includes(normalizedLearningSeries(resource)));
+  }
+  return available;
+}
+
 export function getLegacyLearningResourceRedirect(resource, currentPath = "") {
   const canonicalPath = String(resource?.canonicalPath || "").trim();
   if (

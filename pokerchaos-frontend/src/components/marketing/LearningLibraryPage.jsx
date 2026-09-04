@@ -5,6 +5,7 @@ import {
   requestLearningTaxonomy,
 } from "../../api/aiService.js";
 import {
+  filterLearningResourcesByCollection,
   groupLearningResources,
   isQuickLearningResource,
   learningLabel,
@@ -17,6 +18,7 @@ export default function LearningLibraryPage() {
   const [resources, setResources] = useState([]);
   const [taxonomy, setTaxonomy] = useState(null);
   const [category, setCategory] = useState("");
+  const [collection, setCollection] = useState("all");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
@@ -55,7 +57,11 @@ export default function LearningLibraryPage() {
     };
   }, [category, search]);
 
-  const groups = useMemo(() => groupLearningResources(resources), [resources]);
+  const visibleResources = useMemo(
+    () => filterLearningResourcesByCollection(resources, collection),
+    [collection, resources],
+  );
+  const groups = useMemo(() => groupLearningResources(visibleResources), [visibleResources]);
   const categories = Object.keys(taxonomy?.categories || {});
 
   return (
@@ -86,25 +92,54 @@ export default function LearningLibraryPage() {
         </label>
       </header>
 
-      <nav className="learning-category-tabs" aria-label="Learning categories">
-        <button
-          type="button"
-          className={!category ? "active" : ""}
-          onClick={() => setCategory("")}
-        >
-          All
-        </button>
-        {categories.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={category === item ? "active" : ""}
-            onClick={() => setCategory(item)}
-          >
-            {learningLabel(item)}
-          </button>
-        ))}
-      </nav>
+      <section className="learning-filter-panel" aria-label="Filter the Learning Library">
+        <div className="learning-filter-group">
+          <span className="learning-filter-label" id="learning-content-filter-label">Content</span>
+          <div className="learning-filter-options" role="group" aria-labelledby="learning-content-filter-label">
+            {[
+              ["all", "All"],
+              ["articles", "Articles"],
+              ["daily-mtt-edge", "Daily MTT Edge"],
+              ["real-hand-lessons", "Real Hand Lessons"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={collection === value ? "active" : ""}
+                aria-pressed={collection === value}
+                onClick={() => setCollection(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="learning-filter-group">
+          <span className="learning-filter-label" id="learning-topic-filter-label">Topic</span>
+          <div className="learning-filter-options" role="group" aria-labelledby="learning-topic-filter-label">
+            <button
+              type="button"
+              className={!category ? "active" : ""}
+              aria-pressed={!category}
+              onClick={() => setCategory("")}
+            >
+              All
+            </button>
+            {categories.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={category === item ? "active" : ""}
+                aria-pressed={category === item}
+                onClick={() => setCategory(item)}
+              >
+                {learningLabel(item)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {status === "loading" ? (
         <p className="learning-state">Loading lessons...</p>
@@ -112,7 +147,7 @@ export default function LearningLibraryPage() {
       {status === "error" ? (
         <p className="learning-state learning-state--error">{error}</p>
       ) : null}
-      {status === "ready" && resources.length === 0 ? (
+      {status === "ready" && visibleResources.length === 0 ? (
         <section className="learning-empty">
           <h2>No published lessons match this view.</h2>
           <p>Clear the filters to browse the complete library.</p>

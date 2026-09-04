@@ -24,53 +24,12 @@ import {
   learningImportIdentityFromText,
   validateLearningImportFile,
 } from "../lib/learningImportClient.js";
+import {
+  clearContentGapImportContext,
+  readContentGapImportContext,
+  setContentGapImportContext,
+} from "../lib/contentGapImportContext.js";
 import LearningLessonContent from "./learning/LearningLessonContent.jsx";
-
-const CONTENT_GAP_IMPORT_SESSION_KEY = "playback-learning-content-gap-import";
-
-function takeContentGapImportContext() {
-  try {
-    const stored = window.sessionStorage.getItem(CONTENT_GAP_IMPORT_SESSION_KEY);
-    window.sessionStorage.removeItem(CONTENT_GAP_IMPORT_SESSION_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
-function setContentGapImportContext(gap, brief = null) {
-  try {
-    if (gap) {
-      window.sessionStorage.setItem(CONTENT_GAP_IMPORT_SESSION_KEY, JSON.stringify({
-        id: gap.id,
-        status: gap.status,
-        category: gap.category,
-        primaryTag: gap.primaryTag,
-        studySpotType: gap.studySpotType,
-        studySpotCount: gap.studySpotCount,
-        decisionCount: gap.decisionCount,
-        brief: brief ? {
-          id: brief.id,
-          status: brief.status,
-          title: brief.title,
-          summary: brief.summary,
-          whyStudyThis: brief.whyStudyThis,
-          occurrenceCount: brief.occurrenceCount,
-          stackDepthBb: brief.stackDepthBb,
-          stackDepthTag: brief.stackDepthTag,
-          heroPosition: brief.heroPosition,
-          villainPosition: brief.villainPosition,
-          opponentType: brief.opponentType,
-          tags: brief.tags,
-          handContext: brief.handContext,
-        } : null,
-      }));
-    }
-    else window.sessionStorage.removeItem(CONTENT_GAP_IMPORT_SESSION_KEY);
-  } catch {
-    // Importing still works without the optional cross-page context.
-  }
-}
 
 function conciseDate(value) {
   if (!value) return "Not recorded";
@@ -217,7 +176,7 @@ function LearningResourcePreviewModal({ resource, onClose }) {
 
 function ImportWorkspace({ onImported, navigate }) {
   const [contentGap, setContentGap] = useState(() => {
-    const context = takeContentGapImportContext();
+    const context = readContentGapImportContext();
     return context?.brief ? { ...context, selectedBriefId: context.brief.id } : context;
   });
   const [inputMode, setInputMode] = useState("paste");
@@ -233,6 +192,10 @@ function ImportWorkspace({ onImported, navigate }) {
   const selectedBrief = contentGap?.briefs?.find((brief) => brief.id === selectedBriefId)
     || contentGap?.brief
     || null;
+
+  useEffect(() => {
+    clearContentGapImportContext();
+  }, []);
 
   const updateContentGap = (gap) => setContentGap(gap
     ? { ...gap, selectedBriefId }

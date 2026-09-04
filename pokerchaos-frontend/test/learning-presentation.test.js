@@ -3,12 +3,27 @@ import test from "node:test";
 
 import {
   filterAdminLearningResources,
+  filterLearningResourcesByCollection,
   getLegacyLearningResourceRedirect,
   groupLearningResources,
   learningResourceInput,
   learningResourceSlugFromPath,
   toggleWildcardChoice,
 } from "../src/lib/learningPresentation.js";
+
+test("public library filters articles and named lesson series independently", () => {
+  const resources = [
+    { id: "article", resourceType: "article", series: null },
+    { id: "daily", resourceType: "quick_lesson", series: "Daily MTT Edge" },
+    { id: "real", resourceType: "quick_lesson", series: "Real Hand Lessons" },
+    { id: "other", resourceType: "guide", series: "Tournament Foundations" },
+  ];
+
+  assert.deepEqual(filterLearningResourcesByCollection(resources).map(({ id }) => id), ["article", "daily", "real", "other"]);
+  assert.deepEqual(filterLearningResourcesByCollection(resources, "articles").map(({ id }) => id), ["article"]);
+  assert.deepEqual(filterLearningResourcesByCollection(resources, "daily-mtt-edge").map(({ id }) => id), ["daily"]);
+  assert.deepEqual(filterLearningResourcesByCollection(resources, "real-hand-lessons").map(({ id }) => id), ["real"]);
+});
 
 test("admin library filters lessons by identity, category, and publication state", () => {
   const resources = [
