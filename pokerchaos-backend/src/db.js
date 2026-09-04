@@ -315,7 +315,11 @@ export async function initDatabase() {
   await resolvedPool.query(`
     ALTER TABLE content_gap_occurrences
       ADD COLUMN IF NOT EXISTS primary_tag TEXT,
-      ADD COLUMN IF NOT EXISTS study_spot_type TEXT;
+      ADD COLUMN IF NOT EXISTS study_spot_type TEXT,
+      ADD COLUMN IF NOT EXISTS brief_id TEXT,
+      ADD COLUMN IF NOT EXISTS linked_resource_id TEXT
+        REFERENCES learning_resources (id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS covered_at TIMESTAMPTZ;
   `);
 
   await resolvedPool.query(`
@@ -327,8 +331,165 @@ export async function initDatabase() {
   `);
 
   await resolvedPool.query(`
+    UPDATE content_gap_occurrences
+    SET brief_id = 'brief_' || MD5(study_spot_id || CHR(31) || tag)
+    WHERE brief_id IS NULL;
+
+    ALTER TABLE content_gap_occurrences
+      ALTER COLUMN brief_id SET NOT NULL;
+  `);
+
+  await resolvedPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS content_gap_occurrences_brief_uidx
+    ON content_gap_occurrences (brief_id);
+  `);
+
+  await resolvedPool.query(`
     CREATE INDEX IF NOT EXISTS content_gap_primary_type_seen_idx
     ON content_gap_occurrences (primary_tag, study_spot_type, last_seen DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS content_gaps (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      primary_tag TEXT NOT NULL,
+      study_spot_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'in_progress', 'complete')),
+      resolved_resource_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      UNIQUE (category, primary_tag, study_spot_type),
+      FOREIGN KEY (resolved_resource_id)
+        REFERENCES learning_resources (id)
+        ON DELETE SET NULL
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS content_gaps_status_updated_idx
+    ON content_gaps (status, updated_at DESC);
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS content_gap_resources (
+      content_gap_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (content_gap_id, resource_id),
+      FOREIGN KEY (content_gap_id)
+        REFERENCES content_gaps (id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (resource_id)
+        REFERENCES learning_resources (id)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await resolvedPool.query(`
+    INSERT INTO content_gaps (
+      id,
+      category,
+      primary_tag,
+      study_spot_type,
+      created_at,
+      updated_at
+    )
+    SELECT
+      'gap_' || MD5(
+        s.category || CHR(31) ||
+        COALESCE(o.primary_tag, o.tag) || CHR(31) ||
+        COALESCE(o.study_spot_type, 'interesting_spot')
+      ),
+      s.category,
+      COALESCE(o.primary_tag, o.tag),
+      COALESCE(o.study_spot_type, 'interesting_spot'),
+      MIN(o.first_seen),
+      MAX(o.last_seen)
+    FROM content_gap_occurrences o
+    JOIN study_spots s ON s.id = o.study_spot_id
+    GROUP BY
+      s.category,
+      COALESCE(o.primary_tag, o.tag),
+      COALESCE(o.study_spot_type, 'interesting_spot')
+    ON CONFLICT (category, primary_tag, study_spot_type)
+    DO NOTHING;
+  `);
+
+  await resolvedPool.query(`
+    UPDATE content_gaps cg
+    SET
+      status = CASE
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          WHERE
+            s.category = cg.category
+            AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+            AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+            AND o.covered_at IS NULL
+        ) THEN 'complete'
+        WHEN EXISTS (
+          SELECT 1
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          WHERE
+            s.category = cg.category
+            AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+            AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+            AND o.linked_resource_id IS NOT NULL
+        ) THEN 'in_progress'
+        ELSE 'open'
+      END,
+      resolved_resource_id = CASE
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          WHERE
+            s.category = cg.category
+            AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+            AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+            AND o.covered_at IS NULL
+        ) THEN (
+          SELECT o.linked_resource_id
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          WHERE
+            s.category = cg.category
+            AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+            AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+            AND o.covered_at IS NOT NULL
+          ORDER BY o.covered_at DESC
+          LIMIT 1
+        )
+        ELSE NULL
+      END,
+      completed_at = CASE
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          WHERE
+            s.category = cg.category
+            AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+            AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+            AND o.covered_at IS NULL
+        ) THEN COALESCE(cg.completed_at, NOW())
+        ELSE NULL
+      END
+    WHERE EXISTS (
+      SELECT 1
+      FROM content_gap_occurrences o
+      JOIN study_spots s ON s.id = o.study_spot_id
+      WHERE
+        s.category = cg.category
+        AND COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+        AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+    );
   `);
 
   await resolvedPool.query(`
@@ -1012,6 +1173,81 @@ export async function findLearningResourceDuplicates(resource, excludeId = null)
 
 export async function createLearningResource(resource) {
   return writeLearningResource(getRequiredPool(), resource, "id");
+}
+
+export async function createLearningResourceForGap(resource, contentGapId, contentGapBriefId = null) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const gap = await client.query(
+      "SELECT id FROM content_gaps WHERE id = $1 FOR UPDATE;",
+      [contentGapId],
+    );
+    if (!gap.rows[0]) {
+      const error = new Error("Content gap not found.");
+      error.code = "CONTENT_GAP_NOT_FOUND";
+      throw error;
+    }
+    if (contentGapBriefId) {
+      const brief = await client.query(
+        `
+          SELECT o.brief_id
+          FROM content_gap_occurrences o
+          JOIN study_spots s ON s.id = o.study_spot_id
+          JOIN content_gaps cg
+            ON cg.id = $1
+            AND cg.category = s.category
+            AND cg.primary_tag = COALESCE(o.primary_tag, o.tag)
+            AND cg.study_spot_type = COALESCE(o.study_spot_type, 'interesting_spot')
+          WHERE o.brief_id = $2
+          FOR UPDATE OF o;
+        `,
+        [contentGapId, contentGapBriefId],
+      );
+      if (!brief.rows[0]) {
+        const error = new Error("Content gap Study Spot brief not found.");
+        error.code = "CONTENT_GAP_BRIEF_NOT_FOUND";
+        throw error;
+      }
+    }
+    const created = await writeLearningResource(client, resource, "id");
+    await client.query(
+      `
+        INSERT INTO content_gap_resources (content_gap_id, resource_id)
+        VALUES ($1, $2)
+        ON CONFLICT (content_gap_id, resource_id) DO NOTHING;
+      `,
+      [contentGapId, created.id],
+    );
+    await client.query(
+      `
+        UPDATE content_gaps
+        SET
+          status = CASE WHEN status = 'complete' THEN status ELSE 'in_progress' END,
+          updated_at = NOW()
+        WHERE id = $1;
+      `,
+      [contentGapId],
+    );
+    if (contentGapBriefId) {
+      await client.query(
+        `
+          UPDATE content_gap_occurrences
+          SET linked_resource_id = $2, covered_at = NULL
+          WHERE brief_id = $1;
+        `,
+        [contentGapBriefId, created.id],
+      );
+    }
+    await client.query("COMMIT");
+    return created;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateLearningResource(resource) {
@@ -1906,7 +2142,7 @@ export async function completeStudyReport({ id, userId, spots }) {
         const tags = Array.isArray(spot.tags) ? spot.tags : [];
         const gapTag = String(spot.contentGapTag || tags.at(-1) || spot.category).trim();
         if (gapTag) {
-          await client.query(
+          const occurrence = await client.query(
             `
               INSERT INTO content_gap_occurrences (
                 study_spot_id,
@@ -1914,17 +2150,50 @@ export async function completeStudyReport({ id, userId, spots }) {
                 user_id,
                 tag,
                 primary_tag,
-                study_spot_type
+                study_spot_type,
+                brief_id
               )
-              VALUES ($1, $2, $3, $4, $4, $5)
+              VALUES ($1, $2, $3, $4, $4, $5, 'brief_' || MD5($1 || CHR(31) || $4))
               ON CONFLICT (study_spot_id, tag)
-              DO UPDATE SET
-                primary_tag = EXCLUDED.primary_tag,
-                study_spot_type = EXCLUDED.study_spot_type,
-                last_seen = NOW();
+              DO NOTHING
+              RETURNING study_spot_id;
             `,
             [spot.id, id, userId, gapTag, spot.type || "interesting_spot"],
           );
+          if (occurrence.rows[0]) {
+            await client.query(
+              `
+                INSERT INTO content_gaps (
+                  id,
+                  category,
+                  primary_tag,
+                  study_spot_type
+                )
+                VALUES (
+                  'gap_' || MD5($1 || CHR(31) || $2 || CHR(31) || $3),
+                  $1,
+                  $2,
+                  $3
+                )
+                ON CONFLICT (category, primary_tag, study_spot_type)
+                DO UPDATE SET
+                  status = CASE
+                    WHEN content_gaps.status = 'complete' THEN 'open'
+                    ELSE content_gaps.status
+                  END,
+                  resolved_resource_id = CASE
+                    WHEN content_gaps.status = 'complete' THEN NULL
+                    ELSE content_gaps.resolved_resource_id
+                  END,
+                  completed_at = CASE
+                    WHEN content_gaps.status = 'complete' THEN NULL
+                    ELSE content_gaps.completed_at
+                  END,
+                  updated_at = NOW();
+              `,
+              [spot.category, gapTag, spot.type || "interesting_spot"],
+            );
+          }
         }
       }
     }
@@ -2127,29 +2396,462 @@ export async function listStudyQueueItems(userId, status = null) {
   }));
 }
 
-export async function listContentGaps() {
-  const resolvedPool = getRequiredPool();
-  const result = await resolvedPool.query(`
-    SELECT
-      COALESCE(primary_tag, tag) AS primary_tag,
-      COALESCE(study_spot_type, 'interesting_spot') AS study_spot_type,
-      COUNT(*)::INTEGER AS occurrence_count,
-      (ARRAY_AGG(study_spot_id ORDER BY last_seen DESC))[1:10] AS example_spot_ids,
-      MIN(first_seen) AS first_seen,
-      MAX(last_seen) AS last_seen
-    FROM content_gap_occurrences
-    GROUP BY COALESCE(primary_tag, tag), COALESCE(study_spot_type, 'interesting_spot')
-    ORDER BY occurrence_count DESC, last_seen DESC;
-  `);
-  return result.rows.map((row) => ({
+function uniqueStrings(values) {
+  return Array.from(new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  ));
+}
+
+function sanitizedGapHandContext(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const board = Array.isArray(source.board)
+    ? uniqueStrings(source.board).slice(0, 5)
+    : source.board && typeof source.board === "object"
+      ? uniqueStrings([
+          ...(Array.isArray(source.board.flop) ? source.board.flop : []),
+          source.board.turn,
+          source.board.river,
+        ]).slice(0, 5)
+      : [];
+  const evidence = source.evidence && typeof source.evidence === "object" && !Array.isArray(source.evidence)
+    ? Object.fromEntries(
+        Object.entries(source.evidence)
+          .filter(([, item]) => ["string", "number", "boolean"].includes(typeof item))
+          .slice(0, 8),
+      )
+    : {};
+  return {
+    heroCards: uniqueStrings(source.heroCards).slice(0, 2),
+    board,
+    street: String(source.street || "").trim() || null,
+    actionTaken: String(source.actionTaken || "").trim() || null,
+    evidence,
+  };
+}
+
+function toContentGapSummary(row) {
+  return {
+    id: row.id,
+    category: row.category,
     primaryTag: row.primary_tag,
     tag: row.primary_tag,
     studySpotType: row.study_spot_type,
-    occurrenceCount: Number(row.occurrence_count) || 0,
-    exampleSpotIds: Array.isArray(row.example_spot_ids)
-      ? row.example_spot_ids
-      : [],
-    firstSeen: row.first_seen || null,
-    lastSeen: row.last_seen || null,
-  }));
+    status: row.status,
+    studySpotCount: Number(row.study_spot_count) || 0,
+    decisionCount: Number(row.decision_count) || 0,
+    occurrenceCount: Number(row.decision_count) || 0,
+    stackDepthTags: uniqueStrings(row.stack_depth_tags),
+    heroPositions: uniqueStrings(row.hero_positions),
+    villainPositions: uniqueStrings(row.villain_positions),
+    opponentTypes: uniqueStrings(row.opponent_types),
+    secondaryTags: [],
+    briefs: [],
+    linkedResources: [],
+    resolvedResourceId: row.resolved_resource_id || null,
+    firstSeen: row.first_seen || row.created_at || null,
+    lastSeen: row.last_seen || row.updated_at || null,
+    updatedAt: row.updated_at || null,
+    completedAt: row.completed_at || null,
+  };
+}
+
+export async function listContentGaps({ status = null } = {}) {
+  const resolvedPool = getRequiredPool();
+  const values = [];
+  const statusFilter = status ? "AND cg.status = $1" : "";
+  if (status) values.push(status);
+  const result = await resolvedPool.query(
+    `
+      SELECT
+        cg.*,
+        COUNT(*)::INTEGER AS study_spot_count,
+        COALESCE(SUM(s.occurrence_count), 0)::INTEGER AS decision_count,
+        ARRAY_AGG(DISTINCT s.stack_depth_tag)
+          FILTER (WHERE s.stack_depth_tag IS NOT NULL) AS stack_depth_tags,
+        ARRAY_AGG(DISTINCT s.hero_position)
+          FILTER (WHERE s.hero_position <> 'unknown') AS hero_positions,
+        ARRAY_AGG(DISTINCT s.villain_position)
+          FILTER (WHERE s.villain_position <> 'unknown') AS villain_positions,
+        ARRAY_AGG(DISTINCT s.opponent_type)
+          FILTER (WHERE s.opponent_type <> 'unknown') AS opponent_types,
+        MIN(o.first_seen) AS first_seen,
+        MAX(o.last_seen) AS last_seen
+      FROM content_gaps cg
+      JOIN content_gap_occurrences o
+        ON COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+        AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+      JOIN study_spots s
+        ON s.id = o.study_spot_id
+        AND s.category = cg.category
+      WHERE TRUE ${statusFilter}
+      GROUP BY cg.id
+      ORDER BY
+        CASE cg.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+        decision_count DESC,
+        last_seen DESC;
+    `,
+    values,
+  );
+  const gaps = result.rows.map(toContentGapSummary);
+  if (gaps.length === 0) return [];
+
+  const gapIds = gaps.map((gap) => gap.id);
+  const [tagResult, briefResult, resourceResult] = await Promise.all([
+    resolvedPool.query(
+      `
+        SELECT cg.id, tag.value AS tag
+        FROM content_gaps cg
+        JOIN content_gap_occurrences o
+          ON COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+          AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+        JOIN study_spots s ON s.id = o.study_spot_id AND s.category = cg.category
+        CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS_TEXT(s.tags) AS tag(value)
+        WHERE cg.id = ANY($1::text[]) AND tag.value <> cg.primary_tag
+        GROUP BY cg.id, tag.value;
+      `,
+      [gapIds],
+    ),
+    resolvedPool.query(
+      `
+        SELECT
+          cg.id AS gap_id,
+          o.brief_id,
+          o.covered_at,
+          s.title,
+          s.summary,
+          s.why_study_this,
+          s.occurrence_count,
+          s.stack_depth_bb,
+          s.stack_depth_tag,
+          s.hero_position,
+          s.villain_position,
+          s.opponent_type,
+          s.tags,
+          s.hand_context,
+          o.last_seen,
+          linked.id AS linked_resource_id,
+          linked.title AS linked_resource_title,
+          linked.slug AS linked_resource_slug,
+          linked.content_type AS linked_resource_type,
+          linked.source_url AS linked_resource_source_url,
+          linked.status AS linked_resource_status,
+          linked.instagram_url AS linked_resource_instagram_url
+        FROM content_gaps cg
+        JOIN content_gap_occurrences o
+          ON COALESCE(o.primary_tag, o.tag) = cg.primary_tag
+          AND COALESCE(o.study_spot_type, 'interesting_spot') = cg.study_spot_type
+        JOIN study_spots s ON s.id = o.study_spot_id AND s.category = cg.category
+        LEFT JOIN learning_resources linked ON linked.id = o.linked_resource_id
+        WHERE cg.id = ANY($1::text[])
+        ORDER BY cg.id, o.covered_at NULLS FIRST, o.last_seen DESC, s.rank_score DESC;
+      `,
+      [gapIds],
+    ),
+    resolvedPool.query(
+      `
+        SELECT cgr.content_gap_id, cgr.linked_at, r.*
+        FROM content_gap_resources cgr
+        JOIN learning_resources r ON r.id = cgr.resource_id
+        WHERE cgr.content_gap_id = ANY($1::text[])
+        ORDER BY cgr.linked_at DESC;
+      `,
+      [gapIds],
+    ),
+  ]);
+
+  const byId = new Map(gaps.map((gap) => [gap.id, gap]));
+  for (const row of tagResult.rows) {
+    byId.get(row.id)?.secondaryTags.push(row.tag);
+  }
+  for (const row of briefResult.rows) {
+    const gap = byId.get(row.gap_id);
+    if (!gap) continue;
+    const linkedResource = row.linked_resource_id ? {
+      id: row.linked_resource_id,
+      title: row.linked_resource_title,
+      status: row.linked_resource_status,
+      instagramUrl: row.linked_resource_instagram_url || null,
+      canonicalPath: getLearningResourceCanonicalPath({
+        slug: row.linked_resource_slug,
+        resourceType: row.linked_resource_type,
+        sourceUrl: row.linked_resource_source_url,
+      }),
+    } : null;
+    gap.briefs.push({
+      id: row.brief_id,
+      status: row.covered_at ? "covered" : linkedResource ? "in_progress" : "open",
+      coveredAt: row.covered_at || null,
+      title: row.title,
+      summary: row.summary,
+      whyStudyThis: row.why_study_this,
+      occurrenceCount: Number(row.occurrence_count) || 1,
+      stackDepthBb: row.stack_depth_bb === null ? null : Number(row.stack_depth_bb),
+      stackDepthTag: row.stack_depth_tag || null,
+      heroPosition: row.hero_position || "unknown",
+      villainPosition: row.villain_position || "unknown",
+      opponentType: row.opponent_type || "unknown",
+      tags: uniqueStrings(row.tags),
+      handContext: sanitizedGapHandContext(row.hand_context),
+      linkedResource,
+    });
+  }
+  for (const row of resourceResult.rows) {
+    const gap = byId.get(row.content_gap_id);
+    if (!gap) continue;
+    gap.linkedResources.push({
+      ...toLearningResourcePayload(row),
+      linkedAt: row.linked_at || null,
+    });
+  }
+  for (const gap of gaps) gap.examples = gap.briefs;
+  return gaps;
+}
+
+export async function getContentGapById(contentGapId) {
+  const gaps = await listContentGaps();
+  return gaps.find((gap) => gap.id === contentGapId) || null;
+}
+
+export async function linkContentGapResource(contentGapId, resourceId, briefId = null) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        INSERT INTO content_gap_resources (content_gap_id, resource_id)
+        SELECT cg.id, lr.id
+        FROM content_gaps cg
+        CROSS JOIN learning_resources lr
+        WHERE cg.id = $1 AND lr.id = $2
+        ON CONFLICT (content_gap_id, resource_id) DO NOTHING
+        RETURNING content_gap_id;
+      `,
+      [contentGapId, resourceId],
+    );
+    if (!result.rows[0]) {
+      const exists = await client.query(
+        `SELECT
+          EXISTS(SELECT 1 FROM content_gaps WHERE id = $1) AS gap_exists,
+          EXISTS(SELECT 1 FROM learning_resources WHERE id = $2) AS resource_exists;`,
+        [contentGapId, resourceId],
+      );
+      if (!exists.rows[0]?.gap_exists || !exists.rows[0]?.resource_exists) {
+        const error = new Error(!exists.rows[0]?.gap_exists ? "Content gap not found." : "Learning resource not found.");
+        error.code = !exists.rows[0]?.gap_exists ? "CONTENT_GAP_NOT_FOUND" : "LEARNING_RESOURCE_NOT_FOUND";
+        throw error;
+      }
+    }
+    await client.query(
+      `
+        UPDATE content_gaps
+        SET
+          status = CASE WHEN status = 'complete' THEN status ELSE 'in_progress' END,
+          updated_at = NOW()
+        WHERE id = $1;
+      `,
+      [contentGapId],
+    );
+    if (briefId) {
+      const brief = await client.query(
+        `
+          UPDATE content_gap_occurrences o
+          SET linked_resource_id = $3, covered_at = NULL
+          FROM study_spots s, content_gaps cg
+          WHERE
+            o.brief_id = $2
+            AND s.id = o.study_spot_id
+            AND cg.id = $1
+            AND cg.category = s.category
+            AND cg.primary_tag = COALESCE(o.primary_tag, o.tag)
+            AND cg.study_spot_type = COALESCE(o.study_spot_type, 'interesting_spot')
+          RETURNING o.brief_id;
+        `,
+        [contentGapId, briefId, resourceId],
+      );
+      if (!brief.rows[0]) {
+        const error = new Error("Content gap Study Spot brief not found.");
+        error.code = "CONTENT_GAP_BRIEF_NOT_FOUND";
+        throw error;
+      }
+    }
+    await client.query("COMMIT");
+    return getContentGapById(contentGapId);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function refreshContentGapStatusFromBriefs(client, contentGapId) {
+  await client.query(
+    `
+      WITH brief_status AS (
+        SELECT
+          COUNT(*) FILTER (WHERE o.covered_at IS NULL)::INTEGER AS uncovered_count,
+          COUNT(*) FILTER (WHERE o.linked_resource_id IS NOT NULL)::INTEGER AS linked_count,
+          (ARRAY_AGG(o.linked_resource_id ORDER BY o.covered_at DESC)
+            FILTER (WHERE o.covered_at IS NOT NULL AND o.linked_resource_id IS NOT NULL))[1]
+            AS resolved_resource_id
+        FROM content_gaps grouped_gap
+        JOIN content_gap_occurrences o
+          ON COALESCE(o.primary_tag, o.tag) = grouped_gap.primary_tag
+          AND COALESCE(o.study_spot_type, 'interesting_spot') = grouped_gap.study_spot_type
+        JOIN study_spots s
+          ON s.id = o.study_spot_id
+          AND s.category = grouped_gap.category
+        WHERE grouped_gap.id = $1
+      )
+      UPDATE content_gaps cg
+      SET
+        status = CASE
+          WHEN brief_status.uncovered_count = 0 THEN 'complete'
+          WHEN brief_status.linked_count > 0 THEN 'in_progress'
+          ELSE 'open'
+        END,
+        resolved_resource_id = CASE
+          WHEN brief_status.uncovered_count = 0 THEN brief_status.resolved_resource_id
+          ELSE NULL
+        END,
+        completed_at = CASE
+          WHEN brief_status.uncovered_count = 0 THEN COALESCE(cg.completed_at, NOW())
+          ELSE NULL
+        END,
+        updated_at = NOW()
+      FROM brief_status
+      WHERE cg.id = $1;
+    `,
+    [contentGapId],
+  );
+}
+
+export async function markContentGapBriefCovered(contentGapId, briefId) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        UPDATE content_gap_occurrences o
+        SET covered_at = NOW()
+        FROM study_spots s, content_gaps cg
+        WHERE
+          o.brief_id = $2
+          AND s.id = o.study_spot_id
+          AND cg.id = $1
+          AND cg.category = s.category
+          AND cg.primary_tag = COALESCE(o.primary_tag, o.tag)
+          AND cg.study_spot_type = COALESCE(o.study_spot_type, 'interesting_spot')
+        RETURNING o.brief_id;
+      `,
+      [contentGapId, briefId],
+    );
+    if (!result.rows[0]) {
+      const error = new Error("Content gap Study Spot brief not found.");
+      error.code = "CONTENT_GAP_BRIEF_NOT_FOUND";
+      throw error;
+    }
+    await refreshContentGapStatusFromBriefs(client, contentGapId);
+    await client.query("COMMIT");
+    return getContentGapById(contentGapId);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function reopenContentGapBrief(contentGapId, briefId) {
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        UPDATE content_gap_occurrences o
+        SET covered_at = NULL
+        FROM study_spots s, content_gaps cg
+        WHERE
+          o.brief_id = $2
+          AND s.id = o.study_spot_id
+          AND cg.id = $1
+          AND cg.category = s.category
+          AND cg.primary_tag = COALESCE(o.primary_tag, o.tag)
+          AND cg.study_spot_type = COALESCE(o.study_spot_type, 'interesting_spot')
+        RETURNING o.brief_id;
+      `,
+      [contentGapId, briefId],
+    );
+    if (!result.rows[0]) {
+      const error = new Error("Content gap Study Spot brief not found.");
+      error.code = "CONTENT_GAP_BRIEF_NOT_FOUND";
+      throw error;
+    }
+    await refreshContentGapStatusFromBriefs(client, contentGapId);
+    await client.query("COMMIT");
+    return getContentGapById(contentGapId);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function completeContentGap(contentGapId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      UPDATE content_gaps cg
+      SET
+        status = 'complete',
+        resolved_resource_id = (
+          SELECT lr.id
+          FROM content_gap_resources cgr
+          JOIN learning_resources lr ON lr.id = cgr.resource_id
+          WHERE cgr.content_gap_id = cg.id AND lr.status = 'published'
+          ORDER BY cgr.linked_at DESC
+          LIMIT 1
+        ),
+        completed_at = NOW(),
+        updated_at = NOW()
+      WHERE cg.id = $1
+        AND EXISTS (
+        SELECT 1
+        FROM content_gap_resources cgr
+        JOIN learning_resources lr ON lr.id = cgr.resource_id
+        WHERE cgr.content_gap_id = cg.id AND lr.status = 'published'
+      )
+      RETURNING cg.id;
+    `,
+    [contentGapId],
+  );
+  if (!result.rows[0]) {
+    const exists = await resolvedPool.query("SELECT id FROM content_gaps WHERE id = $1;", [contentGapId]);
+    const error = new Error(exists.rows[0]
+      ? "Publish a linked lesson before completing this content gap."
+      : "Content gap not found.");
+    error.code = exists.rows[0] ? "CONTENT_GAP_REQUIRES_PUBLISHED_RESOURCE" : "CONTENT_GAP_NOT_FOUND";
+    throw error;
+  }
+  return getContentGapById(contentGapId);
+}
+
+export async function reopenContentGap(contentGapId) {
+  const resolvedPool = getRequiredPool();
+  const result = await resolvedPool.query(
+    `
+      UPDATE content_gaps
+      SET status = 'open', resolved_resource_id = NULL, completed_at = NULL, updated_at = NOW()
+      WHERE id = $1
+      RETURNING id;
+    `,
+    [contentGapId],
+  );
+  return result.rows[0] ? getContentGapById(contentGapId) : null;
 }

@@ -16,9 +16,12 @@ import {
   getStudyReport,
   initDatabase,
   listContentGaps,
+  linkContentGapResource,
+  markContentGapBriefCovered,
   listStudyQueueItems,
   listStudyReports,
   saveStudyQueueItem,
+  reopenContentGapBrief,
   setLearningResourceStatus,
   updateStudyQueueItemStatus,
   upsertTournamentUpload,
@@ -166,11 +169,22 @@ try {
   assert.equal((await listStudyQueueItems(userId, "completed")).length, 1);
 
   const gaps = await listContentGaps();
-  assert.equal(gaps.some((gap) =>
+  const contentGap = gaps.find((gap) =>
     gap.primaryTag === gapTag &&
-    gap.studySpotType === "Decision Point" &&
-    gap.occurrenceCount === 1
-  ), true);
+    gap.studySpotType === "Decision Point"
+  );
+  assert.equal(contentGap?.decisionCount, 1);
+  assert.equal(contentGap?.studySpotCount, 1);
+  assert.equal(contentGap?.briefs.length, 1);
+  const briefId = contentGap.briefs[0].id;
+  const linkedGap = await linkContentGapResource(contentGap.id, learningResourceId, briefId);
+  assert.equal(linkedGap?.status, "in_progress");
+  assert.equal(linkedGap?.briefs[0]?.linkedResource?.id, learningResourceId);
+  const completedGap = await markContentGapBriefCovered(contentGap.id, briefId);
+  assert.equal(completedGap?.status, "complete");
+  assert.equal(completedGap?.briefs[0]?.status, "covered");
+  assert.equal(completedGap?.briefs[0]?.linkedResource?.instagramUrl, null);
+  assert.equal((await reopenContentGapBrief(contentGap.id, briefId))?.status, "in_progress");
 
   assert.equal(await deleteStudyQueueItem(userId, spotId), true);
   assert.equal(await deleteStudyQueueItem(userId, spotId), false);

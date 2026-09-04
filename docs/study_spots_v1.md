@@ -349,15 +349,22 @@ Record one immutable occurrence per unmatched spot, then aggregate it for the co
 
 ```ts
 type ContentGap = {
+  id: string;
+  category: string;
+  primaryTag: string;
+  studySpotType: string;
+  status: "open" | "in_progress" | "complete";
   tag: string;
-  occurrenceCount: number;
-  exampleSpotIds: string[];
+  studySpotCount: number;
+  decisionCount: number;
+  briefs: AnonymisedStudySpotBrief[];
+  linkedResources: LearningResource[];
   firstSeen: string;
   lastSeen: string;
 };
 ```
 
-A `content_gap_occurrences` table keyed by `(study_spot_id, tag)` prevents retries from double-counting. Store only spot references and a capped example set; do not copy raw hand text into the aggregate. The aggregate query or materialized table is internal/admin-only in V1.
+A `content_gap_occurrences` table keyed by `(study_spot_id, tag)` prevents retries from double-counting. Each occurrence receives an opaque brief ID plus its own linked-resource and covered state. `content_gaps` stores the derived editorial lifecycle and `content_gap_resources` retains resource linkage history. Count both distinct Study Spots and the sum of their repeated decisions. The admin response exposes anonymised Study Spot briefs and excludes account, report, tournament, and hand identifiers. The aggregate is internal/admin-only.
 
 Recommended relationships:
 

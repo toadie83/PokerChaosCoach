@@ -62,6 +62,18 @@ export async function requestAdminContentGaps() {
   return getJson("/admin/learning/content-gaps");
 }
 
+export async function requestMarkContentGapBriefCovered(contentGapId, briefId) {
+  const safeGapId = encodeURIComponent(String(contentGapId || "").trim());
+  const safeBriefId = encodeURIComponent(String(briefId || "").trim());
+  return postJson(`/admin/learning/content-gaps/${safeGapId}/briefs/${safeBriefId}/covered`, {});
+}
+
+export async function requestReopenContentGapBrief(contentGapId, briefId) {
+  const safeGapId = encodeURIComponent(String(contentGapId || "").trim());
+  const safeBriefId = encodeURIComponent(String(briefId || "").trim());
+  return postJson(`/admin/learning/content-gaps/${safeGapId}/briefs/${safeBriefId}/reopen`, {});
+}
+
 function learningImportRequest(payload) {
   return payload?.importDocument ? payload : { resource: payload };
 }

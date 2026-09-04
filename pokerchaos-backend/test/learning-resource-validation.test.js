@@ -71,6 +71,14 @@ test("an Instagram URL can be added after the canonical lesson is imported", () 
   assert.equal(updated.data.instagramUrl, "https://www.instagram.com/p/published-later/");
 });
 
+test("legacy same-site source paths remain valid when a lesson is republished", () => {
+  for (const sourceUrl of ["/learn/defend-the-big-blind", "/articles/defend-the-big-blind"]) {
+    const parsed = validateLearningResourceInput(validResource({ sourceUrl }));
+    assert.equal(parsed.success, true, sourceUrl);
+    assert.equal(parsed.data.sourceUrl, sourceUrl);
+  }
+});
+
 test("strict learning-resource validation accepts every future-proof resource type", () => {
   for (const resourceType of LEARNING_RESOURCE_TYPES) {
     const parsed = validateLearningResourceInput(validResource({
