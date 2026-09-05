@@ -59,6 +59,7 @@ import "./study-spots.css";
 import "./learning-library.css";
 import "./review-navigation.css";
 import "./product-workspace.css";
+import "./coach-workspace.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = DEFAULT_AUTH_ROUTE;
@@ -501,6 +502,7 @@ function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
   const isTournamentReview = routePath === "/tools/tournament-review";
+  const isCoachRoute = routePath === "/tools/coach";
   const isProductWorkspace =
     isTournamentReview ||
     routePath === "/tools" ||
@@ -508,6 +510,7 @@ function SignedInShell() {
     routePath.startsWith("/tools/study-spots/reports/") ||
     routePath === "/tournaments" ||
     routePath === "/study";
+  const isWorkspaceChromeRoute = isProductWorkspace || isCoachRoute;
   const marketingPage = resolveMarketingPage(routePath);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
@@ -524,14 +527,16 @@ function SignedInShell() {
   useEffect(() => {
     document.body.classList.toggle("tournament-review-route", isTournamentReview);
     document.body.classList.toggle("product-workspace-route", isProductWorkspace);
+    document.body.classList.toggle("coach-route", isCoachRoute);
     return () => {
       document.body.classList.remove("tournament-review-route");
       document.body.classList.remove("product-workspace-route");
+      document.body.classList.remove("coach-route");
     };
-  }, [isProductWorkspace, isTournamentReview]);
+  }, [isCoachRoute, isProductWorkspace, isTournamentReview]);
 
   useEffect(() => {
-    if (!isProductWorkspace || !mobileUtilityOpen) return undefined;
+    if (!isWorkspaceChromeRoute || !mobileUtilityOpen) return undefined;
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
       setMobileUtilityOpen(false);
@@ -539,7 +544,7 @@ function SignedInShell() {
     };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isProductWorkspace, mobileUtilityOpen]);
+  }, [isWorkspaceChromeRoute, mobileUtilityOpen]);
 
   useEffect(() => {
     try {
@@ -839,13 +844,13 @@ function SignedInShell() {
 
   return (
     <>
-      <div className={`app-shell-container app-shell-header${isProductWorkspace ? " app-shell-header--review" : ""}`}>
-        <div className={`auth-bar auth-bar-shell${isProductWorkspace ? " auth-bar--review" : ""}`}>
+      <div className={`app-shell-container app-shell-header${isWorkspaceChromeRoute ? " app-shell-header--review" : ""}`}>
+        <div className={`auth-bar auth-bar-shell${isWorkspaceChromeRoute ? " auth-bar--review" : ""}`}>
           <div className="auth-bar-brand">
             <PlaybackBrand variant="mark" className="auth-bar-brand-mark" />
             <span className="auth-bar-brand-copy">
               <strong>Playback Poker</strong>
-              <span>{isProductWorkspace ? "TOURNAMENT INTELLIGENCE" : "Smarter review for online poker players"}</span>
+              <span>{isProductWorkspace ? "TOURNAMENT INTELLIGENCE" : isCoachRoute ? "LIVE DECISION COACH" : "Smarter review for online poker players"}</span>
             </span>
           </div>
           <nav className="auth-bar-nav" aria-label="Workspace navigation">
@@ -875,7 +880,7 @@ function SignedInShell() {
                   aria-current={routePath === section.path ? "page" : undefined}
                   onClick={() => navigate(section.path)}
                 >
-                  {isProductWorkspace ? REVIEW_NAV_LABELS[section.path] || section.label : section.label}
+                  {isWorkspaceChromeRoute ? REVIEW_NAV_LABELS[section.path] || section.label : section.label}
                   {!enabled && state === "locked" ? " (Locked)" : ""}
                 </button>
               );
@@ -954,7 +959,7 @@ function SignedInShell() {
                 aria-label={mobileUtilityOpen ? "Close account menu" : "Open account menu"}
                 onClick={() => setMobileUtilityOpen((value) => !value)}
               >
-                {isProductWorkspace ? (
+                {isWorkspaceChromeRoute ? (
                   <svg className="review-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
                     {mobileUtilityOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}
                   </svg>
