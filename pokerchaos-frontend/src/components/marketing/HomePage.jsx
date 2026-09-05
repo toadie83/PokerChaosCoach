@@ -21,6 +21,7 @@ import LearningShowcase from "./homepage/LearningShowcase.jsx";
 import StudyPlanPreview from "./homepage/StudyPlanPreview.jsx";
 import TournamentAnalysisProgress from "./homepage/TournamentAnalysisProgress.jsx";
 import TournamentReviewUpsell from "./homepage/TournamentReviewUpsell.jsx";
+import TournamentReviewModal from "./homepage/TournamentReviewModal.jsx";
 import TournamentUpload from "./homepage/TournamentUpload.jsx";
 import TrustSection from "./homepage/TrustSection.jsx";
 import {
@@ -109,6 +110,7 @@ export default function HomePage() {
   const [freePlanAllowance, setFreePlanAllowance] = useState(
     () => loadFreeStudyPlanAllowance(),
   );
+  const [tournamentReviewModalOpen, setTournamentReviewModalOpen] = useState(false);
 
   useEffect(() => {
     setHomeMeta();
@@ -160,9 +162,7 @@ export default function HomePage() {
     isSignedIn ? (
       <a className={className} href="/tools/tournament-review">{label}</a>
     ) : (
-      <SignUpButton mode="modal">
-        <button type="button" className={className}>{label}</button>
-      </SignUpButton>
+      <button type="button" className={className} onClick={() => setTournamentReviewModalOpen(true)}>{label}</button>
     );
 
   const runFreeAnalysis = async ({ file, heroName }) => {
@@ -287,6 +287,10 @@ export default function HomePage() {
           </div>
         </div>
       ) : null}
+      <TournamentReviewModal
+        open={tournamentReviewModalOpen}
+        onClose={() => setTournamentReviewModalOpen(false)}
+      />
     </MarketingSiteShell>
   );
 }

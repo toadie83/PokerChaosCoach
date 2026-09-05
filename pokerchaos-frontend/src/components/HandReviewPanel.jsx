@@ -19,6 +19,8 @@ import {
 } from "../api/aiService.js";
 import HandReviewV2Modal from "./HandReviewV2Modal.jsx";
 import TournamentPerformanceChart from "./TournamentPerformanceChart.jsx";
+import ReviewOverview from "./review/ReviewOverview.jsx";
+import ReviewWelcome from "./review/ReviewWelcome.jsx";
 import { resolveHandBbResult } from "../lib/handResult.js";
 
 const CASH_NOTICE_DISMISS_KEY = "pokerchaos_cash_notice_dismissed";
@@ -3145,7 +3147,7 @@ export default function HandReviewPanel({ entitlements = null }) {
   const [savedTournamentError, setSavedTournamentError] = useState("");
   const [performanceSnapshots, setPerformanceSnapshots] = useState([]);
   const [loadingPerformanceSnapshots, setLoadingPerformanceSnapshots] =
-    useState(false);
+    useState(true);
   const [performanceSnapshotsError, setPerformanceSnapshotsError] =
     useState("");
   const [performanceSaveStatusByTournamentId, setPerformanceSaveStatusByTournamentId] =
@@ -3194,6 +3196,7 @@ export default function HandReviewPanel({ entitlements = null }) {
   );
   const copyTimeoutRef = useRef(null);
   const reviewProgressIntervalRef = useRef(null);
+  const importPanelRef = useRef(null);
   const handRowRefs = useRef(new Map());
   const auditSectionRefs = useRef(new Map());
 
@@ -4131,6 +4134,17 @@ export default function HandReviewPanel({ entitlements = null }) {
         .filter(Boolean),
     );
   }, [performanceSnapshots]);
+  const hasPerformanceTrend = useMemo(
+    () =>
+      performanceSnapshots.some((snapshot) => {
+        const tournamentId = String(snapshot?.tournamentId || "").trim();
+        const score10 = Number(snapshot?.score10);
+        return Boolean(tournamentId) && snapshot?.score10 != null && Number.isFinite(score10);
+      }),
+    [performanceSnapshots],
+  );
+  const showReviewWelcome =
+    !loadingPerformanceSnapshots && !hasPerformanceTrend;
   const currentPerformanceTournamentId = String(
     suggestedTournamentMeta.tournamentId || "",
   ).trim();
@@ -5265,19 +5279,36 @@ export default function HandReviewPanel({ entitlements = null }) {
   };
 
   return (
-    <section className="hand-review-workspace">
-      <div className="hand-review-panel hand-review-pane hand-review-pane-left hand-review-panel--utility">
+    <section className={`hand-review-workspace${parsedHands.length ? " has-hands" : ""}`}>
+      <header className="review-workspace-heading">
+        <div>
+          <p className="review-eyebrow">Your tournament. Your next edge.</p>
+          <h1>Tournament <span>review</span><span className="review-heading-dot" aria-hidden="true" /></h1>
+          <p className="review-workspace-subtitle">{parsedHands.length ? `${sourceFileName || suggestedTournamentMeta.tournamentName || "Tournament session"} · ${parsedHands.length} hands loaded` : "Turn your hand history into a clearer plan for the next tournament."}</p>
+        </div>
+        <div className="review-workspace-actions">
+          <a href="/learn">Learning library <span aria-hidden="true">↗</span></a>
+          <button type="button" onClick={() => {
+            setIsParserCollapsed(false);
+            importPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+            window.requestAnimationFrame(() => importPanelRef.current?.querySelector('input[type="file"]')?.focus());
+          }}><span aria-hidden="true">＋</span> Import tournament</button>
+        </div>
+      </header>
+      <div ref={importPanelRef} className="hand-review-panel hand-review-pane hand-review-pane-left hand-review-panel--utility">
         <div className="hand-review-header">
-          <h2>Import Hand History</h2>
+          <h2>{parsedHands.length ? "Hand browser" : "Import tournament"}</h2>
+          <span className="review-sidebar-count">{parsedHands.length ? `${filteredParsedHands.length} hands` : ".txt / .log"}</span>
         </div>
 
         <div className="hand-review-parser-head">
           <button
             type="button"
             className="hand-review-parser-toggle"
+            aria-expanded={!isParserCollapsed}
             onClick={() => setIsParserCollapsed((value) => !value)}
           >
-            {isParserCollapsed ? "Expand parser" : "Collapse parser"}
+            {isParserCollapsed ? "＋ Load another tournament" : "Hide import"}
           </button>
         </div>
 
@@ -5375,6 +5406,7 @@ export default function HandReviewPanel({ entitlements = null }) {
                 </button>
               </div>
               <textarea
+                aria-label="Paste tournament hand history"
                 value={historyText}
                 onChange={(e) => {
                   setHistoryText(e.target.value);
@@ -5443,10 +5475,7 @@ export default function HandReviewPanel({ entitlements = null }) {
             ) : null}
           </>
         ) : (
-          <p className="hand-review-empty">
-            Parser collapsed. Expand to load another hand-history file or paste
-            text.
-          </p>
+          null
         )}
 
         {error ? <p className="hand-review-error">{error}</p> : null}
@@ -6001,6 +6030,7 @@ export default function HandReviewPanel({ entitlements = null }) {
       <div className="hand-review-pane hand-review-pane-right hand-review-pane-right--insights">
         {parsedHands.length === 0 ? (
           <div className="hand-insights hand-insights--performance-empty">
+            {showReviewWelcome ? <ReviewWelcome /> : null}
             <TournamentPerformanceChart
               snapshots={performanceSnapshots}
               loading={loadingPerformanceSnapshots}
@@ -6017,18 +6047,32 @@ export default function HandReviewPanel({ entitlements = null }) {
               className="hand-insights-tabs"
               role="tablist"
               aria-label="Insights tabs"
+              onKeyDown={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
+                const current = tabs.indexOf(event.target);
+                if (current < 0) return;
+                event.preventDefault();
+                const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+                  : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                tabs[next].focus();
+                tabs[next].click();
+              }}
             >
               {hasTournamentSummary ? (
                 <button
                   type="button"
                   role="tab"
                   aria-selected={insightsTab === "tournament"}
+                  id="review-tab-overview"
+                  aria-controls="review-panel-overview"
+                  tabIndex={insightsTab === "tournament" ? 0 : -1}
                   className={`hand-insights-tab ${
                     insightsTab === "tournament" ? "active" : ""
                   }`}
                   onClick={() => setInsightsTab("tournament")}
                 >
-                  Session Summary
+                  Overview
                 </button>
               ) : null}
               {hasTournamentSummary ? (
@@ -6036,12 +6080,15 @@ export default function HandReviewPanel({ entitlements = null }) {
                   type="button"
                   role="tab"
                   aria-selected={insightsTab === "stats"}
+                  id="review-tab-stats"
+                  aria-controls="review-panel-stats"
+                  tabIndex={insightsTab === "stats" ? 0 : -1}
                   className={`hand-insights-tab ${
                     insightsTab === "stats" ? "active" : ""
                   }`}
                   onClick={() => setInsightsTab("stats")}
                 >
-                  Session Stats
+                  Statistics
                 </button>
               ) : null}
               {hasHandAudit ? (
@@ -6049,6 +6096,9 @@ export default function HandReviewPanel({ entitlements = null }) {
                   type="button"
                   role="tab"
                   aria-selected={insightsTab === "audit"}
+                  id="review-tab-audit"
+                  aria-controls="review-panel-audit"
+                  tabIndex={insightsTab === "audit" ? 0 : -1}
                   className={`hand-insights-tab ${
                     insightsTab === "audit" ? "active" : ""
                   }`}
@@ -6062,6 +6112,9 @@ export default function HandReviewPanel({ entitlements = null }) {
                   type="button"
                   role="tab"
                   aria-selected={insightsTab === "opponents"}
+                  id="review-tab-opponents"
+                  aria-controls="review-panel-opponents"
+                  tabIndex={insightsTab === "opponents" ? 0 : -1}
                   className={`hand-insights-tab ${
                     insightsTab === "opponents" ? "active" : ""
                   }`}
@@ -6073,246 +6126,57 @@ export default function HandReviewPanel({ entitlements = null }) {
             </div>
 
             {insightsTab === "tournament" && hasTournamentSummary ? (
-              <div className="tournament-summary tournament-summary--overview">
+              <div className="tournament-summary tournament-summary--overview" id="review-panel-overview" role="tabpanel" aria-labelledby="review-tab-overview" tabIndex={0}>
                 <div className="tournament-summary-head">
-                  <h3>Session Summary</h3>
+                  <h3>Session overview</h3>
                   <span>
                     Sample: {tournamentSummary.sampleHands} returned hands
                   </span>
                 </div>
-                {tournamentCoachSummary ? (
-                  <div className="tournament-coach-summary tournament-coach-summary--hero">
-                    <h4>Session Coaching Overview</h4>
-                    {tournamentCoachSummary.rating ? (
-                      <section className="coach-narrative-section coach-narrative-section--evaluation">
-                        <div className="coach-rating-hero">
-                          <p className="coach-rating-label">
-                            Session verdict
-                          </p>
-                          <p className="coach-rating-value">
-                            {tournamentCoachSummary.rating.score10Label} (
-                            {tournamentCoachSummary.rating.scorePctLabel})
-                          </p>
-                          <div className="performance-save-row">
-                            <button
-                              type="button"
-                              className="performance-save-button"
-                              onClick={savePerformanceSnapshot}
-                              disabled={
-                                !canSavePerformanceSnapshot ||
-                                Boolean(savingPerformanceTournamentId) ||
-                                currentPerformanceAlreadySaved
-                              }
-                            >
-                              {performanceSaveButtonLabel}
-                            </button>
-                            {!currentPerformanceTournamentId ? (
-                              <span className="performance-save-note">
-                                Tournament ID required
-                              </span>
-                            ) : null}
-                            {currentPerformanceIsPreliminary ? (
-                              <span className="performance-save-note">
-                                Needs 60+ hands for tracking
-                              </span>
-                            ) : null}
-                            {currentPerformanceSaveStatus === "error" ? (
-                              <span className="performance-save-note performance-save-note--error">
-                                Save failed
-                              </span>
-                            ) : null}
-                          </div>
-                          {tournamentCoachSummary.rating.prelimNote ? (
-                            <p className="hand-review-empty coach-rating-note">
-                              {tournamentCoachSummary.rating.prelimNote}
-                            </p>
-                          ) : null}
-                        </div>
-                        {tournamentCoachSummary.rating.topDrags.length > 0 ? (
-                          <details className="coach-drags-pill">
-                            <summary>
-                              Largest score drags (
-                              {tournamentCoachSummary.rating.topDrags.length})
-                            </summary>
-                            <div className="tournament-summary-flags">
-                              {tournamentCoachSummary.rating.topDrags.map(
-                                (drag, idx) => (
-                                  <p
-                                    key={`coach-rating-drag-${idx}`}
-                                    className="trend-flag watch"
-                                  >
-                                    {drag.label}: -{drag.points.toFixed(1)}{" "}
-                                    points
-                                  </p>
-                                ),
-                              )}
-                            </div>
-                          </details>
-                        ) : null}
-                      </section>
-                    ) : null}
-
-                    <section className="coach-narrative-section coach-narrative-section--priority">
-                      <div className="coach-leaks-grid">
-                        <div className="coach-leak-card coach-leak-card--primary">
-                          <span>Biggest improvement area</span>
-                          <strong>
-                            {coachPrimaryLeakItem?.auditTarget ? (
-                              <button
-                                type="button"
-                                className="coach-inline-link"
-                                onClick={() =>
-                                  openAuditSection(coachPrimaryLeakItem.auditTarget)
-                                }
-                              >
-                                {sanitizeCoachingCopy(coachPrimaryLeakItem.text)}
-                              </button>
-                            ) : (
-                              sanitizeCoachingCopy(
-                                coachPrimaryLeakItem?.text ||
-                                  tournamentCoachSummary.primaryLeak,
-                              )
-                            )}
-                          </strong>
-                        </div>
-                        {coachPrimaryAdjustmentItem ? (
-                          <div className="coach-leak-card coach-leak-card--adjustment">
-                            <span>Most profitable adjustment</span>
-                            <strong>
-                              {coachPrimaryAdjustmentItem.auditTarget ? (
-                                <button
-                                  type="button"
-                                  className="coach-inline-link"
-                                  onClick={() =>
-                                    openAuditSection(
-                                      coachPrimaryAdjustmentItem.auditTarget,
-                                    )
-                                  }
-                                >
-                                  {sanitizeCoachingCopy(coachPrimaryAdjustmentItem.text)}
-                                </button>
-                              ) : (
-                                sanitizeCoachingCopy(coachPrimaryAdjustmentItem.text)
-                              )}
-                            </strong>
-                          </div>
-                        ) : null}
-                        {coachStrongestArea ? (
-                          <div className="coach-leak-card">
-                            <span>Strongest area</span>
-                            <strong>{sanitizeCoachingCopy(coachStrongestArea)}</strong>
-                          </div>
-                        ) : null}
-                      </div>
-                    </section>
-
-                    {coachSupportingEvidence.length > 0 ? (
-                      <section className="coach-narrative-section coach-narrative-section--evidence">
-                        <p className="coach-summary-heading">
-                          <strong>Key evidence</strong>
-                        </p>
-                        <div className="tournament-summary-flags coach-summary-flags">
-                          {coachSupportingEvidence.map((item, idx) =>
-                            item.auditTarget ? (
-                              <button
-                                type="button"
-                                key={`coach-evidence-${idx}`}
-                                className={`trend-flag coach-flag-button ${
-                                  item.tone || "watch"
-                                }`}
-                                onClick={() => openAuditSection(item.auditTarget)}
-                              >
-                                {sanitizeCoachingCopy(item.text)}
-                              </button>
-                            ) : (
-                              <p
-                                key={`coach-evidence-${idx}`}
-                                className={`trend-flag ${item.tone || "watch"}`}
-                              >
-                                {sanitizeCoachingCopy(item.text)}
-                              </p>
-                            ),
-                          )}
-                        </div>
-                      </section>
-                    ) : null}
-
-                    {coachSecondaryLeakItem ||
-                    coachSecondaryAdjustments.length > 0 ||
-                    postflopIpHighlightItems.length > 0 ? (
-                      <section className="coach-narrative-section coach-narrative-section--secondary">
-                        <p className="coach-summary-heading">
-                          <strong>Additional adjustments</strong>
-                        </p>
-                        <div className="tournament-summary-flags coach-summary-flags">
-                          {coachSecondaryLeakItem ? (
-                            coachSecondaryLeakItem.auditTarget ? (
-                              <button
-                                type="button"
-                                className={`trend-flag coach-flag-button ${
-                                  coachSecondaryLeakItem.tone || "watch"
-                                }`}
-                                onClick={() =>
-                                  openAuditSection(coachSecondaryLeakItem.auditTarget)
-                                }
-                              >
-                                Secondary improvement area:{" "}
-                                {sanitizeCoachingCopy(coachSecondaryLeakItem.text)}
-                              </button>
-                            ) : (
-                              <p className={`trend-flag ${coachSecondaryLeakItem.tone || "watch"}`}>
-                                Secondary improvement area:{" "}
-                                {sanitizeCoachingCopy(coachSecondaryLeakItem.text)}
-                              </p>
-                            )
-                          ) : null}
-                          {coachSecondaryAdjustments.map((item, idx) =>
-                            item.auditTarget ? (
-                              <button
-                                type="button"
-                                key={`coach-secondary-action-${idx}`}
-                                className={`trend-flag coach-flag-button ${
-                                  item.tone || "good"
-                                }`}
-                                onClick={() => openAuditSection(item.auditTarget)}
-                              >
-                                {sanitizeCoachingCopy(item.text)}
-                              </button>
-                            ) : (
-                              <p
-                                key={`coach-secondary-action-${idx}`}
-                                className={`trend-flag ${item.tone || "good"}`}
-                              >
-                                {sanitizeCoachingCopy(item.text)}
-                              </p>
-                            ),
-                          )}
-                          {postflopIpHighlightItems.map((item, idx) =>
-                            item?.auditTarget ? (
-                              <button
-                                type="button"
-                                key={`postflop-ip-highlight-${idx}`}
-                                className={`trend-flag coach-flag-button ${
-                                  item.tone || "watch"
-                                }`}
-                                onClick={() => openAuditSection(item.auditTarget)}
-                              >
-                                {sanitizeCoachingCopy(item.text)}
-                              </button>
-                            ) : (
-                              <p
-                                key={`postflop-ip-highlight-${idx}`}
-                                className={`trend-flag ${item?.tone || "watch"}`}
-                              >
-                                {sanitizeCoachingCopy(item?.text)}
-                              </p>
-                            ),
-                          )}
-                        </div>
-                      </section>
-                    ) : null}
-                  </div>
-                ) : null}
+                <ReviewOverview
+                  hands={parsedHands}
+                  summary={tournamentSummary}
+                  coaching={tournamentCoachSummary}
+                  primaryLeak={coachPrimaryLeakItem}
+                  adjustment={coachPrimaryAdjustmentItem}
+                  strongestArea={coachStrongestArea}
+                  evidence={coachSupportingEvidence}
+                  additional={[coachSecondaryLeakItem, ...coachSecondaryAdjustments, ...postflopIpHighlightItems].filter(Boolean)}
+                  onOpenAudit={openAuditSection}
+                  onOpenStats={() => setInsightsTab("stats")}
+                  clean={sanitizeCoachingCopy}
+                  saveAction={tournamentCoachSummary?.rating ? (
+                    <div className="performance-save-row">
+                      <button
+                        type="button"
+                        className="performance-save-button"
+                        onClick={savePerformanceSnapshot}
+                        disabled={
+                          !canSavePerformanceSnapshot ||
+                          Boolean(savingPerformanceTournamentId) ||
+                          currentPerformanceAlreadySaved
+                        }
+                      >
+                        {performanceSaveButtonLabel}
+                      </button>
+                      {!currentPerformanceTournamentId ? (
+                        <span className="performance-save-note">
+                          Tournament ID required
+                        </span>
+                      ) : null}
+                      {currentPerformanceIsPreliminary ? (
+                        <span className="performance-save-note">
+                          Needs 60+ hands for tracking
+                        </span>
+                      ) : null}
+                      {currentPerformanceSaveStatus === "error" ? (
+                        <span className="performance-save-note performance-save-note--error">
+                          Save failed
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                />
 
                 <div className="tournament-ai-review">
                   <button
@@ -6386,7 +6250,7 @@ export default function HandReviewPanel({ entitlements = null }) {
             ) : null}
 
             {insightsTab === "stats" && hasTournamentSummary ? (
-              <div className="tournament-summary tournament-summary--stats">
+              <div className="tournament-summary tournament-summary--stats" id="review-panel-stats" role="tabpanel" aria-labelledby="review-tab-stats" tabIndex={0}>
                 <div className="tournament-summary-head">
                   <h3>Session Stats</h3>
                   <span>
@@ -6601,7 +6465,7 @@ export default function HandReviewPanel({ entitlements = null }) {
             ) : null}
 
             {insightsTab === "audit" && hasHandAudit ? (
-              <div className="tournament-summary">
+              <div className="tournament-summary" id="review-panel-audit" role="tabpanel" aria-labelledby="review-tab-audit" tabIndex={0}>
                 <div className="tournament-summary-head">
                   <h3>Hand Audit</h3>
                   <span>Sample: {parsedHands.length} parsed hands</span>
@@ -6610,7 +6474,7 @@ export default function HandReviewPanel({ entitlements = null }) {
                   className="summary-section"
                   ref={(node) => setAuditSectionRef("preflop_opportunity", node)}
                 >
-                  <summary>Preflop Opportunity Audit (MVP)</summary>
+                  <summary>Preflop opportunities</summary>
                   <div className="tournament-summary-metrics">
                     <span>
                       RFI spots scored: {preflopOpportunityAudit.rfiSpotsScored}
@@ -7183,7 +7047,7 @@ export default function HandReviewPanel({ entitlements = null }) {
                   className="summary-section"
                   ref={(node) => setAuditSectionRef("postflop_ip", node)}
                 >
-                  <summary>Postflop In Position Audit (MVP)</summary>
+                  <summary>Postflop in position</summary>
                   <p className="hand-review-empty">
                     Scope: heads-up flop/turn/river spots where hero acts in
                     position.
@@ -7508,7 +7372,7 @@ export default function HandReviewPanel({ entitlements = null }) {
             ) : null}
 
             {insightsTab === "opponents" && hasOpponentSnapshot ? (
-              <div className="opponent-snapshot">
+              <div className="opponent-snapshot" id="review-panel-opponents" role="tabpanel" aria-labelledby="review-tab-opponents" tabIndex={0}>
                 <div className="opponent-snapshot-head">
                   <h3>Opponent Snapshot</h3>
                   <span>
@@ -7968,4 +7832,3 @@ export default function HandReviewPanel({ entitlements = null }) {
     </section>
   );
 }
-

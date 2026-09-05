@@ -24,3 +24,6 @@ Thumbs.db
 *.swp
 *.swo
 .codex-tmp/
+
+# Local browser screenshots and test profiles
+.artifacts/

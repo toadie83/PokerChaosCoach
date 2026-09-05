@@ -8,6 +8,9 @@ const BENEFITS = [
 export default function TournamentReviewUpsell({ action }) {
   return (
     <aside className="home-v2-review-upsell">
+      <div className="home-v2-review-upsell-image">
+        <img src="/images/tournament-review1.png" alt="Tournament Review dashboard preview" />
+      </div>
       <span className="home-v2-upsell-label">Go deeper when you are ready</span>
       <div className="home-v2-upsell-mark" aria-hidden="true">♛</div>
       <h3>Want the full tournament review?</h3>

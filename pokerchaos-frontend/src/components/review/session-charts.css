@@ -1,0 +1,74 @@
+.review-session-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(270px, 1fr);
+  gap: 16px;
+  min-width: 0;
+  color: var(--brand-text-primary, #f4f1e6);
+}
+
+.review-session-charts .review-chart-panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid rgb(244 241 230 / 9%);
+  border-radius: 10px;
+  background: var(--brand-surface-elevated, #14181c);
+}
+
+.review-session-charts .review-chart-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.review-session-charts .review-chart-eyebrow { display: block; margin-bottom: 5px; color: #95a69e; font-size: 11px; font-weight: 700; letter-spacing: 1.6px; }
+.review-session-charts .review-chart-heading h4 { margin: 0; color: var(--brand-text-primary, #f4f1e6); font-family: var(--brand-font-body, sans-serif); font-size: 16px; font-weight: 650; line-height: 1.4; }
+.review-session-charts .review-chart-key { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: #a0ada6; font-size: 12px; }
+.review-session-charts .review-chart-key i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand-accent-green, #00e39a); box-shadow: 0 0 10px rgb(0 227 154 / 30%); }
+.review-session-charts .review-stack-readout { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 61px; padding-top: 10px; }
+.review-session-charts .review-stack-readout > strong { color: var(--brand-text-primary, #f4f1e6); font-size: 28px; font-weight: 650; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+.review-session-charts .review-stack-readout > strong span { color: #95a69e; font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.review-session-charts .review-stack-readout > span { color: #c4cec8; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.review-session-charts .review-stack-readout b { margin: 0 3px; color: #718177; font-weight: 400; }
+.review-session-charts .review-stack-readout small { display: block; max-width: 170px; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; color: #95a69e; font-size: 11px; }
+.review-session-charts .review-stack-interactive { border-radius: 4px; outline-offset: 3px; }
+.review-session-charts .review-stack-interactive:focus-visible { outline: 2px solid var(--brand-accent-green, #00e39a); }
+.review-session-charts .review-stack-interactive svg { display: block; width: 100%; overflow: visible; cursor: crosshair; touch-action: pan-y; }
+.review-session-charts .review-chart-gridline { stroke: rgb(244 241 230 / 7%); stroke-dasharray: 3 5; }
+.review-session-charts .review-chart-axis { fill: #95a69e; font-family: var(--brand-font-body, sans-serif); font-size: 12px; }
+.review-session-charts .review-stack-line { fill: none; stroke: var(--brand-accent-green, #00e39a); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.review-session-charts .review-stack-crosshair { stroke: rgb(0 227 154 / 28%); stroke-dasharray: 3 4; }
+.review-session-charts .review-stack-dot { fill: var(--brand-accent-green, #00e39a); }
+.review-session-charts .review-stack-halo { fill: rgb(0 227 154 / 14%); }
+.review-session-charts .review-chart-note { margin: 9px 0 0; color: #95a69e; font-size: 11px; line-height: 1.6; }
+.review-session-charts .review-chart-data-note { margin: 4px 0 0; color: var(--brand-accent-gold, #c8a24d); font-size: 11px; line-height: 1.5; }
+.review-session-charts .review-chart-toggle { display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid rgb(244 241 230 / 7%); border-radius: 5px; background: rgb(0 0 0 / 17%); }
+.review-session-charts .review-chart-toggle button { min-height: 28px; padding: 3px 9px; border: 0; border-radius: 3px; color: #a0ada6; background: transparent; box-shadow: none; font-size: 12px; font-weight: 600; }
+.review-session-charts .review-chart-toggle button[aria-pressed="true"] { color: var(--brand-accent-green, #00e39a); background: rgb(0 227 154 / 10%); }
+.review-session-charts .review-chart-toggle button:hover { color: var(--brand-text-primary, #f4f1e6); }
+.review-session-charts button:focus-visible { outline: 2px solid var(--brand-accent-green, #00e39a); outline-offset: 3px; }
+.review-session-charts .review-position-description { display: flex; justify-content: space-between; gap: 8px; margin: 20px 0 15px; color: #a0ada6; font-size: 11px; line-height: 1.5; }
+.review-session-charts .review-position-description > span { flex-shrink: 0; color: #c4cec8; font-variant-numeric: tabular-nums; }
+.review-session-charts .review-position-bars { display: grid; gap: 14px; padding: 2px 0; }
+.review-session-charts .review-position-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 42px 46px; align-items: center; gap: 10px; font-size: 12px; }
+.review-session-charts .review-position-label { color: #c4cec8; font-size: 12px; font-weight: 600; }
+.review-session-charts .review-position-track { height: 6px; border-radius: 2px; overflow: hidden; background: rgb(244 241 230 / 6%); }
+.review-session-charts .review-position-track > span { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #008c64, var(--brand-accent-green, #00e39a)); }
+.review-session-charts .review-position-row.is-small-sample .review-position-track > span { background: #b49a60; }
+.review-session-charts .review-position-row > strong { color: var(--brand-text-primary, #f4f1e6); text-align: right; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.review-session-charts .review-position-sample { color: #95a69e; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.review-session-charts .review-position-sample > span { color: var(--brand-accent-gold, #c8a24d); }
+.review-session-charts .review-position-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 19px; padding-top: 12px; border-top: 1px solid rgb(244 241 230 / 7%); }
+.review-session-charts .review-position-footer > span { color: #95a69e; font-size: 11px; }
+.review-session-charts .review-position-footer button { padding: 2px 0; min-height: 26px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--brand-accent-green, #00e39a); font-size: 12px; }
+.review-session-charts .review-position-footer button:hover { color: var(--brand-text-primary, #f4f1e6); }
+.review-session-charts .review-chart-empty { display: flex; min-height: 222px; flex-direction: column; justify-content: center; align-items: center; gap: 10px; text-align: center; }
+.review-session-charts .review-chart-empty > span { color: #587166; font-size: 35px; }
+.review-session-charts .review-chart-empty > strong { color: #c4cec8; font-size: 14px; font-weight: 500; }
+.review-session-charts .review-chart-empty > p { max-width: 240px; margin: 0; color: #95a69e; font-size: 13px; line-height: 1.6; }
+
+@media (max-width: 1200px) {
+  .review-session-charts { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .review-session-charts .review-chart-panel { padding: 16px; }
+  .review-session-charts .review-chart-heading { gap: 8px; }
+  .review-session-charts .review-chart-heading h4 { font-size: 15px; }
+  .review-session-charts .review-chart-toggle button { min-height: 32px; padding: 5px 9px; }
+  .review-session-charts .review-position-row { gap: 8px; }
+}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import {
   ClerkProvider,
@@ -57,6 +57,8 @@ import PlaybackBrand from "./components/PlaybackBrand.jsx";
 import "./styles.css";
 import "./study-spots.css";
 import "./learning-library.css";
+import "./review-navigation.css";
+import "./product-workspace.css";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = DEFAULT_AUTH_ROUTE;
@@ -66,6 +68,14 @@ const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
 const LOCAL_LIVE_STREAM_URL = "/livestream/index.html";
 const SHOW_LOCAL_LIVE_STREAM = import.meta.env.DEV;
 const CoachApp = React.lazy(() => import("./App.jsx"));
+const REVIEW_NAV_LABELS = {
+  "/tools/study-spots": "Study spots",
+  "/tools/tournament-review": "Tournament review",
+  "/tools/coach": "Poker coach",
+  "/tournaments": "Tournaments",
+  "/study": "My study",
+  "/admin/learning": "Learning admin",
+};
 
 function PokerCoachRoute({ entitlements }) {
   return canAccessCapability(entitlements, CAPABILITY_KEYS.COACH) ? (
@@ -490,6 +500,14 @@ function MobileScrollTopWidget({ enabled }) {
 function SignedInShell() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { routePath, navigate } = useAppRoute();
+  const isTournamentReview = routePath === "/tools/tournament-review";
+  const isProductWorkspace =
+    isTournamentReview ||
+    routePath === "/tools" ||
+    routePath === "/tools/study-spots" ||
+    routePath.startsWith("/tools/study-spots/reports/") ||
+    routePath === "/tournaments" ||
+    routePath === "/study";
   const marketingPage = resolveMarketingPage(routePath);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aboutPromptChecked, setAboutPromptChecked] = useState(false);
@@ -501,6 +519,27 @@ function SignedInShell() {
   const [trialInfoOpen, setTrialInfoOpen] = useState(false);
   const [disclaimerOpen, setDisclaimerOpen] = useState(false);
   const [mobileUtilityOpen, setMobileUtilityOpen] = useState(false);
+  const mobileUtilityToggleRef = useRef(null);
+
+  useEffect(() => {
+    document.body.classList.toggle("tournament-review-route", isTournamentReview);
+    document.body.classList.toggle("product-workspace-route", isProductWorkspace);
+    return () => {
+      document.body.classList.remove("tournament-review-route");
+      document.body.classList.remove("product-workspace-route");
+    };
+  }, [isProductWorkspace, isTournamentReview]);
+
+  useEffect(() => {
+    if (!isProductWorkspace || !mobileUtilityOpen) return undefined;
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setMobileUtilityOpen(false);
+      mobileUtilityToggleRef.current?.focus();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isProductWorkspace, mobileUtilityOpen]);
 
   useEffect(() => {
     try {
@@ -800,16 +839,16 @@ function SignedInShell() {
 
   return (
     <>
-      <div className="app-shell-container app-shell-header">
-        <div className="auth-bar auth-bar-shell">
+      <div className={`app-shell-container app-shell-header${isProductWorkspace ? " app-shell-header--review" : ""}`}>
+        <div className={`auth-bar auth-bar-shell${isProductWorkspace ? " auth-bar--review" : ""}`}>
           <div className="auth-bar-brand">
             <PlaybackBrand variant="mark" className="auth-bar-brand-mark" />
             <span className="auth-bar-brand-copy">
               <strong>Playback Poker</strong>
-              <span>Smarter review for online poker players</span>
+              <span>{isProductWorkspace ? "TOURNAMENT INTELLIGENCE" : "Smarter review for online poker players"}</span>
             </span>
           </div>
-          <div className="auth-bar-nav">
+          <nav className="auth-bar-nav" aria-label="Workspace navigation">
             {SECTION_CONFIG.filter(
               (section) => {
                 if (isScopedLearningManager) {
@@ -833,14 +872,15 @@ function SignedInShell() {
                   className={`top-nav-link ${routePath === section.path ? "active" : ""}`}
                   data-enabled={enabled}
                   data-capability-state={state}
+                  aria-current={routePath === section.path ? "page" : undefined}
                   onClick={() => navigate(section.path)}
                 >
-                  {section.label}
+                  {isProductWorkspace ? REVIEW_NAV_LABELS[section.path] || section.label : section.label}
                   {!enabled && state === "locked" ? " (Locked)" : ""}
                 </button>
               );
             })}
-          </div>
+          </nav>
           <div className="auth-bar-actions">
             <div className="auth-bar-actions-desktop">
               {SHOW_LOCAL_LIVE_STREAM ? (
@@ -905,24 +945,32 @@ function SignedInShell() {
             <div className="auth-bar-actions-mobile">
               <button
                 type="button"
+                ref={mobileUtilityToggleRef}
                 className={`top-nav-link mobile-utility-toggle ${
                   mobileUtilityOpen ? "active" : ""
                 }`}
                 aria-expanded={mobileUtilityOpen}
-                aria-label="Open utility menu"
+                aria-controls="workspace-utility-menu"
+                aria-label={mobileUtilityOpen ? "Close account menu" : "Open account menu"}
                 onClick={() => setMobileUtilityOpen((value) => !value)}
               >
-                <PlaybackBrand
-                  variant="mark"
-                  className="mobile-utility-toggle-icon"
-                  aria-hidden="true"
-                />
+                {isProductWorkspace ? (
+                  <svg className="review-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                    {mobileUtilityOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}
+                  </svg>
+                ) : (
+                  <PlaybackBrand
+                    variant="mark"
+                    className="mobile-utility-toggle-icon"
+                    aria-hidden="true"
+                  />
+                )}
                 <span className="mobile-utility-toggle-label">Menu</span>
               </button>
             </div>
           </div>
           {mobileUtilityOpen ? (
-            <div className="mobile-utility-menu">
+            <div className="mobile-utility-menu" id="workspace-utility-menu">
               {SHOW_LOCAL_LIVE_STREAM ? (
                 <a
                   className="mobile-utility-item mobile-utility-item--live"
