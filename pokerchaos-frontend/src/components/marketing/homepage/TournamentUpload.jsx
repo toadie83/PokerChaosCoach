@@ -126,6 +126,10 @@ export default function TournamentUpload({
         </>
       )}
 
+      <p className="home-v2-upload-browse">
+        or <a href="/learn">browse our full learning library</a>
+      </p>
+
       <div className="home-v2-upload-footer">
         <p><span aria-hidden="true">＋</span> New tournament lessons daily · 09:00 UK time</p>
         <p>

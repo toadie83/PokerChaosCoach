@@ -338,6 +338,23 @@
   box-shadow: 0 24px 54px rgb(16 24 32 / 0.12);
 }
 
+.home-v2-review-upsell-image {
+  width: calc(100% + clamp(48px, 5.4vw, 68px));
+  margin: calc(clamp(24px, 2.7vw, 34px) * -1) calc(clamp(24px, 2.7vw, 34px) * -1) 2px;
+  overflow: hidden;
+  border-bottom: 1px solid rgb(0 227 154 / 0.25);
+  background: #0b0e10;
+}
+
+.home-v2-review-upsell-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: left top;
+  opacity: 0.9;
+}
+
 .home-v2-study-plan {
   overflow: hidden;
 }
@@ -774,6 +791,29 @@
   border-color: #4aedb8;
   background: #4aedb8;
   color: #06110d;
+}
+
+.home-v2-hero-upload .home-v2-upload-browse {
+  margin: 12px 0 0;
+  color: rgb(244 241 230 / 0.72);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.home-v2-upload-browse a {
+  color: var(--home-v2-green-bright);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.home-v2-upload-browse a:hover {
+  color: #4aedb8;
+}
+
+.home-v2-upload-browse a:focus-visible {
+  outline: 2px solid var(--home-v2-green-bright);
+  outline-offset: 4px;
 }
 
 .home-v2-hero-upload .home-v2-upload-footer {
@@ -1369,6 +1409,68 @@
   font-size: 0.62rem;
   line-height: 1.45;
 }
+
+.home-v2-review-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  overflow-y: auto;
+  background: rgb(4 7 7 / 0.84);
+  backdrop-filter: blur(12px);
+}
+
+.home-v2-review-modal {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+  width: min(1080px, 100%);
+  max-height: min(850px, calc(100vh - 44px));
+  overflow: auto;
+  border: 1px solid rgb(0 227 154 / 0.3);
+  border-radius: 12px;
+  background: #121719;
+  color: var(--brand-text-primary);
+  box-shadow: 0 32px 100px rgb(0 0 0 / 0.62);
+}
+
+.home-v2-review-modal-visual {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+  padding: 24px;
+  background: #0b0e10;
+}
+
+.home-v2-review-modal-visual img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #2a3431;
+  box-shadow: 0 18px 45px rgb(0 0 0 / 0.35);
+}
+
+.home-v2-review-modal-copy {
+  display: grid;
+  align-content: center;
+  gap: 15px;
+  padding: 42px 34px 34px;
+}
+
+.home-v2-review-modal-copy h2 { margin: 0; color: #f4f1e6; font-family: var(--home-v2-display); font-size: clamp(2rem, 3.2vw, 3rem); font-weight: 400; line-height: 1; text-transform: uppercase; }
+.home-v2-review-modal-copy .home-v2-kicker { color: var(--home-v2-green-bright); }
+.home-v2-review-modal-lead { margin: 0; color: #b8c0bc; font-size: 0.86rem; line-height: 1.55; }
+.home-v2-review-modal-copy ul { display: grid; gap: 13px; margin: 4px 0 3px; padding: 0; list-style: none; }
+.home-v2-review-modal-copy li { display: flex; gap: 10px; color: #b8c0bc; font-size: 0.75rem; line-height: 1.45; }
+.home-v2-review-modal-copy li > span { color: var(--home-v2-green-bright); font-size: 1rem; }
+.home-v2-review-modal-copy li strong { display: block; color: #f4f1e6; font-size: 0.8rem; }
+.home-v2-review-modal-copy li p { margin: 2px 0 0; }
+.home-v2-review-modal-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 4px; }
+.home-v2-review-modal-actions .home-v2-button { min-height: 44px; }
+.home-v2-review-modal-copy > small { color: #899891; font-size: 0.65rem; line-height: 1.45; }
+.home-v2-review-modal-close { position: absolute; top: 12px; right: 14px; z-index: 1; width: 32px; height: 32px; border: 1px solid rgb(244 241 230 / 0.18); border-radius: 50%; background: rgb(11 14 16 / 0.78); color: #f4f1e6; font-size: 1.35rem; line-height: 1; cursor: pointer; }
 
 .home-v2-loop {
   display: block;
@@ -2760,6 +2862,14 @@
     grid-column: 1;
     grid-row: auto;
   }
+
+  .home-v2-review-modal-backdrop { align-items: start; padding: 10px; }
+  .home-v2-review-modal { grid-template-columns: minmax(0, 1fr); max-height: calc(100vh - 20px); }
+  .home-v2-review-modal-visual { padding: 14px; }
+  .home-v2-review-modal-copy { padding: 28px 20px 22px; }
+  .home-v2-review-modal-copy h2 { font-size: 2.15rem; }
+  .home-v2-review-modal-actions { display: grid; }
+  .home-v2-review-modal-actions .home-v2-button { width: 100%; }
 
   .home-v2-loop {
     padding-block: 52px;

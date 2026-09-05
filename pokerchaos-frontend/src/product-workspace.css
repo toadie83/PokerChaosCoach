@@ -1,0 +1,84 @@
+/* Shared charcoal workspace skin for signed-in product routes. Coach stays outside this scope. */
+html body.product-workspace-route {
+  color-scheme: dark;
+  --bg-primary: #0b0e10;
+  --bg-surface: #121719;
+  --bg-elevated: #191f21;
+  --border-primary: #2a3431;
+  --text-primary: #f4f1e6;
+  --text-muted: #9ba9a3;
+  --input-bg: #0e1315;
+  --input-bg-strong: #121719;
+  --input-option-bg: #191f21;
+  --input-border: #303a36;
+  --input-text: #f4f1e6;
+  --surface-muted: #161c1e;
+  --surface-soft: #161c1e;
+  --surface-elevated: #191f21;
+  --surface-elevated-2: #1c2424;
+  --surface-chip: #1b2422;
+  --surface-container: #121719;
+  --surface-container-elevated: #161c1e;
+  --brand-accent-green-ink: #00e39a;
+  --brand-accent-gold: #c8a24d;
+  background: radial-gradient(ellipse at 75% 0%, rgb(0 227 154 / 0.035), transparent 40rem), #0b0e10;
+  color: #f4f1e6;
+}
+
+body.product-workspace-route #root { padding: 16px 16px 24px; }
+body.product-workspace-route .app-footer {
+  color: #9ba9a3;
+  border-color: rgb(244 241 230 / 0.12);
+}
+body.product-workspace-route .app-footer a,
+body.product-workspace-route .app-footer .app-footer-link { color: #9ba9a3; }
+
+body.product-workspace-route .tools-page,
+body.product-workspace-route .study-report-page { color: #f4f1e6; }
+body.product-workspace-route :is(.tools-page-header h1, .study-report-header h1) {
+  color: #f4f1e6;
+  letter-spacing: -0.04em;
+}
+body.product-workspace-route .tools-page-kicker,
+body.product-workspace-route .study-spot-category,
+body.product-workspace-route .study-resource[data-resource-state="recommended"] > p {
+  color: #00e39a;
+  letter-spacing: 0.11em;
+}
+body.product-workspace-route :is(.tool-card, .study-spots-entry, .study-upload, .study-state-message, .study-spot-card, .study-report-history article) {
+  border-color: #2a3431;
+  background: #121719;
+  box-shadow: none;
+}
+body.product-workspace-route .tool-card { border-top: 1px solid #2a3431; }
+body.product-workspace-route :is(.tool-card h2, .study-spots-entry h2, .study-spot-heading h2, .study-spot-reason h3, .study-resource h3, .study-state-message h1, .study-state-message h2, .study-report-history h2) { color: #f4f1e6; }
+body.product-workspace-route :is(.tool-card > p, .tools-page-header > p:not(.tools-page-kicker), .study-spot-summary, .study-spot-reason p, .study-report-history p, .study-report-history span) { color: #b8c0bc; }
+body.product-workspace-route :is(.tool-card-status, .study-spot-type) { border-color: rgb(244 241 230 / 0.14); background: #191f21; color: #9ba9a3; }
+body.product-workspace-route :is(.tool-card[data-state="enabled"] .tool-card-status, .tool-card[data-state="active"] .tool-card-status) { border-color: rgb(0 227 154 / 0.35); background: rgb(0 227 154 / 0.08); color: #00e39a; }
+body.product-workspace-route .tool-card[data-state="trial"] .tool-card-status { border-color: rgb(200 162 77 / 0.4); background: rgb(200 162 77 / 0.08); color: #c8a24d; }
+body.product-workspace-route :is(.tool-card-action, .study-spots-entry button, .study-primary-action, .study-state-message button, .study-review-upsell button, .study-report-history button) { border-color: #00e39a; background: #00e39a; color: #0b1712; }
+body.product-workspace-route :is(.tool-card-action:hover:not(:disabled), .study-primary-action:hover:not(:disabled), .study-state-message button:hover:not(:disabled), .study-review-upsell button:hover:not(:disabled), .study-report-history button:hover:not(:disabled)) { background: #67edc2; }
+body.product-workspace-route :is(.tool-card-action:disabled, .study-spots-entry button:disabled, .study-primary-action:disabled, .study-state-message button:disabled, .study-report-history button:disabled) { border-color: #2a3431; background: #191f21; color: #73877c; }
+body.product-workspace-route :is(.tool-card-action.secondary, .study-section-heading button) { border-color: #2a3431; background: transparent; color: #f4f1e6; }
+body.product-workspace-route :is(.study-file-input, .study-field input, .study-field textarea) { border-color: #3b5f50; background: #0e1315; color: #f4f1e6; }
+body.product-workspace-route .study-file-input { border-style: dashed; color: #f4f1e6; }
+body.product-workspace-route :is(.study-field, .study-hand-context summary) { color: #f4f1e6; }
+body.product-workspace-route :is(.study-form-error, .study-form-notice) { color: #f4f1e6; background: #151c19; }
+body.product-workspace-route .study-form-error { border-color: #ee887f; }
+body.product-workspace-route .study-form-notice { border-color: #00e39a; }
+body.product-workspace-route :is(.study-progress span[data-state="active"], .study-progress span[data-state="done"]) { border-color: #00e39a; color: #00e39a; }
+body.product-workspace-route .study-spot-rank { background: #191f21; color: #c8a24d; }
+body.product-workspace-route .study-spot-reason { border-color: #00e39a; background: rgb(0 227 154 / 0.07); }
+body.product-workspace-route .study-resource { border-color: #2a3431; }
+body.product-workspace-route .study-resource a { color: #00e39a; }
+body.product-workspace-route .study-spot-actions button { border-color: #2a3431; background: #191f21; color: #f4f1e6; }
+body.product-workspace-route .study-spot-actions button.text-action { background: transparent; color: #9ba9a3; }
+body.product-workspace-route .study-review-upsell { border-top-color: #00e39a; background: #191f21; }
+body.product-workspace-route :is(.study-priorities, .study-topic-summary) { border-color: #2a3431; }
+body.product-workspace-route .study-priorities li { border-color: #00e39a; background: #191f21; color: #f4f1e6; }
+body.product-workspace-route :is(.study-mode-switch, .study-filter-tabs) { border-color: #2a3431; background: #121719; }
+body.product-workspace-route :is(.study-mode-switch button.active, .study-filter-tabs button.active) { background: transparent; color: #00e39a; box-shadow: inset 0 -2px #00e39a; }
+body.product-workspace-route .study-topic-summary > div { color: #9ba9a3; }
+body.product-workspace-route .study-topic-summary strong { color: #f4f1e6; }
+body.product-workspace-route .study-loading { color: #9ba9a3; }
+body.product-workspace-route .study-report-history-actions button.study-report-remove { border-color: rgb(238 136 127 / 0.55); background: transparent; color: #ee887f; }
