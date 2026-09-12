@@ -1,5 +1,5 @@
 export const LIVE_PREFLOP_BASELINE_VERSION =
-  "mtt-position-action-chip-ev-v1";
+  "mtt-position-action-chip-ev-v3";
 
 const CARD_CODE_PATTERN = /^[AKQJT2-9][shdc]$/i;
 const RANKS_ASCENDING = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
@@ -207,27 +207,48 @@ const MTT_RFI_SHALLOW = Object.freeze({
 });
 
 const BB_DEFEND_RANGES = Object.freeze({
-  late: makeRange(
+  small_blind: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "2", "o"),
+    handsFromKicker("K", "2", "s"),
+    handsFromKicker("K", "5", "o"),
+    handsFromKicker("Q", "3", "s"),
+    handsFromKicker("Q", "8", "o"),
+    handsFromKicker("J", "5", "s"),
+    handsFromKicker("J", "8", "o"),
+    handsFromKicker("T", "6", "s"),
+    handsFromKicker("T", "8", "o"),
+    [
+      "98o", "97o", "98s", "97s", "96s", "95s", "87s", "86s",
+      "85s", "76s", "75s", "74s", "65s", "64s", "63s", "54s",
+      "53s", "43s",
+    ],
+  ),
+  button: makeRange(
     handsFromPair("2"),
     handsFromKicker("A", "2", "s"),
     handsFromKicker("A", "2", "o"),
     handsFromKicker("K", "2", "s"),
     handsFromKicker("K", "8", "o"),
-    handsFromKicker("Q", "5", "s"),
+    handsFromKicker("Q", "4", "s"),
     handsFromKicker("Q", "9", "o"),
-    handsFromKicker("J", "7", "s"),
+    handsFromKicker("J", "6", "s"),
     handsFromKicker("J", "9", "o"),
-    handsFromKicker("T", "7", "s"),
+    handsFromKicker("T", "6", "s"),
     [
       "T9o",
       "98o",
       "98s",
       "97s",
       "96s",
+      "95s",
       "87s",
       "86s",
+      "85s",
       "76s",
       "75s",
+      "74s",
       "65s",
       "64s",
       "54s",
@@ -241,10 +262,10 @@ const BB_DEFEND_RANGES = Object.freeze({
     handsFromKicker("A", "7", "o"),
     handsFromKicker("K", "7", "s"),
     handsFromKicker("K", "T", "o"),
-    handsFromKicker("Q", "8", "s"),
+    handsFromKicker("Q", "7", "s"),
     handsFromKicker("Q", "T", "o"),
-    handsFromKicker("J", "8", "s"),
-    ["JTo", "T8s", "T9s", "98s", "97s", "87s", "86s", "76s", "65s", "54s"],
+    handsFromKicker("J", "7", "s"),
+    ["JTo", "T7s", "T8s", "T9s", "98s", "97s", "96s", "87s", "86s", "76s", "75s", "65s", "64s", "54s"],
   ),
   middle: makeRange(
     handsFromPair("2"),
@@ -265,15 +286,203 @@ const BB_DEFEND_RANGES = Object.freeze({
   ),
 });
 
-const SB_CONTINUE_VS_LATE = makeRange(
-  handsFromPair("5"),
-  handsFromKicker("A", "2", "s"),
-  handsFromKicker("A", "T", "o"),
-  handsFromKicker("K", "9", "s"),
-  handsFromKicker("K", "J", "o"),
-  handsFromKicker("Q", "9", "s"),
-  ["QJo", "J9s", "JTs", "T9s", "98s", "87s"],
-);
+const BB_DEFEND_STANDARD_RANGES = Object.freeze({
+  small_blind: BB_DEFEND_RANGES.button,
+  button: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "2", "o"),
+    handsFromKicker("K", "2", "s"),
+    handsFromKicker("K", "8", "o"),
+    handsFromKicker("Q", "5", "s"),
+    handsFromKicker("Q", "9", "o"),
+    handsFromKicker("J", "7", "s"),
+    handsFromKicker("J", "9", "o"),
+    handsFromKicker("T", "7", "s"),
+    [
+      "T9o", "98o", "98s", "97s", "96s", "87s", "86s", "76s",
+      "75s", "65s", "64s", "54s", "53s", "43s",
+    ],
+  ),
+  cutoff: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "7", "o"),
+    handsFromKicker("K", "7", "s"),
+    handsFromKicker("K", "T", "o"),
+    handsFromKicker("Q", "8", "s"),
+    handsFromKicker("Q", "T", "o"),
+    handsFromKicker("J", "8", "s"),
+    ["JTo", "T8s", "T9s", "98s", "97s", "87s", "86s", "76s", "65s", "54s"],
+  ),
+  middle: BB_DEFEND_RANGES.middle,
+  early: BB_DEFEND_RANGES.early,
+});
+
+const BB_DEFEND_THREE_X_RANGES = Object.freeze({
+  small_blind: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "5", "o"),
+    handsFromKicker("K", "5", "s"),
+    handsFromKicker("K", "9", "o"),
+    handsFromKicker("Q", "7", "s"),
+    handsFromKicker("Q", "T", "o"),
+    handsFromKicker("J", "7", "s"),
+    ["JTo", "T7s", "T8s", "T9s", "98s", "97s", "87s", "86s", "76s", "65s", "54s"],
+  ),
+  button: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "7", "o"),
+    handsFromKicker("K", "7", "s"),
+    handsFromKicker("K", "T", "o"),
+    handsFromKicker("Q", "8", "s"),
+    handsFromKicker("Q", "T", "o"),
+    handsFromKicker("J", "8", "s"),
+    ["JTo", "T8s", "T9s", "98s", "87s", "76s", "65s"],
+  ),
+  cutoff: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "9", "o"),
+    handsFromKicker("K", "9", "s"),
+    handsFromKicker("K", "J", "o"),
+    handsFromKicker("Q", "9", "s"),
+    ["QJo", "J9s", "JTs", "T9s", "98s", "87s"],
+  ),
+  middle: makeRange(
+    handsFromPair("2"),
+    handsFromKicker("A", "5", "s"),
+    handsFromKicker("A", "J", "o"),
+    handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"),
+    ["KQo", "JTs", "T9s"],
+  ),
+  early: makeRange(
+    handsFromPair("5"),
+    handsFromKicker("A", "T", "s"),
+    handsFromKicker("A", "J", "o"),
+    handsFromKicker("K", "J", "s"),
+    ["KQo", "QJs", "JTs"],
+  ),
+});
+
+const BB_DEFEND_LARGE_OPEN_RANGES = Object.freeze({
+  small_blind: makeRange(
+    handsFromPair("2"), handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "T", "o"), handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"), ["KQo", "JTs", "T9s", "98s"],
+  ),
+  button: makeRange(
+    handsFromPair("2"), handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "T", "o"), handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"), ["KQo", "JTs", "T9s", "98s"],
+  ),
+  cutoff: makeRange(
+    handsFromPair("4"), handsFromKicker("A", "8", "s"),
+    handsFromKicker("A", "J", "o"), handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"), ["KQo", "JTs"],
+  ),
+  middle: makeRange(
+    handsFromPair("5"), handsFromKicker("A", "T", "s"),
+    handsFromKicker("A", "J", "o"), handsFromKicker("K", "J", "s"),
+    ["KQo", "QJs", "JTs"],
+  ),
+  early: makeRange(
+    handsFromPair("7"), handsFromKicker("A", "J", "s"),
+    handsFromKicker("A", "Q", "o"), ["KQs"],
+  ),
+});
+
+const SB_CONTINUE_RANGES = Object.freeze({
+  button: makeRange(
+    handsFromPair("5"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "T", "o"),
+    handsFromKicker("K", "9", "s"),
+    handsFromKicker("K", "J", "o"),
+    handsFromKicker("Q", "9", "s"),
+    ["QJo", "J9s", "JTs", "T9s", "98s", "87s"],
+  ),
+  cutoff: makeRange(
+    handsFromPair("5"),
+    handsFromKicker("A", "2", "s"),
+    handsFromKicker("A", "T", "o"),
+    handsFromKicker("K", "9", "s"),
+    handsFromKicker("K", "J", "o"),
+    handsFromKicker("Q", "9", "s"),
+    ["QJo", "J9s", "JTs", "T9s", "98s", "87s"],
+  ),
+  middle: makeRange(
+    handsFromPair("5"),
+    handsFromKicker("A", "8", "s"),
+    ["A5s", "A4s"],
+    handsFromKicker("A", "J", "o"),
+    handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"),
+    ["KQo", "JTs", "T9s"],
+  ),
+  early: makeRange(
+    handsFromPair("6"),
+    handsFromKicker("A", "9", "s"),
+    ["A5s", "A4s"],
+    handsFromKicker("A", "Q", "o"),
+    handsFromKicker("K", "J", "s"),
+    ["KQo", "QJs", "JTs"],
+  ),
+});
+
+const SB_CONTINUE_THREE_X_RANGES = Object.freeze({
+  button: makeRange(
+    handsFromPair("6"),
+    handsFromKicker("A", "5", "s"),
+    handsFromKicker("A", "T", "o"),
+    handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"),
+    ["KQo", "JTs", "T9s"],
+  ),
+  cutoff: makeRange(
+    handsFromPair("7"),
+    handsFromKicker("A", "8", "s"),
+    handsFromKicker("A", "J", "o"),
+    handsFromKicker("K", "T", "s"),
+    handsFromKicker("Q", "T", "s"),
+    ["KQo", "JTs"],
+  ),
+  middle: makeRange(
+    handsFromPair("8"),
+    handsFromKicker("A", "T", "s"),
+    handsFromKicker("A", "Q", "o"),
+    handsFromKicker("K", "J", "s"),
+    ["KQo", "QJs"],
+  ),
+  early: makeRange(
+    handsFromPair("9"),
+    handsFromKicker("A", "J", "s"),
+    handsFromKicker("A", "Q", "o"),
+    ["KQs"],
+  ),
+});
+
+const SB_CONTINUE_LARGE_OPEN_RANGES = Object.freeze({
+  button: makeRange(
+    handsFromPair("T"), handsFromKicker("A", "Q", "s"),
+    handsFromKicker("A", "Q", "o"), ["KQs"],
+  ),
+  cutoff: makeRange(
+    handsFromPair("T"), handsFromKicker("A", "Q", "s"),
+    handsFromKicker("A", "Q", "o"), ["KQs"],
+  ),
+  middle: makeRange(
+    handsFromPair("T"), handsFromKicker("A", "Q", "s"),
+    handsFromKicker("A", "Q", "o"), ["KQs"],
+  ),
+  early: makeRange(
+    handsFromPair("T"), handsFromKicker("A", "Q", "s"),
+    handsFromKicker("A", "Q", "o"), ["KQs"],
+  ),
+});
 
 const IP_CONTINUE_VS_OPEN = makeRange(
   handsFromPair("2"),
@@ -438,10 +647,84 @@ export function describeStructuralPreflopHand(handCode) {
 
 function openerGroup(seat) {
   const normalized = String(seat || "").toUpperCase();
-  if (["BTN", "SB"].includes(normalized)) return "late";
+  if (normalized === "SB") return "small_blind";
+  if (normalized === "BTN") return "button";
   if (normalized === "CO") return "cutoff";
   if (["HJ", "LJ"].includes(normalized)) return "middle";
-  return "early";
+  if (["UTG", "UTG+1", "UTG+2"].includes(normalized)) return "early";
+  return null;
+}
+
+function bigBlindRangeForOpen(group, facingSizeBB) {
+  if (facingSizeBB === null) {
+    return {
+      range: BB_DEFEND_STANDARD_RANGES[group] || null,
+      sizingBand: "unknown_assume_standard",
+      assumedFacingSizeBB: 2.5,
+    };
+  }
+  if (facingSizeBB <= 2.2) {
+    return {
+      range: BB_DEFEND_RANGES[group] || null,
+      sizingBand: "small_2_2_or_less",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  if (facingSizeBB <= 2.5) {
+    return {
+      range: BB_DEFEND_STANDARD_RANGES[group] || null,
+      sizingBand: "standard_2_21_to_2_5",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  if (facingSizeBB <= 3) {
+    return {
+      range: BB_DEFEND_THREE_X_RANGES[group] || null,
+      sizingBand: "medium_2_51_to_3",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  return {
+    range: BB_DEFEND_LARGE_OPEN_RANGES[group] || null,
+    sizingBand: "large_over_3",
+    assumedFacingSizeBB: facingSizeBB,
+  };
+}
+
+function smallBlindRangeForOpen(group, facingSizeBB) {
+  if (facingSizeBB === null) {
+    return {
+      range: SB_CONTINUE_RANGES[group] || null,
+      sizingBand: "unknown_assume_standard",
+      assumedFacingSizeBB: 2.5,
+    };
+  }
+  if (facingSizeBB <= 2.2) {
+    return {
+      range: SB_CONTINUE_RANGES[group] || null,
+      sizingBand: "small_2_2_or_less",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  if (facingSizeBB <= 2.5) {
+    return {
+      range: SB_CONTINUE_RANGES[group] || null,
+      sizingBand: "standard_2_21_to_2_5",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  if (facingSizeBB <= 3) {
+    return {
+      range: SB_CONTINUE_THREE_X_RANGES[group] || null,
+      sizingBand: "medium_2_51_to_3",
+      assumedFacingSizeBB: facingSizeBB,
+    };
+  }
+  return {
+    range: SB_CONTINUE_LARGE_OPEN_RANGES[group] || null,
+    sizingBand: "large_over_3",
+    assumedFacingSizeBB: facingSizeBB,
+  };
 }
 
 function pickLegal(legalActions, candidates) {
@@ -476,35 +759,87 @@ function facingOpenAnchor({
   legalActions,
 }) {
   const group = openerGroup(opponentSeat);
-  const smallOpen = facingSizeBB !== null && facingSizeBB <= 2.5;
+  const effectiveFacingSizeBB = facingSizeBB ?? 2.5;
+  const smallOpen = effectiveFacingSizeBB <= 2.5;
   const shallow = effectiveStackBB !== null && effectiveStackBB <= 20;
   const veryShort = effectiveStackBB !== null && effectiveStackBB <= 12;
   const multiway = decisionKind === "facing_open_callers";
   let range = null;
-  if (heroSeat === "BB") range = BB_DEFEND_RANGES[group];
-  else if (heroSeat === "SB" && ["late", "cutoff"].includes(group)) {
-    range = SB_CONTINUE_VS_LATE;
+  let sizingBand = facingSizeBB === null
+    ? "unknown_assume_standard"
+    : facingSizeBB <= 2.5
+      ? "small_2_5_or_less"
+      : facingSizeBB <= 3
+        ? "medium_2_51_to_3"
+        : "large_over_3";
+  let assumedFacingSizeBB = effectiveFacingSizeBB;
+  if (heroSeat === "BB") {
+    const selected = bigBlindRangeForOpen(group, facingSizeBB);
+    range = selected.range;
+    sizingBand = selected.sizingBand;
+    assumedFacingSizeBB = selected.assumedFacingSizeBB;
+  } else if (heroSeat === "SB") {
+    const selected = smallBlindRangeForOpen(group, facingSizeBB);
+    range = selected.range;
+    sizingBand = selected.sizingBand;
+    assumedFacingSizeBB = selected.assumedFacingSizeBB;
   } else if (["BTN", "CO"].includes(heroSeat)) {
     range = IP_CONTINUE_VS_OPEN;
   } else if (["HJ", "LJ", "UTG+1", "UTG+2"].includes(heroSeat)) {
     range = EARLY_MIDDLE_CONTINUE_VS_OPEN;
   }
 
-  let continues = Boolean(range?.has(handCode));
-  if (!smallOpen && !VALUE_3BET.has(handCode) && !CALL_VS_3BET.has(handCode)) {
+  const spot = heroSeat === "BB"
+    ? "bb_defend_vs_open"
+    : heroSeat === "SB"
+      ? "sb_defend_vs_open"
+      : ["BTN", "CO"].includes(heroSeat)
+        ? "in_position_continue_vs_open"
+        : "early_middle_continue_vs_open";
+
+  if (!range) {
+    return {
+      version: LIVE_PREFLOP_BASELINE_VERSION,
+      applicable: false,
+      source: "structural_hand_context_only",
+      spot,
+      handCode,
+      handClass,
+      verdict: "context_required",
+      recommendedActions: [],
+      fallbackAction: null,
+      mixedAggressionCandidate: false,
+      valueAggressionCandidate: false,
+      sizingBand,
+      assumedFacingSizeBB,
+      confidence: "low",
+      rationale:
+        "No deterministic continue range is available for this exact seat configuration; use the supplied position, price, stack and action state without treating missing strategy data as a fold.",
+    };
+  }
+
+  let continues = range.has(handCode);
+  if (
+    !["BB", "SB"].includes(heroSeat) &&
+    !smallOpen &&
+    !VALUE_3BET.has(handCode) &&
+    !CALL_VS_3BET.has(handCode)
+  ) {
     continues = false;
   }
   if (multiway && !multiwayPlayable(handCode)) continues = false;
   if (veryShort) {
     const preservePricedBigBlind =
-      heroSeat === "BB" && smallOpen && ["late", "cutoff"].includes(group);
+      heroSeat === "BB" &&
+      smallOpen &&
+      ["small_blind", "button", "cutoff"].includes(group);
     const shallowRange = ["SB", "BB"].includes(heroSeat)
       ? SHALLOW_BLIND_CONTINUE
       : SHALLOW_CONTINUE;
     if (!preservePricedBigBlind && !shallowRange.has(handCode)) continues = false;
   }
 
-  const lateOpen = ["late", "cutoff"].includes(group);
+  const lateOpen = ["small_blind", "button", "cutoff"].includes(group);
   const value3Bet = (lateOpen ? LATE_VALUE_3BET : VALUE_3BET).has(handCode);
   const blocker3Bet =
     lateOpen &&
@@ -523,14 +858,6 @@ function facingOpenAnchor({
       ? ["3-bet", "call"]
       : ["call", "3-bet"]
     : ["fold"];
-  const spot = heroSeat === "BB"
-    ? "bb_defend_vs_open"
-    : heroSeat === "SB"
-      ? "sb_defend_vs_open"
-      : ["BTN", "CO"].includes(heroSeat)
-        ? "in_position_continue_vs_open"
-        : "early_middle_continue_vs_open";
-
   return {
     version: LIVE_PREFLOP_BASELINE_VERSION,
     applicable: Boolean(range),
@@ -543,14 +870,18 @@ function facingOpenAnchor({
     fallbackAction,
     mixedAggressionCandidate: blocker3Bet,
     valueAggressionCandidate: value3Bet,
+    sizingBand,
+    assumedFacingSizeBB,
     confidence:
       range && opponentSeat && facingSizeBB !== null
-        ? smallOpen
+        ? ["BB", "SB"].includes(heroSeat) && facingSizeBB <= 3
+          ? "medium"
+          : smallOpen
           ? "medium"
           : "low"
         : "low",
     rationale: continues
-      ? `${handCode} is inside the conservative ${spot.replaceAll("_", " ")} region against a ${opponentSeat || "position-unknown"} ${facingSizeBB ?? "small"} BB open. Preserve the continue through ${recommendedActions.join(" or ")}; do not fold solely because the hand is non-premium.${blocker3Bet ? " This suited wheel ace is also a selective blocker 3-bet candidate." : ""}`
+      ? `${handCode} is inside the conservative ${spot.replaceAll("_", " ")} region against a ${opponentSeat || "position-unknown"} ${facingSizeBB ?? `size-unknown (assumed ${assumedFacingSizeBB})`} BB open in the ${sizingBand.replaceAll("_", " ")} band. Preserve the continue through ${recommendedActions.join(" or ")}; do not fold solely because the hand is non-premium.${blocker3Bet ? " This suited wheel ace is also a selective blocker 3-bet candidate." : ""}`
       : range
         ? `${handCode} falls outside this conservative continue anchor after accounting for opener position, size${multiway ? ", callers" : ""}, and stack depth.`
         : "No deterministic continue range is available for this exact seat configuration; use the supplied position, price, stack and action state.",
@@ -755,5 +1086,11 @@ export const __livePreflopBaselineTestables = {
   mttRfiStandard: MTT_RFI_STANDARD,
   mttRfiShallow: MTT_RFI_SHALLOW,
   bbDefendRanges: BB_DEFEND_RANGES,
+  bbDefendStandardRanges: BB_DEFEND_STANDARD_RANGES,
+  bbDefendThreeXRanges: BB_DEFEND_THREE_X_RANGES,
+  bbDefendLargeOpenRanges: BB_DEFEND_LARGE_OPEN_RANGES,
+  sbContinueRanges: SB_CONTINUE_RANGES,
+  sbContinueThreeXRanges: SB_CONTINUE_THREE_X_RANGES,
+  sbContinueLargeOpenRanges: SB_CONTINUE_LARGE_OPEN_RANGES,
   blocker3Bet: BLOCKER_3BET,
 };

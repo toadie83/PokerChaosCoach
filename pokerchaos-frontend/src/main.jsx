@@ -44,6 +44,7 @@ import {
 } from "./api/aiService.js";
 import { initAnalytics, trackPageView } from "./lib/analytics.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
+import { DISCORD_COMMUNITY_URL } from "./lib/community.js";
 import {
   CAPABILITY_KEYS,
   canAccessCapability,
@@ -455,6 +456,14 @@ function AppFooter({ onOpenAbout, onOpenDisclaimer }) {
         </a>
         <a className="app-footer-link" href="mailto:qacopilotdev@gmail.com">
           Contact me
+        </a>
+        <a
+          className="app-footer-link"
+          href={DISCORD_COMMUNITY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Discord community
         </a>
       </div>
     </footer>
@@ -1189,9 +1198,9 @@ function SignedOutShell() {
         </p>
         <a
           className="auth-community-link"
-          href="https://discord.gg/eFzKXtBgQk"
+          href={DISCORD_COMMUNITY_URL}
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
         >
           Enter the Discord
         </a>

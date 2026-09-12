@@ -93,6 +93,115 @@ test("20 BB BB anchor defends Q9s against a small BTN open", () => {
   assert.match(anchor.rationale, /do not fold solely because.*non-premium/i);
 });
 
+test("BB defense distinguishes an SB open from a BTN open", () => {
+  const base = {
+    card1: "Ks",
+    card2: "6h",
+    decisionKind: "facing_open",
+    heroSeat: "BB",
+    effectiveStackBB: 40,
+    facingSizeBB: 2.2,
+    callAmountBB: 1.2,
+    legalActions: ["fold", "call", "3-bet", "jam"],
+  };
+  const versusSmallBlind = buildLivePreflopAnchor(
+    context({ ...base, opponentSeat: "SB" }),
+  );
+  const versusButton = buildLivePreflopAnchor(
+    context({ ...base, opponentSeat: "BTN" }),
+  );
+
+  assert.equal(versusSmallBlind.verdict, "continue");
+  assert.equal(versusButton.verdict, "fold");
+});
+
+test("BB defense uses graduated open-size bands instead of a 2.5 BB cliff", () => {
+  const base = {
+    card1: "6s",
+    card2: "5s",
+    decisionKind: "facing_open",
+    heroSeat: "BB",
+    opponentSeat: "BTN",
+    effectiveStackBB: 40,
+    legalActions: ["fold", "call", "3-bet", "jam"],
+  };
+  const versusThreeX = buildLivePreflopAnchor(
+    context({ ...base, facingSizeBB: 3, callAmountBB: 2 }),
+  );
+  const versusLargeOpen = buildLivePreflopAnchor(
+    context({ ...base, facingSizeBB: 3.5, callAmountBB: 2.5 }),
+  );
+
+  assert.equal(versusThreeX.verdict, "continue");
+  assert.equal(versusThreeX.sizingBand, "medium_2_51_to_3");
+  assert.equal(versusLargeOpen.verdict, "fold");
+  assert.equal(versusLargeOpen.sizingBand, "large_over_3");
+});
+
+test("unknown BB open size assumes a standard 2.5 BB price at low confidence", () => {
+  const anchor = buildLivePreflopAnchor(
+    context({
+      card1: "Qs",
+      card2: "9s",
+      decisionKind: "facing_open",
+      heroSeat: "BB",
+      opponentSeat: "BTN",
+      effectiveStackBB: 40,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+    }),
+  );
+
+  assert.equal(anchor.verdict, "continue");
+  assert.equal(anchor.fallbackAction, "call");
+  assert.equal(anchor.sizingBand, "unknown_assume_standard");
+  assert.equal(anchor.assumedFacingSizeBB, 2.5);
+  assert.equal(anchor.confidence, "low");
+});
+
+test("AQo in the SB continues against a 2 BB UTG+1 open at 25.7 BB", () => {
+  const anchor = buildLivePreflopAnchor(
+    context({
+      card1: "As",
+      card2: "Qd",
+      decisionKind: "facing_open",
+      heroSeat: "SB",
+      opponentSeat: "UTG+1",
+      effectiveStackBB: 25.7,
+      facingSizeBB: 2,
+      callAmountBB: 1.5,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+    }),
+  );
+
+  assert.equal(anchor.applicable, true);
+  assert.equal(anchor.verdict, "continue");
+  assert.equal(anchor.fallbackAction, "call");
+  assert.equal(anchor.sizingBand, "small_2_2_or_less");
+  assert.equal(anchor.confidence, "medium");
+});
+
+test("missing facing-open strategy data requests context instead of manufacturing a fold", () => {
+  const anchor = buildLivePreflopAnchor(
+    context({
+      card1: "As",
+      card2: "Qd",
+      decisionKind: "facing_open",
+      heroSeat: "UTG",
+      opponentSeat: "UTG+1",
+      effectiveStackBB: 25.7,
+      facingSizeBB: 2,
+      callAmountBB: 2,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+    }),
+  );
+
+  assert.equal(anchor.applicable, false);
+  assert.equal(anchor.verdict, "context_required");
+  assert.equal(anchor.fallbackAction, null);
+  assert.deepEqual(anchor.recommendedActions, []);
+  assert.match(anchor.rationale, /without treating missing strategy data as a fold/i);
+});
+
 test("very short BB still preserves a strongly priced late-open defense", () => {
   const anchor = buildLivePreflopAnchor(
     context({

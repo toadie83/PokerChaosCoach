@@ -1146,12 +1146,18 @@ function buildLivePreflopGuidance(context = {}) {
         }`.trim(),
     };
   }
-  if (facingOpen && heroSeat === "SB" && ["BTN", "CO"].includes(opponentSeat)) {
+  if (facingOpen && heroSeat === "SB") {
+    const facingLateOpen = ["BTN", "CO"].includes(opponentSeat);
     return {
       ...common,
-      situation: "sb_defend_vs_late_open",
-      baseline:
-        `${deterministicAnchor?.rationale || ""} Against a late-position steal, keep a real SB continuing range: mix selective calls with linear and blocker-driven 3-bets instead of folding every non-premium hand, while respecting poor out-of-position realization.`.trim(),
+      situation: facingLateOpen
+        ? "sb_defend_vs_late_open"
+        : "sb_defend_vs_early_middle_open",
+      baseline: `${deterministicAnchor?.rationale || ""} ${
+        facingLateOpen
+          ? "Against a late-position steal, keep a real SB continuing range: mix selective calls with linear and blocker-driven 3-bets instead of folding every non-premium hand, while respecting poor out-of-position realization."
+          : "Against an early- or middle-position open, continue more selectively than against a steal, but preserve the strong pairs, suited broadways, and high-card hands included by the exact anchor. A live BB affects call-versus-raise construction; it does not turn an anchored strong continue into a fold."
+      }`.trim(),
     };
   }
   if (facingOpen && ["BTN", "CO"].includes(heroSeat)) {
@@ -1326,19 +1332,21 @@ function applyAnchoredPreflopFallback(
   context = {},
   usedFallback = false,
 ) {
-  if (!usedFallback) return response;
   const guidance = buildLivePreflopGuidance(context);
   const anchor = guidance?.deterministicAnchor;
   if (!anchor?.applicable || !anchor?.fallbackAction) return response;
-  if (
-    String(response?.hero_action || "").toLowerCase() !==
-    String(anchor.fallbackAction).toLowerCase()
-  ) {
-    return response;
-  }
+  const responseAction = String(response?.hero_action || "").toLowerCase();
+  const anchorAction = String(anchor.fallbackAction).toLowerCase();
+  const protectsContinue =
+    ["continue", "enter"].includes(String(anchor.verdict || "").toLowerCase()) &&
+    ["medium", "high"].includes(String(anchor.confidence || "").toLowerCase()) &&
+    responseAction === "fold" &&
+    anchorAction !== "fold";
+  if (!usedFallback && !protectsContinue) return response;
+  if (usedFallback && responseAction !== anchorAction) return response;
 
   const decision = context?.decisionNode || {};
-  const action = String(anchor.fallbackAction).toLowerCase();
+  const action = anchorAction;
   const legalActions = Array.isArray(decision?.legalActions)
     ? decision.legalActions.map((item) => String(item || "").toLowerCase())
     : [];
@@ -1401,6 +1409,7 @@ function applyAnchoredPreflopFallback(
 
   return {
     ...response,
+    hero_action: action,
     sizing,
     sizing_bb: sizingBB,
     confidence: ["low", "medium", "high"].includes(anchor.confidence)
@@ -1410,11 +1419,16 @@ function applyAnchoredPreflopFallback(
       anchor.verdict === "fold"
         ? `${anchor.handCode} is outside the conservative ${anchor.spot.replaceAll("_", " ")} anchor.`
         : `${anchor.handCode} follows the conservative ${anchor.spot.replaceAll("_", " ")} continue.`,
-    reasoning: `${anchor.rationale} The model response was unusable, so the deterministic preflop anchor supplied the safe legal fallback rather than a generic fold.`,
+    reasoning: protectsContinue
+      ? `${anchor.rationale} The generated fold conflicted with this position-, price-, size-, and stack-qualified continue anchor, so the deterministic baseline preserved the legal ${action}.`
+      : `${anchor.rationale} The model response was unusable, so the deterministic preflop anchor supplied the safe legal fallback rather than a generic fold.`,
     alternative_action: alternativeAction || response?.alternative_action || null,
     alternative_sizing: null,
     fallback_source: "live_preflop_anchor",
     preflop_anchor_version: anchor.version,
+    ...(protectsContinue
+      ? { safety_override: "protected_preflop_continue_anchor" }
+      : {}),
   };
 }
 
@@ -7830,6 +7844,35 @@ const REPLAY_CARD_AND_STACK_RESPONSE_SCHEMA = {
   ],
 };
 
+const REPLAY_TABLE_STACK_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...REPLAY_CARD_AND_STACK_RESPONSE_SCHEMA.properties,
+    opponentStacks: {
+      type: "array",
+      minItems: 7,
+      maxItems: 7,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          screenSeat: { type: "integer", minimum: 1, maximum: 7 },
+          stackBB: {
+            anyOf: [
+              { type: "number", minimum: 0, maximum: 10000 },
+              { type: "null" },
+            ],
+          },
+          confidence: { type: "string", enum: ["low", "medium", "high"] },
+        },
+        required: ["screenSeat", "stackBB", "confidence"],
+      },
+    },
+  },
+  required: [...REPLAY_CARD_AND_STACK_RESPONSE_SCHEMA.required, "opponentStacks"],
+};
+
 function normalizeReplayCardCode(value) {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!REPLAY_CARD_CODE_PATTERN.test(raw)) return null;
@@ -7839,7 +7882,7 @@ function normalizeReplayCardCode(value) {
 function normalizeReplayCardRecognition(
   raw,
   expectedBoardCount = null,
-  { knownHeroCards = [], knownBoardCards = [], readHeroStack = false } = {},
+  { knownHeroCards = [], knownBoardCards = [], readHeroStack = false, readOpponentStacks = false } = {},
 ) {
   const heroInput = Array.isArray(raw?.heroCards) ? raw.heroCards : [];
   const boardInput = Array.isArray(raw?.boardCards) ? raw.boardCards : [];
@@ -7868,6 +7911,32 @@ function normalizeReplayCardRecognition(
     rawHeroStackBB <= 10000
       ? Number(rawHeroStackBB.toFixed(2))
       : null;
+  const rawOpponentStacks = Array.isArray(raw?.opponentStacks) ? raw.opponentStacks : [];
+  const opponentStacksBySeat = new Map();
+  const duplicateOpponentSeats = new Set();
+  for (const entry of rawOpponentStacks) {
+    const screenSeat = Number(entry?.screenSeat);
+    if (!Number.isInteger(screenSeat) || screenSeat < 1 || screenSeat > 7) continue;
+    if (opponentStacksBySeat.has(screenSeat)) duplicateOpponentSeats.add(screenSeat);
+    else opponentStacksBySeat.set(screenSeat, entry);
+  }
+  const opponentStacks = Array.from({ length: 7 }, (_, index) => {
+    const screenSeat = index + 1;
+    const entry = opponentStacksBySeat.get(screenSeat);
+    const confidence = ["low", "medium", "high"].includes(entry?.confidence)
+      ? entry.confidence
+      : "low";
+    const stack = Number(entry?.stackBB);
+    const stackBehindBB = !duplicateOpponentSeats.has(screenSeat) && confidence !== "low" &&
+      entry?.stackBB !== null && entry?.stackBB !== undefined && Number.isFinite(stack) && stack > 0 && stack <= 10000
+      ? Number(stack.toFixed(2))
+      : null;
+    return {
+      screenSeat,
+      stackBehindBB,
+      confidence: stackBehindBB === null ? "low" : confidence,
+    };
+  });
 
   if (
     heroCards.length !== 2 ||
@@ -7967,6 +8036,7 @@ function normalizeReplayCardRecognition(
             heroStackBehindBB === null ? "low" : stackConfidence,
         }
       : {}),
+    ...(readOpponentStacks ? { opponentStacks } : {}),
   };
 }
 
@@ -7976,6 +8046,8 @@ export async function recognizeReplayCards({
   imageDataUrl,
   expectedBoardCount = null,
   readHeroStack = false,
+  readOpponentStacks = false,
+  opponentStacksImageDataUrl,
   knownHeroCards = [],
   knownBoardCards = [],
 } = {}) {
@@ -7994,11 +8066,32 @@ export async function recognizeReplayCards({
   const shouldReadHeroStack = Boolean(
     readHeroStack && expectedBoardCount === 0,
   );
+  const shouldReadOpponentStacks = Boolean(
+    shouldReadHeroStack && readOpponentStacks && opponentStacksImageDataUrl,
+  );
   const stackHint = shouldReadHeroStack
     ? "A labelled HERO STACK panel appears below the Hero cards. Transcribe the numeric chips-behind value immediately followed by BB. Return the number without the BB suffix. If the complete number, decimal point, or BB suffix is unclear, return null and stackConfidence low. This stack task is independent: never lower card confidence or omit readable cards because the stack is unclear."
     : "Do not inspect, infer, or return any player stack value.";
+  const opponentStackHint = shouldReadOpponentStacks
+    ? "The third image contains exactly seven independently labelled stack crops, SCREEN SEAT V1 through V7. For every screen seat, transcribe only a complete numeric value with its visible BB suffix. Return exactly one object per V1-V7 in screen-seat order. Use null with low confidence for an empty seat, missing label, obscured decimal, incomplete number, or unclear BB suffix. Never infer one seat from another, chip graphics, bets, names, or table position. Opponent-stack confidence is independent of card confidence."
+    : "Do not inspect or return opponent stack values.";
   const responseShape = shouldReadHeroStack
-    ? `{
+    ? shouldReadOpponentStacks ? `{
+  "heroCards": ["As", "Kd"],
+  "boardCards": [],
+  "confidence": "high",
+  "heroStackBB": 67.6,
+  "stackConfidence": "high",
+  "opponentStacks": [
+    { "screenSeat": 1, "stackBB": 24.7, "confidence": "high" },
+    { "screenSeat": 2, "stackBB": null, "confidence": "low" },
+    { "screenSeat": 3, "stackBB": 41.2, "confidence": "medium" },
+    { "screenSeat": 4, "stackBB": 18.0, "confidence": "high" },
+    { "screenSeat": 5, "stackBB": 30.5, "confidence": "high" },
+    { "screenSeat": 6, "stackBB": 52.0, "confidence": "high" },
+    { "screenSeat": 7, "stackBB": 12.4, "confidence": "high" }
+  ]
+}` : `{
   "heroCards": ["As", "Kd"],
   "boardCards": [],
   "confidence": "high",
@@ -8027,6 +8120,12 @@ export async function recognizeReplayCards({
           type: "image_url",
           image_url: { url: heroImageDataUrl, detail: "high" },
         },
+        ...(shouldReadOpponentStacks
+          ? [
+              { type: "text", text: "Third image: seven labelled OPPONENT STACK crops for screen seats V1 through V7." },
+              { type: "image_url", image_url: { url: opponentStacksImageDataUrl, detail: "high" } },
+            ]
+          : []),
       ]
     : [
         { type: "text", text: "One composite image containing labelled board and Hero crops." },
@@ -8039,16 +8138,16 @@ export async function recognizeReplayCards({
   const completion = await getClient().chat.completions.create({
     model,
     temperature: 0,
-    max_tokens: shouldReadHeroStack ? 220 : 180,
+    max_tokens: shouldReadOpponentStacks ? 520 : shouldReadHeroStack ? 220 : 180,
     response_format: {
       type: "json_schema",
       json_schema: {
         name: shouldReadHeroStack
-          ? "poker_replay_cards_and_stack"
+          ? shouldReadOpponentStacks ? "poker_replay_cards_and_table_stacks" : "poker_replay_cards_and_stack"
           : "poker_replay_cards",
         strict: true,
         schema: shouldReadHeroStack
-          ? REPLAY_CARD_AND_STACK_RESPONSE_SCHEMA
+          ? shouldReadOpponentStacks ? REPLAY_TABLE_STACK_RESPONSE_SCHEMA : REPLAY_CARD_AND_STACK_RESPONSE_SCHEMA
           : REPLAY_CARD_RESPONSE_SCHEMA,
       },
     },
@@ -8056,7 +8155,7 @@ export async function recognizeReplayCards({
       {
         role: "system",
         content: `You transcribe playing cards from tightly cropped PokerCraft replay images.
-Read only the COMMUNITY BOARD, HERO HOLE CARDS, and any explicitly labelled HERO STACK panel. Never read opponent cards, avatars, card backs, names, or anything outside the labelled crops.
+Read only the COMMUNITY BOARD, HERO HOLE CARDS, and explicitly labelled HERO or OPPONENT STACK panels. Never read opponent cards, avatars, card backs, names, or anything outside the labelled crops.
 Return JSON with this exact shape:
 ${responseShape}
 Rules:
@@ -8076,7 +8175,7 @@ ${REPLAY_HERO_VISIBILITY_GUIDANCE}
         content: [
           {
             type: "text",
-            text: `${boardCountHint}\n${lockedCardHint}\n${stackHint}`,
+            text: `${boardCountHint}\n${lockedCardHint}\n${stackHint}\n${opponentStackHint}`,
           },
           ...imageContent,
         ],
@@ -8089,6 +8188,7 @@ ${REPLAY_HERO_VISIBILITY_GUIDANCE}
     knownHeroCards,
     knownBoardCards,
     readHeroStack: shouldReadHeroStack,
+    readOpponentStacks: shouldReadOpponentStacks,
   });
   const usage = completion?.usage
     ? {
@@ -9493,6 +9593,9 @@ async function runRangeProfessor(context = {}, instruction, model) {
     decisionNode?.gameType || context?.gameType || context?.format || "unknown",
   );
   const stacks = stackSnapshot(context);
+  const strategicTableState = context?.strategicTableState && typeof context.strategicTableState === "object"
+    ? context.strategicTableState
+    : null;
   const preflopBaseline = buildLivePreflopGuidance(context);
   const stageLens = selectedTournamentStageGuidance(context);
   const bountyLens = selectedBountyTournamentGuidance(context);
@@ -9647,6 +9750,7 @@ async function runRangeProfessor(context = {}, instruction, model) {
     stakeGuidance: stakeGuide ? stakeGuide.note : undefined,
     stageLens,
     bountyLens,
+    strategicTableState,
   };
 
   const system = `You are Range Professor, a state-first poker range-construction coach.
@@ -9685,6 +9789,12 @@ Rules:
 - Consider hero hand ${readable} and anticipate likely villain responses for the next decisions.
 - When board cards are present, state hero's current made hand class (e.g. top pair, two pair, set, straight) before discussing draw potential.
 - Use solver-baseline lines first; call out exploitative departures and rationale when you recommend them.
+- When strategicTableState is supplied, use its per-opponent effective stacks, coverage margins, players-yet-to-act, players-who-can-respond, reshove stacks, retaliation stacks, confidence and limitations as observed evidence. Never replace those fields with a generic "chip leader" narrative.
+- Treat playersYetToAct as opponents who have not acted after Hero in the current sequence. Treat playersWhoCanRespond as the wider set that can continue against a Hero bet or raise; do not conflate the two.
+- Use decision.callPotOddsPct and each opponent's effectiveStackToPotRatio/postCallSPR as deterministic arithmetic, not solver proof. Explain commitment pressure from the relevant opponent's value, especially the aggressor, rather than quoting a table-wide average.
+- Being table chip leader is not by itself a reason for maximum pressure. A short shove-or-fold stack has little medium-stack risk premium, while a deep stack behind can retaliate; preserve those distinctions.
+- strategicTableState.features.icmPressure="stage_only_unquantified" is not calculated ICM. Without payouts and field state, describe only qualitative stage pressure and list the limitation.
+- Structure reasoning in this order: baseline range status, stack/position adjustment, then any evidence-backed exploit adjustment. If no credible tendency sample is supplied, explicitly make no opponent-specific exploit adjustment.
 - On preflop nodes, preflopBaseline.deterministicAnchor outranks the generic structural hand label. Treat chart-qualified opens and conservative continue anchors as real range members, not exceptions requiring premium cards.
 - Pair plus strong draw combinations (e.g. pair + flush draw or pair + open-ended) typically continue versus single raises; only fold with clear GTO justification (stack, range disadvantage, extreme sizing).
 - When the board shows three or more of a suit, tighten calling frequencies without that suit blocker; default to folding two-pair or weaker versus large raises unless blockers or sizing justify a hero call.

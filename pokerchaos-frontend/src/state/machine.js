@@ -21,6 +21,12 @@ import {
 
 export const DEFAULT_TOURNAMENT_ANTE_BB = 0.15;
 
+function finiteNonNegativeOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 const ACTION_BEFORE_HERO_CODES = new Set([
   "unopened",
   "limped_to_me",
@@ -126,6 +132,9 @@ export function applyEvent(state, event) {
     return state;
   }
   const s = { ...state };
+  if (actionEvent.actorSeat && !eventCode.startsWith("hero_") && !["unopened", "first_to_act"].includes(eventCode)) {
+    s.opponentSeat = actionEvent.actorSeat;
+  }
   const push = (code) => {
     s.actions = [...s.actions, { code, at: now, street: s.street }];
     s.previousActions = [...s.previousActions, code];
@@ -830,6 +839,57 @@ export function applyEvent(state, event) {
     default:
       break;
   }
+  const liveState = actionEvent.liveState;
+  if (liveState?.source === "local_table_tracker") {
+    const liveTableSize = Number(liveState.tableSize);
+    if (Number.isInteger(liveTableSize) && liveTableSize >= 2 && liveTableSize <= 9) {
+      s.tableSize = liveTableSize;
+    }
+    const livePotBB = finitePositiveOrNull(liveState.potBB);
+    if (livePotBB) s.estimatedPotBB = livePotBB;
+    if (Number.isInteger(Number(liveState.callers)) && Number(liveState.callers) >= 0) {
+      s.preflopCallers = Math.max(Number(s.preflopCallers || 0), Number(liveState.callers));
+    }
+    if (Number.isInteger(Number(liveState.playersInHand)) && Number(liveState.playersInHand) >= 2) {
+      s.playersInHand = Number(liveState.playersInHand);
+    }
+    const commitments = buildStackState(s);
+    const heroRemaining = finiteNonNegativeOrNull(liveState.heroStackBehindBB);
+    const opponentRemaining = finiteNonNegativeOrNull(liveState.opponentStackBehindBB);
+    s.stackRemainingOverrides = { ...(s.stackRemainingOverrides || {}) };
+    if (heroRemaining !== null) {
+      s.stackRemainingOverrides.hero = {
+        remainingBB: heroRemaining,
+        committedAtBB: commitments.heroTotalCommittedBB,
+      };
+    }
+    if (opponentRemaining !== null) {
+      s.stackRemainingOverrides.opponent = {
+        remainingBB: opponentRemaining,
+        committedAtBB: commitments.opponentTotalCommittedBB,
+      };
+    }
+    s.liveTrackerReceipt = {
+      trackerHandId: liveState.trackerHandId ?? null,
+      tableSize: Number.isInteger(liveTableSize) ? liveTableSize : null,
+      street: liveState.street || s.street,
+      amountToCallBB: finiteNonNegativeOrNull(liveState.amountToCallBB),
+      aggressorSeat: liveState.aggressorSeat || null,
+      callerSeats: Array.isArray(liveState.callerSeats) ? [...liveState.callerSeats] : [],
+      effectiveStackBB: finiteNonNegativeOrNull(liveState.effectiveStackBB),
+      potBB: livePotBB,
+      calculatedPotBB: finiteNonNegativeOrNull(liveState.calculatedPotBB),
+      displayedTotalPotBB: finiteNonNegativeOrNull(liveState.displayedTotalPotBB),
+      potSource: liveState.potSource || null,
+      potReconciliation: liveState.potReconciliation && typeof liveState.potReconciliation === "object"
+        ? liveState.potReconciliation
+        : null,
+      strategicTableState: liveState.strategicTableState && typeof liveState.strategicTableState === "object"
+        ? liveState.strategicTableState
+        : null,
+      appliedAt: now,
+    };
+  }
   s.lastEvent = eventCode;
   s.lastEventAt = now;
   s.lastEventAssumed = Boolean(actionEvent.assumed);
@@ -1094,6 +1154,7 @@ export function summarizeForAI(state) {
         bucket: stackBucket,
       },
       stackBucket,
+      strategicTableState: state.liveTrackerReceipt?.strategicTableState || undefined,
       villainType: state.villainType || "balanced",
       relativePosition: resolvedRelativePosition,
       decisionNode,

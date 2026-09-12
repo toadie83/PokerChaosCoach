@@ -21,6 +21,54 @@ export function replayDetectionCards(detection) {
   return { heroCards, boardCards };
 }
 
+export function recognitionStartsNewHand({
+  forceNewHand = false,
+  manualCorrection = false,
+  expectedBoardCount = 0,
+  hasPreviousSample = false,
+  previousBoardCount = 0,
+  newHandArmed = false,
+  heroVisualDifference = 0,
+  heroDifferenceThreshold = Infinity,
+} = {}) {
+  if (Number(expectedBoardCount) !== 0) return false;
+  if (forceNewHand) return true;
+  if (manualCorrection || !hasPreviousSample) return false;
+  return Boolean(
+    newHandArmed ||
+    Number(previousBoardCount) > 0 ||
+    Number(heroVisualDifference) > Number(heroDifferenceThreshold),
+  );
+}
+
+export function shouldCommitReplayDetection({
+  manualCorrection = false,
+  newHandDetected = false,
+  correctionChangedCards = false,
+  includesConfirmedStack = false,
+  includesConfirmedOpponentStacks = false,
+} = {}) {
+  return Boolean(
+    newHandDetected ||
+    !manualCorrection ||
+    correctionChangedCards ||
+    includesConfirmedStack ||
+    includesConfirmedOpponentStacks
+  );
+}
+
+export function shouldReadOpeningOpponentStacks({
+  readHeroStack = false,
+  physicalSeatCount = 8,
+  opponentCropCount = 0,
+} = {}) {
+  return Boolean(
+    readHeroStack &&
+    Number(physicalSeatCount) === 8 &&
+    Number(opponentCropCount) === Number(physicalSeatCount) - 1
+  );
+}
+
 export function validateReplayDetectionContinuity(
   previousDetection,
   nextDetection,

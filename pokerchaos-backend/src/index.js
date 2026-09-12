@@ -805,6 +805,8 @@ const liveDecisionNodeSchema = z
       .enum([
         "running_from_manual_override",
         "estimated_from_actions",
+        "table_display",
+        "calculated_ledger",
         "manual_override",
         "forced_preflop_baseline",
         "unknown",
@@ -926,6 +928,7 @@ const replayVisionSchema = z
   .object({
     boardImageDataUrl: replayImageDataUrlSchema.optional(),
     heroImageDataUrl: replayImageDataUrlSchema.optional(),
+    opponentStacksImageDataUrl: replayImageDataUrlSchema.optional(),
     imageDataUrl: replayImageDataUrlSchema.optional(),
     expectedBoardCount: z.union([
       z.literal(0),
@@ -934,6 +937,7 @@ const replayVisionSchema = z
       z.literal(5),
     ]),
     readHeroStack: z.boolean().optional().default(false),
+    readOpponentStacks: z.boolean().optional().default(false),
     knownHeroCards: z.array(replayCardCodeSchema).max(2).optional().default([]),
     knownBoardCards: z.array(replayCardCodeSchema).max(5).optional().default([]),
   })
@@ -942,6 +946,10 @@ const replayVisionSchema = z
       Boolean(value.imageDataUrl) ||
       Boolean(value.boardImageDataUrl && value.heroImageDataUrl),
     { message: "Provide both card crops or one legacy composite image." },
+  )
+  .refine(
+    (value) => !value.readOpponentStacks || Boolean(value.opponentStacksImageDataUrl),
+    { message: "Provide the labelled opponent-stack composite when opponent stack reading is enabled." },
   );
 
 const summaryReviewSchema = z.object({
@@ -2564,6 +2572,7 @@ app.post(
   }
   },
 );
+
 
 app.post(
   "/replay-vision/cards",

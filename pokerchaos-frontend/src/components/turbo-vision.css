@@ -1,0 +1,24 @@
+.turbo-vision { margin-top: 16px; padding: 0; border: 1px solid #35b89b; border-radius: 12px; background: #10232b; color: #eef7f6; }
+.turbo-vision-content { padding: 12px 14px; }
+.turbo-vision p { font-size: 13px; line-height: 1.5; }
+.local-tracking-header, .local-tracking-header > div, .local-tracking-controls { display: flex; align-items: center; gap: 8px; }
+.local-tracking-header { justify-content: space-between; margin-bottom: 8px; }
+.local-tracking-header > div { flex-wrap: wrap; }
+.local-tracking-header button, .local-tracking-controls button { min-height: 32px; padding: 5px 9px; font-size: 12px; }
+.local-tracking-ready, .local-tracking-state { color: #9eb8b9; font-size: 12px; }
+.local-tracking-state.is-running, .local-tracking-ready { color: #48e0bd; }
+.local-tracking-controls { justify-content: space-between; }
+.local-tracking-diagnostics { margin-top: 9px; padding-top: 8px; border-top: 1px solid #34505a; }
+.local-tracking-diagnostics > summary { width: max-content; cursor: pointer; color: #9eb8b9; font-size: 12px; font-weight: 700; }
+.local-tracking-diagnostics > summary::marker { color: #35b89b; }
+.local-tracking-diagnostics-content { padding-top: 8px; }
+.turbo-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.turbo-controls button, .turbo-controls select { padding: 8px; }
+.turbo-preview { display: block; width: 100%; margin-top: 12px; cursor: crosshair; }
+.turbo-table-wrap { overflow-x: auto; }
+.turbo-vision table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.turbo-vision th, .turbo-vision td { padding: 7px; text-align: left; border-bottom: 1px solid #34505a; white-space: nowrap; }
+.turbo-log { max-height: 180px; overflow-y: auto; padding-left: 22px; font-size: 12px; }
+.local-status-confirmations { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.local-status-confirmations > span { display: inline-flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #34505a; border-radius: 7px; }
+.local-status-confirmations button { padding: 4px 6px; font-size: 11px; }

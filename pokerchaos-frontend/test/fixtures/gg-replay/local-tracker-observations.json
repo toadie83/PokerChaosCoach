@@ -1,0 +1,34 @@
+{
+  "sourceVideo": "2026-07-15 22-41-05.mkv",
+  "tableSize": 8,
+  "heroSeat": "UTG+1",
+  "blindScreenSeats": { "sb": 5, "bb": 6 },
+  "street": "flop",
+  "observations": [
+    {
+      "replayTimeSeconds": 28,
+      "screenSeat": 5,
+      "actionLabel": "Check",
+      "evidence": "V5 Check label visible; V6 becomes highlighted"
+    },
+    {
+      "replayTimeSeconds": 30,
+      "screenSeat": 6,
+      "actionLabel": "Check",
+      "evidence": "V6 Check label visible"
+    },
+    {
+      "replayTimeSeconds": 35,
+      "screenSeat": 0,
+      "actionLabel": "Hero to act",
+      "evidence": "Hero panel highlighted with no felt contribution"
+    }
+  ],
+  "confirmedFoldedScreenSeats": [7],
+  "expected": {
+    "heroToAct": true,
+    "decisionType": "checked_to_me",
+    "coachCode": "checked_to_me",
+    "latestCheckerScreenSeat": 6
+  }
+}

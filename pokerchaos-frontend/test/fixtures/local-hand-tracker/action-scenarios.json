@@ -1,0 +1,107 @@
+[
+  {
+    "name": "unopened",
+    "heroSeat": "UTG",
+    "blinds": [6, 7],
+    "amounts": [],
+    "confirmedFolded": [],
+    "expectedDecision": "unopened",
+    "expectedCode": "unopened"
+  },
+  {
+    "name": "limp",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 1]],
+    "confirmedFolded": [5, 6, 7],
+    "expectedDecision": "limp",
+    "expectedCode": "limped_to_me"
+  },
+  {
+    "name": "open",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 2.5]],
+    "confirmedFolded": [5, 6, 7],
+    "expectedDecision": "open",
+    "expectedCode": "opened_to_me"
+  },
+  {
+    "name": "open plus call",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 2.5], [5, 2.5]],
+    "confirmedFolded": [6, 7],
+    "expectedDecision": "open",
+    "expectedCode": "multiple_villains_opened",
+    "expectedCallers": 1
+  },
+  {
+    "name": "open plus 3-bet",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 2.5], [5, 2.5], [6, 8]],
+    "confirmedFolded": [7],
+    "expectedDecision": "three_bet",
+    "expectedCode": "open_and_3bet_to_me"
+  },
+  {
+    "name": "confirmed folds between aggressor and Hero",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 2.2]],
+    "confirmedFolded": [5, 6, 7],
+    "expectedDecision": "open",
+    "expectedCode": "opened_to_me"
+  },
+  {
+    "name": "all-in seat between aggressor and Hero",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "amounts": [[4, 2.5], [5, 1]],
+    "zeroStackSeats": [5],
+    "confirmedFolded": [6, 7],
+    "expectedDecision": "open",
+    "expectedCode": "opened_to_me"
+  },
+  {
+    "name": "Hero open",
+    "heroSeat": "UTG",
+    "blinds": [6, 7],
+    "amounts": [[0, 2.5]],
+    "confirmedFolded": [],
+    "expectedDecision": null,
+    "expectedCode": "hero_open"
+  },
+  {
+    "name": "Hero postflop raise",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "street": "flop",
+    "amounts": [[5, 4], [0, 12]],
+    "confirmedFolded": [],
+    "expectedDecision": null,
+    "expectedCode": "hero_raise"
+  },
+  {
+    "name": "Hero first to act postflop",
+    "heroSeat": "SB",
+    "blinds": [0, 1],
+    "street": "flop",
+    "amounts": [],
+    "confirmedFolded": [],
+    "expectedDecision": "first_to_act",
+    "expectedCode": "first_to_act"
+  },
+  {
+    "name": "checked to Hero postflop",
+    "heroSeat": "CO",
+    "blinds": [2, 3],
+    "street": "flop",
+    "amounts": [],
+    "checkedSeats": [2],
+    "confirmedFolded": [3, 4, 5, 6, 7],
+    "expectedDecision": "checked_to_me",
+    "expectedCode": "checked_to_me"
+  }
+]

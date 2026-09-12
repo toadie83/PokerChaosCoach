@@ -816,9 +816,10 @@ export function buildDecisionNode(state = {}) {
         ? Number((stackState.heroStackBehindBB / potBB).toFixed(2))
         : null,
     potSource: finitePositiveOrNull(state.estimatedPotBB)
-      ? state.potSizes?.total
+      ? state.liveTrackerReceipt?.potSource
+        || (state.potSizes?.total
         ? "running_from_manual_override"
-        : "estimated_from_actions"
+        : "estimated_from_actions")
       : state.potSizes?.total
         ? "manual_override"
         : forcedPreflopPotBB

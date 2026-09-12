@@ -13,6 +13,7 @@ import FlopCardInput from "./components/FlopCardInput.jsx";
 import SingleBoardCardInput from "./components/SingleBoardCardInput.jsx";
 import StackDepthModal from "./components/StackDepthModal.jsx";
 import ReplayVisionPanel from "./components/ReplayVisionPanel.jsx";
+import UnifiedTableState from "./components/UnifiedTableState.jsx";
 import BetaCoachHudModal from "./components/BetaCoachHudModal.jsx";
 import {
   detectedCardsChangeDecisionState,
@@ -37,7 +38,14 @@ import {
   mergeRecentHand,
   persistRecentHands,
 } from "./lib/recentHandHistory.js";
-import { seatsForTableSize } from "./state/seatUtils.js";
+import { heroSeatFromDealerScreenSeat, localBlindSeats, seatsForTableSize } from "./state/seatUtils.js";
+import { summarizeLocalHand } from "./vision/localHandTracker.js";
+import {
+  buildLocalCoachHandoff,
+  localTrackingPrerequisitesReady,
+  localTrackerIdentity,
+  sameLocalTrackerIdentity,
+} from "./vision/localCoachHandoff.js";
 import {
   buildDecisionNode,
   buildStackState,
@@ -149,8 +157,105 @@ export default function App() {
   const [actionAmountConfig, setActionAmountConfig] = useState(null);
   const [replayVisionOpen, setReplayVisionOpen] = useState(false);
   const [replayVisionStatus, setReplayVisionStatus] = useState("idle");
+  const [replayVisionRescanRequest, setReplayVisionRescanRequest] = useState(0);
+  const [localSeatStatusOverride, setLocalSeatStatusOverride] = useState({ id: 0, seat: null, status: null, at: 0 });
+  const [localAbsentSeats, setLocalAbsentSeats] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = JSON.parse(window.localStorage?.getItem("pcc_local_absent_seats") || "[]");
+      return Array.isArray(saved) ? saved.map(Number).filter((seat) => Number.isInteger(seat) && seat > 0 && seat < 8) : [];
+    } catch {
+      return [];
+    }
+  });
+  const localPhysicalSeatCount = 8;
+  const localOccupiedSeatCount = localPhysicalSeatCount - localAbsentSeats.length;
+  const latestDealerScreenSeatRef = useRef(null);
+  const [localTrackingReady, setLocalTrackingReady] = useState(false);
+  const [liveTracker, setLiveTracker] = useState(null);
+  const [pendingLiveAction, setPendingLiveAction] = useState(null);
+  const localTrackerEventRef = useRef("");
+  const appliedLocalEventRef = useRef("");
+  const localTrackingReadyRef = useRef(false);
+  const latestVisionRevisionRef = useRef(Number(state.visionRevision || 0));
+  const localTrackingClosedAtRevisionRef = useRef(-1);
+  latestVisionRevisionRef.current = Number(state.visionRevision || 0);
+  const liveMappingRef = useRef(`${state.heroSeat || ""}`);
+  const handleLocalTrackerGateChange = useCallback((ready) => {
+    if (!ready) {
+      localTrackingClosedAtRevisionRef.current = Math.max(
+        localTrackingClosedAtRevisionRef.current,
+        latestVisionRevisionRef.current,
+      );
+    }
+    const nextReady = Boolean(ready) &&
+      latestVisionRevisionRef.current > localTrackingClosedAtRevisionRef.current;
+    localTrackingReadyRef.current = nextReady;
+    setLocalTrackingReady(nextReady);
+    if (!nextReady) {
+      setPendingLiveAction(null);
+      localTrackerEventRef.current = "";
+      appliedLocalEventRef.current = "";
+    }
+  }, []);
+  const localBlindSeatMap = useMemo(
+    () => localBlindSeats(state.heroSeat, localOccupiedSeatCount, localAbsentSeats, localPhysicalSeatCount),
+    [state.heroSeat, localOccupiedSeatCount, localAbsentSeats],
+  );
+  const liveTrackerSummary = useMemo(
+    () => (liveTracker ? summarizeLocalHand(liveTracker) : null),
+    [liveTracker],
+  );
+  const liveTrackerStale = Boolean(
+    liveTracker &&
+    liveTracker.street !== state.street,
+  );
+  const liveProvisionalSeatLabel = (liveTrackerSummary?.provisionalFoldSeats || [])
+    .map((seat) => `V${seat}`)
+    .join(", ");
+  const liveWaitingSeatLabel = (liveTrackerSummary?.waitingSeats || [])
+    .map((seat) => `V${seat}`)
+    .join(", ");
+  const stagedStrategicState = pendingLiveAction?.payload?.liveState?.strategicTableState || null;
+  const liveDecisionPendingLabel = liveTrackerSummary && !liveTrackerSummary.heroToAct && liveTrackerSummary.amountToCallBB > 0
+    ? liveTrackerSummary.orderBlockedReason === "ambiguous_aggression"
+      ? "Live action detected · resolving simultaneous raise/call order before enabling live reads."
+      : liveTrackerSummary.orderBlockedReason === "pending_reset"
+        ? "Live action detected · synchronising the current street or hand before enabling live reads."
+        : liveWaitingSeatLabel
+          ? `Live action detected · waiting for ${liveWaitingSeatLabel} to complete their action.`
+          : "Live action detected · resolving action order before enabling live reads."
+    : "";
   const [stackModalOpen, setStackModalOpen] = useState(false);
   const [playHandOpen, setPlayHandOpen] = useState(false);
+
+  useEffect(() => {
+    const mappingKey = `${state.heroSeat || ""}`;
+    if (liveMappingRef.current === mappingKey) return;
+    liveMappingRef.current = mappingKey;
+    setLiveTracker(null);
+    setPendingLiveAction(null);
+    localTrackerEventRef.current = "";
+    appliedLocalEventRef.current = "";
+    setCoach(null);
+    setCoachByStreet({});
+  }, [state.heroSeat]);
+
+  useEffect(() => {
+    try { window.localStorage?.setItem("pcc_local_absent_seats", JSON.stringify(localAbsentSeats)); } catch {}
+  }, [localAbsentSeats]);
+
+  useEffect(() => {
+    if (localAbsentSeats.length && Number(state.tableSize) !== localOccupiedSeatCount) {
+      setField("tableSize", localOccupiedSeatCount);
+    }
+  }, [localAbsentSeats, localOccupiedSeatCount, setField, state.tableSize]);
+
+  useEffect(() => {
+    handleLocalTrackerGateChange(localTrackingPrerequisitesReady(state, {
+      afterVisionRevision: localTrackingClosedAtRevisionRef.current,
+    }));
+  }, [handleLocalTrackerGateChange, state.heroCards?.card1, state.heroCards?.card2, state.heroSeat, state.visionRevision, state.visionUpdatedAt]);
 
   const storeDecisionMoment = useCallback((sourceState, sourceCoach, source = "manual") => {
     if (!sourceState) return null;
@@ -193,19 +298,59 @@ export default function App() {
   const handleReplayCardsDetected = useCallback(
     (detection) => {
       const cardsChanged = detectedCardsChangeDecisionState(state, detection);
-      if (commitDetectedCards(detection, { autoRotateSeat })) {
+      if (Number.isInteger(detection?.dealerScreenSeat)) latestDealerScreenSeatRef.current = detection.dealerScreenSeat;
+      const dealerHeroSeat = Number.isInteger(detection?.dealerScreenSeat)
+        ? heroSeatFromDealerScreenSeat(detection.dealerScreenSeat, localOccupiedSeatCount, localAbsentSeats, localPhysicalSeatCount)
+        : null;
+      const committed = commitDetectedCards(detection, {
+        autoRotateSeat,
+        heroSeatOverride: dealerHeroSeat,
+      });
+      if (committed) {
         if (cardsChanged) {
           setCoach(null);
           setPreviewSizing(null);
+          setPendingLiveAction(null);
+          localTrackerEventRef.current = "";
         }
       }
+      return committed;
     },
-    [commitDetectedCards, autoRotateSeat, state],
+    [commitDetectedCards, autoRotateSeat, state, localAbsentSeats, localOccupiedSeatCount],
   );
 
   const openStackModal = useCallback(() => {
     setStackModalOpen(true);
   }, []);
+
+  const handleTrackedPlayerToggle = useCallback((seat, status, stackBehindBB) => {
+    const screenSeat = Number(seat);
+    const togglesAbsence = status === "absent" || (["unknown", "folded_candidate"].includes(status) && !Number.isFinite(stackBehindBB));
+    if (togglesAbsence) {
+      const nextAbsent = status === "absent"
+        ? localAbsentSeats.filter((candidate) => candidate !== screenSeat)
+        : [...new Set([...localAbsentSeats, screenSeat])].sort((a, b) => a - b);
+      const nextTableSize = localPhysicalSeatCount - nextAbsent.length;
+      if (nextTableSize < 2) return;
+      setLocalAbsentSeats(nextAbsent);
+      setField("tableSize", nextTableSize);
+      const dealerSeat = latestDealerScreenSeatRef.current;
+      if (autoRotateSeat && Number.isInteger(dealerSeat)) {
+        const nextHeroSeat = heroSeatFromDealerScreenSeat(dealerSeat, nextTableSize, nextAbsent, localPhysicalSeatCount);
+        if (nextHeroSeat) setField("heroSeat", nextHeroSeat);
+      } else if (!seatsForTableSize(nextTableSize).includes(state.heroSeat)) {
+        setField("heroSeat", "");
+      }
+      return;
+    }
+    const nextStatus = status === "folded" ? "active" : "folded";
+    setLocalSeatStatusOverride((request) => ({
+      id: Number(request.id || 0) + 1,
+      seat: screenSeat,
+      status: nextStatus,
+      at: Date.now(),
+    }));
+  }, [autoRotateSeat, localAbsentSeats, setField, state.heroSeat]);
 
   const closeStackModal = useCallback(() => {
     setStackModalOpen(false);
@@ -314,6 +459,10 @@ export default function App() {
     setDecisionMoments([]);
     setCardSelectorConfig(null);
     setStackModalOpen(false);
+    setLiveTracker(null);
+    setPendingLiveAction(null);
+    localTrackerEventRef.current = "";
+    appliedLocalEventRef.current = "";
     reset();
   }, [reset]);
 
@@ -458,6 +607,61 @@ export default function App() {
     },
     [dispatch, coach, state.opponentSeat, setField],
   );
+
+  const handleLocalTrackerUpdate = useCallback((tracker) => {
+    if (tracker && !localTrackingReadyRef.current) return;
+    setLiveTracker(tracker);
+    if (!tracker) {
+      setPendingLiveAction(null);
+      localTrackerEventRef.current = "";
+      appliedLocalEventRef.current = "";
+      return;
+    }
+    if (state.handComplete || !state.heroSeat) {
+      setPendingLiveAction(null);
+      return;
+    }
+    const stack = buildStackState(state);
+    const staged = buildLocalCoachHandoff(tracker, {
+      heroSeat: state.heroSeat,
+      tableSize: localOccupiedSeatCount,
+      physicalSeatCount: localPhysicalSeatCount,
+      absentSeats: localAbsentSeats,
+      anteBB: state.anteBB,
+      tournamentStage: state.tournamentStage,
+      gameType: state.gameType,
+      heroStackBehindBB: stack.heroStackBehindBB,
+      effectiveStackBB: stack.effectiveStackBehindBB,
+    });
+    if (!staged) {
+      setPendingLiveAction(null);
+      return;
+    }
+    const signature = `${staged.identity.trackerHandId}:${staged.identity.street}:${staged.identity.heroSeat}:${staged.eventId}`;
+    if (appliedLocalEventRef.current === signature) {
+      localTrackerEventRef.current = signature;
+      setPendingLiveAction(null);
+      return;
+    }
+    localTrackerEventRef.current = signature;
+    setPendingLiveAction({ ...staged, signature });
+  }, [state, localAbsentSeats, localOccupiedSeatCount]);
+
+  const applyPendingLiveAction = useCallback(() => {
+    if (!pendingLiveAction?.ready || !liveTracker || state.handComplete) return;
+    const currentIdentity = localTrackerIdentity(liveTracker, {
+      ...state,
+      tableSize: localOccupiedSeatCount,
+      absentSeats: localAbsentSeats,
+    });
+    if (!sameLocalTrackerIdentity(pendingLiveAction.identity, currentIdentity)) {
+      setPendingLiveAction(null);
+      return;
+    }
+    appliedLocalEventRef.current = pendingLiveAction.signature;
+    onAction(pendingLiveAction.payload);
+    setPendingLiveAction(null);
+  }, [liveTracker, onAction, pendingLiveAction, state, localAbsentSeats, localOccupiedSeatCount]);
 
   const handleSaveDecisionMoment = useCallback(() => {
     storeDecisionMoment(state, coach, "manual");
@@ -696,11 +900,12 @@ export default function App() {
           } catch {}
         }
       } catch (e) {
+        console.error("[Coach] Request failed", e);
         if (!isCancelled)
           setCoach({
             hero_action: "...",
             sizing: "",
-            flavor_text: "(Error) ChaosCoach is muted. Check backend.",
+            flavor_text: `(Error) ${e?.message || "Coach request failed. Please try again."}`,
           });
       } finally {
         if (!isCancelled) setLoading(false);
@@ -783,6 +988,13 @@ export default function App() {
       bountyMode,
       persona,
     ],
+  );
+  const showQuickOpenSnapshot = Boolean(
+    quickOpenSnapshot &&
+    state.street === "preflop" &&
+    state.history.length === 0 &&
+    state.previousActions.length === 0 &&
+    (!liveTrackerSummary || liveTrackerSummary.decisionType === "unopened"),
   );
   const personaNeedsCards =
     persona === "replay_analyst" ||
@@ -1403,15 +1615,16 @@ export default function App() {
               </button> */}
               <button
                 type="button"
-                className={`pill-toggle header-action-btn header-icon-btn beta-hud-trigger ${
-                  betaHudOpen ? "active" : ""
-                }`}
-                onClick={() => setBetaHudOpen(true)}
-                title="Open Coach HUD"
-                aria-label="Open Coach HUD"
+                className="pill-toggle header-action-btn header-icon-btn replay-rescan-trigger"
+                onClick={() => setReplayVisionRescanRequest((request) => request + 1)}
+                disabled={replayVisionStatus !== "watching"}
+                aria-label="Rescan cards"
+                title={replayVisionStatus === "watching"
+                  ? "Force a fresh card and opening-stack read; a preflop frame starts a new tracked hand"
+                  : "Start Replay Vision before rescanning cards"}
               >
                 <svg
-                  className="beta-hud-trigger-icon"
+                  className="replay-rescan-trigger-icon"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -1420,8 +1633,10 @@ export default function App() {
                   strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <rect x="3" y="4" width="18" height="16" rx="3" />
-                  <path d="M7 9h10M7 13h4M7 16h7" />
+                  <path d="M20 7v5h-5" />
+                  <path d="M4 17v-5h5" />
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 7L20 9" />
+                  <path d="M17.9 15.8A7 7 0 0 1 5.3 17L4 15" />
                 </svg>
               </button>
               <button
@@ -1557,121 +1772,43 @@ export default function App() {
           </div>
           <ChaosHud mood={mood} />
 
-          <div className="table-context">
-            <div className="table-context-row">
-              <span className="pill-label">Seat</span>
-              <div className="seat-ring">
-                {seats.map((seat) => (
-                  <button
-                    key={seat}
-                    type="button"
-                    className={`seat-chip ${
-                      state.heroSeat === seat ? "active" : ""
-                    }`}
-                    onClick={() => setField("heroSeat", seat)}
-                    title={`Set hero seat to ${seat}`}
-                  >
-                    {seat}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                className={`seat-auto-btn ${autoRotateSeat ? "active" : ""}`}
-                onClick={() => setAutoRotateSeat((value) => !value)}
-                disabled={!state.heroSeat}
-                aria-pressed={autoRotateSeat}
-                title={
-                  state.heroSeat
-                    ? "Advance Hero one seat counter-clockwise when Replay Vision confirms a new hand"
-                    : "Select Hero's current seat before enabling Auto seat"
-                }
-              >
-                Auto seat {autoRotateSeat ? "on" : "off"}
-              </button>
-              <button
-                type="button"
-                className="seat-reset-btn"
-                onClick={handleReset}
-                title="Reset session"
-                aria-label="Reset session"
-              >
-                ↻
-              </button>
-            </div>
-            <div className="table-context-row decision-context-row">
-              <span className="pill-label">Opponent</span>
-              <select
-                className="decision-context-select"
-                value={state.opponentSeat || ""}
-                onChange={(event) => setField("opponentSeat", event.target.value)}
-                aria-label="Primary opponent seat"
-              >
-                <option value="">Seat unknown</option>
-                {seats
-                  .filter((seat) => seat !== state.heroSeat)
-                  .map((seat) => (
-                    <option key={seat} value={seat}>
-                      {seat}
-                    </option>
-                  ))}
-              </select>
-              <span className="pill-label">Stack</span>
-              <select
-                className="decision-context-select opponent-stack-select"
-                value={villainStackRangeCode}
-                onChange={(event) => {
-                  const option = villainStackRanges.find(
-                    (item) => item.code === event.target.value,
-                  );
-                  setField("villainStackBB", option?.value ?? null);
-                }}
-                aria-label="Opponent starting stack in big blinds"
-                title="Set the opponent's starting stack for this hand"
-              >
-                {villainStackRanges.map((range) => (
-                  <option key={range.code || "unknown"} value={range.code}>
-                    {range.label}
-                  </option>
-                ))}
-              </select>
-              <span className="pill-label">Players</span>
-              <div className="seat-ring" aria-label="Players remaining in hand">
-                {[2, 3, 4].map((count) => (
-                  <button
-                    key={count}
-                    type="button"
-                    className={`seat-chip ${
-                      Number(state.playersInHand || 2) === count ? "active" : ""
-                    }`}
-                    onClick={() => setField("playersInHand", count)}
-                    title={count === 4 ? "Four or more players" : `${count} players`}
-                  >
-                    {count === 4 ? "4+" : count}
-                  </button>
-                ))}
-              </div>
-              <span className="pill-label">Postflop</span>
-              <div className="seat-ring" aria-label="Hero relative position">
-                {[
-                  ["auto", "Auto"],
-                  ["ip", "IP"],
-                  ["oop", "OOP"],
-                ].map(([code, label]) => (
-                  <button
-                    key={code}
-                    type="button"
-                    className={`seat-chip ${
-                      (state.heroRelativePosition || "auto") === code ? "active" : ""
-                    }`}
-                    onClick={() => setField("heroRelativePosition", code)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          <UnifiedTableState
+            seats={seats}
+            tableSize={localOccupiedSeatCount}
+            heroSeat={state.heroSeat}
+            heroStackBehindBB={stackState.heroStackBehindBB}
+            tracker={liveTracker}
+            absentSeats={localAbsentSeats}
+            summary={liveTrackerSummary}
+            strategicState={stagedStrategicState}
+            trackerStale={liveTrackerStale}
+            trackingReady={localTrackingReady}
+            handComplete={state.handComplete}
+            heroFolded={state.lastEvent === "hero_fold"}
+            autoRotateSeat={autoRotateSeat}
+            onHeroSeatChange={(seat) => setField("heroSeat", seat)}
+            onAutoRotateSeatChange={() => setAutoRotateSeat((value) => !value)}
+            onReset={() => {
+              setLocalAbsentSeats([]);
+              handleReset();
+            }}
+            opponentSeat={state.opponentSeat}
+            onOpponentSeatChange={(seat) => {
+              setPendingLiveAction(null);
+              setField("opponentSeat", seat);
+            }}
+            onTogglePlayerStatus={handleTrackedPlayerToggle}
+            villainStackRangeCode={villainStackRangeCode}
+            villainStackRanges={villainStackRanges}
+            onVillainStackRangeChange={(code) => {
+              const option = villainStackRanges.find((item) => item.code === code);
+              setField("villainStackBB", option?.value ?? null);
+            }}
+            playersInHand={state.playersInHand}
+            onPlayersInHandChange={(count) => setField("playersInHand", count)}
+            heroRelativePosition={state.heroRelativePosition}
+            onHeroRelativePositionChange={(position) => setField("heroRelativePosition", position)}
+          />
 
           <div className="card-strip">
             <button
@@ -1685,7 +1822,7 @@ export default function App() {
               <span className="card-pill-label">Hero</span>
               <span className="card-pill-value">{heroHandLabel}</span>
             </button>
-            {quickOpenSnapshot ? (
+            {showQuickOpenSnapshot ? (
               <div
                 className="quick-open-snapshot"
                 data-tone={quickOpenSnapshot.tone}
@@ -1796,6 +1933,23 @@ export default function App() {
                 </button>
               </div>
             </div>
+            {pendingLiveAction?.ready && !liveTrackerStale ? (
+              <div className="row action-button-row live-action-override">
+                <button
+                  type="button"
+                  className="action-btn live-tracker-apply"
+                  onClick={applyPendingLiveAction}
+                  title={pendingLiveAction.provisional ? "Apply this staged observation; one or more intervening folds are inferred from repeated card absence" : "Apply this staged observation to the Coach decision state"}
+                >
+                  Use live reads{pendingLiveAction.provisional ? ` · review ${liveProvisionalSeatLabel} fold?` : ""}
+                </button>
+              </div>
+            ) : null}
+            {!pendingLiveAction?.ready && liveDecisionPendingLabel && !liveTrackerStale ? (
+              <span className="drawer-hint live-stack-waiting">
+                {liveDecisionPendingLabel}
+              </span>
+            ) : null}
             <ActionButtons
               actions={actions}
               onAction={onAction}
@@ -2157,9 +2311,19 @@ export default function App() {
       />
       <ReplayVisionPanel
         open={replayVisionOpen}
+        rescanRequest={replayVisionRescanRequest}
         onClose={() => setReplayVisionOpen(false)}
         onCardsDetected={handleReplayCardsDetected}
         onStatusChange={setReplayVisionStatus}
+        onLocalTrackerGateChange={handleLocalTrackerGateChange}
+        onLocalTrackerUpdate={handleLocalTrackerUpdate}
+        seatStatusOverride={localSeatStatusOverride}
+        absentSeats={localAbsentSeats}
+        blindSeats={localBlindSeatMap}
+        seatCount={localPhysicalSeatCount}
+        anteBB={Number(state.anteBB || 0)}
+        handComplete={state.handComplete && !state.lastEventAssumed}
+        localTrackingReady={localTrackingReady}
         suppressCurrentHand={state.handComplete && !state.lastEventAssumed}
       />
       <StackDepthModal

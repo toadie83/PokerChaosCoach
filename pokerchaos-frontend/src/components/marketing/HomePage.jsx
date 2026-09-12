@@ -6,6 +6,7 @@ import {
   requestLearningResources,
 } from "../../api/aiService.js";
 import { trackProductEvent } from "../../lib/analytics.js";
+import { DISCORD_COMMUNITY_URL } from "../../lib/community.js";
 import {
   FREE_STUDY_PLAN_ALLOWANCE_KEY,
   loadFreeStudyPlanAllowance,
@@ -276,6 +277,37 @@ export default function HomePage() {
         primaryAction={<a className="home-v2-button home-v2-button-primary" href="/#upload">Upload a Tournament Free</a>}
         secondaryAction={<a className="home-v2-button home-v2-button-secondary" href="/learn">Explore the Learning Library</a>}
       />
+      <footer className="home-v2-community-footer" aria-label="Playback Poker community">
+        <div className="home-v2-community-copy">
+          <svg
+            className="home-v2-community-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M8.1 8.4a11 11 0 0 1 7.8 0m-9.3 7.1c3.6 1.9 7.2 1.9 10.8 0M9 14.1h.01M15 14.1h.01M7.1 6.9A15.4 15.4 0 0 0 4.8 17c1.5 1.1 3 1.8 4.5 2.2l1.1-1.6m6.5-10.7A15.4 15.4 0 0 1 19.2 17c-1.5 1.1-3 1.8-4.5 2.2l-1.1-1.6"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <p>
+            <strong>Study poker with people who care about the details.</strong>
+            <span>Discuss hands, get support, and help shape what Playback Poker builds next.</span>
+          </p>
+        </div>
+        <a
+          className="home-v2-community-link"
+          href={DISCORD_COMMUNITY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Join our Discord
+          <span aria-hidden="true">↗</span>
+        </a>
+      </footer>
       {freeAnalysisStatus === "analysing" ? (
         <div className="home-v2-analysis-overlay" role="dialog" aria-modal="true" aria-label="Building your free Study Plan">
           <div className="home-v2-analysis-modal">
