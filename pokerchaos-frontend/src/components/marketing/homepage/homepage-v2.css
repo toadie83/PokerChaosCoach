@@ -2036,6 +2036,67 @@
   flex: none;
 }
 
+.home-v2-community-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 22px clamp(18px, 3.5vw, 54px) 24px;
+  border-top: 1px solid rgb(244 241 230 / 0.1);
+  background: #0b1914;
+  color: var(--brand-text-primary);
+}
+
+.home-v2-community-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 14px;
+}
+
+.home-v2-community-copy p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.home-v2-community-copy strong {
+  color: var(--brand-text-primary);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.home-v2-community-copy span {
+  color: #94a59d;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.home-v2-community-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  color: var(--home-v2-green-bright);
+}
+
+.home-v2-community-link {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+  color: var(--brand-text-primary);
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color 160ms ease;
+}
+
+.home-v2-community-link:hover {
+  color: var(--home-v2-green-bright);
+  text-decoration: underline;
+}
+
 .home-v2-free-upload-privacy-page .home-page-frame,
 .home-v2-free-result-page .home-page-frame {
   background: var(--home-v2-light-surface);
@@ -2973,6 +3034,17 @@
 
   .home-v2-final .home-v2-actions {
     width: 100%;
+  }
+
+  .home-v2-community-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px 4px 22px;
+  }
+
+  .home-v2-community-link {
+    margin-left: 44px;
   }
 
   .free-upload-privacy {

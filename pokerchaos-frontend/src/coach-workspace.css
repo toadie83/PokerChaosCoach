@@ -1,0 +1,274 @@
+/* Coach-only UX skin. It shares the product workspace language without changing Coach behavior. */
+html body.coach-route {
+  color-scheme: dark;
+  --bg-primary: #111719;
+  --bg-surface: #1a2224;
+  --bg-elevated: #20292b;
+  --border-primary: #34403e;
+  --panel-border: #34403e;
+  --text-primary: #f4f1e6;
+  --text-muted: #b8c0bc;
+  --text: #f4f1e6;
+  --muted: #b8c0bc;
+  --input-bg: #151c1e;
+  --input-bg-strong: #1a2224;
+  --input-border: #465550;
+  --input-text: #f4f1e6;
+  --surface-muted: #1a2224;
+  --surface-soft: #20292b;
+  --surface-chip: #20292b;
+  --surface-container: #151c1e;
+  --surface-container-elevated: #1a2224;
+  --accent-primary: #00c98a;
+  --accent: #00c98a;
+  --accent-hover: #65e3bd;
+  --accent-primary-rgb: 0 201 138;
+  --success: #45d6a4;
+  --success-rgb: 69 214 164;
+  --warning: #d8b96b;
+  --warning-rgb: 216 185 107;
+  --danger: #ee958d;
+  --danger-rgb: 238 149 141;
+  background: #111719;
+  color: #f4f1e6;
+}
+
+body.coach-route #root { padding-top: 16px; }
+body.coach-route .coach-wrap { max-width: 1180px; }
+body.coach-route .coach-wrap .panel {
+  background: #1a2224;
+  border-color: #34403e;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 0.16);
+}
+body.coach-route :is(.panel-heading, .table-context, .card-strip, .actions-block, .decision-card, .history-strip, .recent-hands-panel, .setup-drawer) { color: #f4f1e6; }
+body.coach-route :is(.panel-heading, .table-context, .card-strip) { border-color: transparent; }
+body.coach-route :is(.pill-label, .header-select-label, .drawer-hint, .decision-placeholder, .decision-note, .decision-ticker, .street-log-empty, .voice-indicator) { color: #b8c0bc; }
+body.coach-route :is(.header-select-control, .pill-toggle, .seat-chip, .seat-auto-btn, .seat-reset-btn, .decision-context-select, .card-pill, .pot-pill, .drawer-toggle, .chip, .sizing-pill, .badge, .coach-state-receipt-chip) {
+  border-color: #465550;
+  background: #20292b;
+  color: #f4f1e6;
+  box-shadow: none;
+}
+body.coach-route :is(.header-select-control select, .decision-context-select, .pot-pill input, .drawer-row input[type="number"], .drawer-row select, .pill-control select) { color: #f4f1e6; }
+body.coach-route :is(select, input, textarea) { color-scheme: dark; }
+body.coach-route :is(.pill-toggle.active, .chip.active, .seat-chip.active, .seat-auto-btn.active, .card-pill[data-active="true"], .badge.clickable) {
+  border-color: #00c98a;
+  background: rgb(0 201 138 / 0.12);
+  color: #65e3bd;
+  box-shadow: none;
+}
+body.coach-route :is(.header-action-btn:hover, .pill-toggle:hover, .chip:hover, .seat-chip:hover, .seat-auto-btn:hover:not(:disabled), .card-pill:hover) {
+  border-color: #65e3bd;
+  color: #65e3bd;
+}
+body.coach-route .card-pill-value { color: #f4f1e6; }
+body.coach-route .card-pill-label,
+body.coach-route .quick-open-snapshot-label,
+body.coach-route .coach-state-receipt-chip > span { color: #9ba9a3; }
+body.coach-route .quick-open-snapshot { border-color: #465550; background: #20292b; box-shadow: none; }
+body.coach-route .quick-open-snapshot[data-tone="positive"] { border-color: rgb(69 214 164 / 0.5); background: rgb(69 214 164 / 0.08); }
+body.coach-route .quick-open-snapshot[data-tone="negative"] { border-color: rgb(238 149 141 / 0.5); background: rgb(238 149 141 / 0.08); }
+body.coach-route .actions-block { padding: 14px; border: 1px solid #34403e; border-radius: 8px; background: #151c1e; }
+body.coach-route .action-stage-title strong { color: #f4f1e6; }
+body.coach-route :is(.decision-clear-btn, .decision-undo-btn) { color: #b8c0bc; }
+body.coach-route :is(.decision-clear-btn:hover:not(:disabled), .decision-undo-btn:hover:not(:disabled)) { color: #65e3bd; }
+body.coach-route .decision-card { border-color: #34403e; background: #20292b; border-radius: 8px; }
+body.coach-route .decision-headline { color: #f4f1e6; }
+body.coach-route .decision-sizing { color: #65e3bd; }
+body.coach-route .decision-cta .primary { background: #00c98a; color: #07150f; box-shadow: none; }
+body.coach-route :is(.decision-analysis, .decision-comparison, .coach-state-receipt-body) { border-color: #3b4946; background: #1a2224; }
+body.coach-route .setup-drawer .drawer-section { border-color: #34403e; background: #20292b; }
+body.coach-route .drawer-toggle { background: #1a2224; }
+body.coach-route .coach-state-receipt-summary { color: #b8c0bc; }
+body.coach-route .coach-state-receipt-summary:hover { color: #65e3bd; }
+body.coach-route :is(.hand-history-item, .history-item, .street-log-item) { color: #b8c0bc; }
+body.coach-route :is(.coach-callout, .coach-action, .coach-sizing) { color: #f4f1e6; }
+body.coach-route :is(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid #65e3bd; outline-offset: 2px; box-shadow: none; }
+body.coach-route button:disabled { opacity: 0.5; }
+
+@media (max-width: 720px) {
+  body.coach-route .coach-wrap .panel { padding: 14px; }
+  body.coach-route .coach-wrap .panel-heading-actions { gap: 8px; }
+  body.coach-route .actions-block { padding: 11px; }
+}
+
+/* The legacy light skin uses hard-coded fills; these selectors deliberately outrank it. */
+html body.coach-route .coach-wrap > .panel {
+  border-radius: 12px;
+  background: #1a2224;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 0.16);
+}
+html body.coach-route .coach-wrap :is(.header-select-control, .pill-control, .pot-pill) {
+  border-color: #465550;
+  background: #20292b;
+  box-shadow: none;
+}
+html body.coach-route .coach-wrap :is(.pill-toggle, .chip, .seat-chip, .seat-reset-btn, .drawer-toggle, .sizing-pill, .action-btn) {
+  border-color: #465550;
+  background: #20292b;
+  color: #f4f1e6;
+  box-shadow: none;
+}
+html body.coach-route .coach-wrap :is(.pill-toggle:hover, .chip:hover, .seat-chip:hover, .seat-reset-btn:hover, .drawer-toggle:hover, .action-btn:hover:not(:disabled)) {
+  border-color: #65e3bd;
+  background: #273332;
+  color: #f4f1e6;
+}
+html body.coach-route .coach-wrap :is(.pill-toggle.active, .chip.active, .seat-chip.active, .card-pill[data-active="true"], .action-btn.highlighted) {
+  border-color: #00c98a;
+  background: rgb(0 201 138 / 0.13);
+  color: #65e3bd;
+  box-shadow: none;
+}
+html body.coach-route .coach-wrap .card-strip {
+  padding: 14px;
+  border: 1px solid #34403e;
+  border-radius: 10px;
+  background: #151c1e;
+}
+html body.coach-route .coach-wrap .card-pill {
+  border-color: #465550;
+  border-radius: 8px;
+  background: #20292b;
+  box-shadow: none;
+}
+html body.coach-route .coach-wrap :is(.card-pill-value, .decision-action, .decision-summary, .decision-headline) { color: #f4f1e6; }
+html body.coach-route .coach-wrap :is(.decision-card, .drawer-section, .street-log, .coach-callout, .coach-action, .coach-sizing) {
+  border-color: #34403e;
+  border-radius: 8px;
+  background: #20292b;
+  box-shadow: none;
+}
+html body.coach-route .coach-wrap .decision-card.is-empty { background: #20292b; }
+html body.coach-route .coach-wrap .decision-cta .primary { border: 1px solid #00c98a; background: #00c98a; color: #07150f; box-shadow: none; }
+html body.coach-route .coach-wrap .decision-cta .primary:hover { background: #65e3bd; }
+html body.coach-route .coach-wrap :is(.decision-summary, .decision-note, .decision-ticker, .drawer-hint, .street-log) { color: #b8c0bc; }
+
+/* Amount entry is rendered beside .coach-wrap, so scope it directly to the Coach route. */
+html body.coach-route .action-amount-backdrop {
+  background: rgb(5 9 10 / 0.78);
+  backdrop-filter: blur(6px);
+}
+html body.coach-route .action-amount-modal {
+  border-color: #3b4946;
+  border-radius: 12px;
+  background: #20292b;
+  color: #f4f1e6;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.4);
+}
+html body.coach-route .action-amount-modal .modal-header {
+  border-color: #34403e;
+}
+html body.coach-route .action-amount-modal .modal-title { color: #f4f1e6; }
+html body.coach-route .action-amount-modal .link-btn {
+  border: 1px solid #465550;
+  border-radius: 6px;
+  background: #151c1e;
+  color: #b8c0bc;
+  padding: 7px 10px;
+}
+html body.coach-route .action-amount-modal .link-btn:hover { border-color: #65e3bd; color: #65e3bd; }
+html body.coach-route .action-amount-field span { color: #b8c0bc; }
+html body.coach-route .action-amount-field input {
+  border-color: #465550;
+  border-radius: 8px;
+  background: #151c1e;
+  color: #f4f1e6;
+}
+html body.coach-route .action-amount-presets button {
+  border-color: #465550;
+  border-radius: 7px;
+  background: #151c1e;
+  color: #b8c0bc;
+}
+html body.coach-route .action-amount-presets button:hover,
+html body.coach-route .action-amount-presets button.active {
+  border-color: #00c98a;
+  background: rgb(0 201 138 / 0.12);
+  color: #65e3bd;
+}
+html body.coach-route .action-amount-confirm {
+  border: 1px solid #00c98a;
+  border-radius: 7px;
+  background: #00c98a;
+  color: #07150f;
+  box-shadow: none;
+}
+html body.coach-route .action-amount-confirm:hover:not(:disabled) { background: #65e3bd; }
+html body.coach-route .action-amount-confirm:disabled { border-color: #465550; background: #151c1e; color: #73877c; }
+
+/* Card picker modal: keep the selection grid dense, but make every state easy to read. */
+html body.coach-route .modal:not(.action-amount-modal) {
+  border-color: #3b4946;
+  border-radius: 12px;
+  background: #20292b;
+  color: #f4f1e6;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.4);
+}
+html body.coach-route .modal:not(.action-amount-modal) .modal-header,
+html body.coach-route .modal:not(.action-amount-modal) .modal-footer { border-color: #34403e; }
+html body.coach-route .modal:not(.action-amount-modal) .modal-title { color: #f4f1e6; }
+html body.coach-route .modal:not(.action-amount-modal) .sub,
+html body.coach-route .modal:not(.action-amount-modal) .card-slot-placeholder,
+html body.coach-route .modal:not(.action-amount-modal) .voice-indicator { color: #b8c0bc; }
+html body.coach-route .modal:not(.action-amount-modal) .voice-indicator.listening,
+html body.coach-route .modal:not(.action-amount-modal) .voice-indicator.success { color: #65e3bd; }
+html body.coach-route .modal:not(.action-amount-modal) .voice-indicator.error,
+html body.coach-route .modal:not(.action-amount-modal) .error-text { color: #ee958d; }
+html body.coach-route .modal:not(.action-amount-modal) .link-btn {
+  border: 1px solid #465550;
+  border-radius: 6px;
+  background: #151c1e;
+  color: #b8c0bc;
+  padding: 7px 10px;
+}
+html body.coach-route .modal:not(.action-amount-modal) .link-btn:hover { border-color: #65e3bd; color: #65e3bd; }
+html body.coach-route .modal:not(.action-amount-modal) .card-progress { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+html body.coach-route .modal:not(.action-amount-modal) .card-progress-pill {
+  border: 1px solid #465550;
+  border-radius: 7px;
+  background: #151c1e;
+  color: #b8c0bc;
+  padding: 9px 12px;
+  font: inherit;
+  font-weight: 700;
+}
+html body.coach-route .modal:not(.action-amount-modal) .card-progress-pill.active {
+  border-color: #00c98a;
+  background: rgb(0 201 138 / 0.12);
+  color: #65e3bd;
+}
+html body.coach-route .modal:not(.action-amount-modal) .card-slot {
+  border-color: #3b4946;
+  border-radius: 9px;
+  background: #1a2224;
+}
+html body.coach-route .modal:not(.action-amount-modal) .card-slot-title { color: #f4f1e6; }
+html body.coach-route .modal:not(.action-amount-modal) .card-slot-label { color: #b8c0bc; }
+html body.coach-route .modal:not(.action-amount-modal) :is(.btn-rank, .btn-secondary) {
+  border-color: #465550;
+  border-radius: 7px;
+  background: #20292b;
+  color: #f4f1e6;
+}
+html body.coach-route .modal:not(.action-amount-modal) :is(.btn-rank:hover, .btn-secondary:hover:not(:disabled)) {
+  border-color: #65e3bd;
+  background: #273332;
+}
+html body.coach-route .modal:not(.action-amount-modal) :is(.btn-rank.active, .btn-secondary.active) {
+  border-color: #00c98a;
+  background: rgb(0 201 138 / 0.13);
+  color: #65e3bd;
+}
+html body.coach-route .modal:not(.action-amount-modal) :is(.btn-rank.disabled, .btn-secondary:disabled) {
+  border-color: #34403e;
+  background: #151c1e;
+  color: #73877c;
+}
+html body.coach-route .modal:not(.action-amount-modal) .modal-footer > button:not(.btn-secondary) {
+  border: 1px solid #00c98a;
+  border-radius: 7px;
+  background: #00c98a;
+  color: #07150f;
+}
+html body.coach-route .modal:not(.action-amount-modal) .modal-footer > button:not(.btn-secondary):hover { background: #65e3bd; }

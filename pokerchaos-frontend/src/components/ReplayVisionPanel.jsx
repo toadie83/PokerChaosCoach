@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import LocalTableTrackingPanel from "./LocalTableTrackingPanel.jsx";
 import { requestReplayCardRecognition } from "../api/aiService.js";
 import {
+  recognitionStartsNewHand,
   replayDetectionCards,
+  shouldCommitReplayDetection,
+  shouldReadOpeningOpponentStacks,
   validateReplayDetectionContinuity,
 } from "../vision/replayVisionLogic.js";
 
 const REGION_STORAGE_KEY = "pcc_gg_replay_regions_v2";
 const AUTO_UPDATE_STACK_STORAGE_KEY = "pcc_replay_vision_auto_stack";
-const SAMPLE_INTERVAL_MS = 500;
+const SAMPLE_INTERVAL_MS = 300;
 const REQUIRED_STABLE_SAMPLES = 3;
+const NEW_HAND_REQUIRED_STABLE_SAMPLES = 2;
 const STABLE_FRAME_DIFFERENCE = 5;
 const CHANGED_FRAME_DIFFERENCE = 7;
 const HERO_CHANGED_FRAME_DIFFERENCE = 4.5;
 const HERO_NEW_HAND_FRAME_DIFFERENCE = 12;
-const HERO_SETTLE_DELAY_MS = 1000;
+const HERO_SETTLE_DELAY_MS = 600;
 const RECOGNITION_RETRY_COOLDOWN_MS = 6000;
 const BOARD_ANALYSIS_WIDTH = 600;
 const HERO_ANALYSIS_WIDTH = 480;
 const HERO_STACK_ANALYSIS_WIDTH = 420;
+const OPPONENT_STACK_ANALYSIS_WIDTH = 360;
 
 const BOARD_CARD_RECTS = Array.from({ length: 5 }, (_, index) => ({
   x: index * 0.2,
@@ -206,12 +212,20 @@ function captureRegion(video, region, canvas, outputWidth) {
   return context.getImageData(0, 0, canvas.width, canvas.height);
 }
 
+function tupleToRegion(region) {
+  if (!Array.isArray(region) || region.length !== 4) return null;
+  const [x, y, width, height] = region.map(Number);
+  return validRegion({ x, y, width, height }) ? { x, y, width, height } : null;
+}
+
 function inspectReplayFrame(
   video,
   regions,
   heroCanvas,
   boardCanvas,
   heroStackCanvas,
+  opponentStackRegions = null,
+  opponentStackCanvases = [],
 ) {
   if (
     !video?.videoWidth ||
@@ -241,6 +255,15 @@ function inspectReplayFrame(
         HERO_STACK_ANALYSIS_WIDTH,
       )
     : null;
+  const opponentStackImageData = Array.isArray(opponentStackRegions)
+    ? opponentStackRegions.map((seatRegions, seat) => {
+        const stackRegion = seat === 0 ? null : tupleToRegion(seatRegions?.stack);
+        const canvas = opponentStackCanvases[seat];
+        return stackRegion && canvas
+          ? { seat, imageData: captureRegion(video, stackRegion, canvas, OPPONENT_STACK_ANALYSIS_WIDTH), canvas }
+          : null;
+      }).filter(Boolean)
+    : [];
   const heroPresence = HERO_CARD_RECTS.map(
     (rect) => whiteRatio(heroImageData, rect) > 0.16,
   );
@@ -268,6 +291,7 @@ function inspectReplayFrame(
     heroImageData,
     boardImageData,
     heroStackImageData,
+    opponentStackImageData,
     heroSharpness: heroCornerSharpness(heroImageData),
     heroFingerprint,
     boardFingerprint,
@@ -431,11 +455,42 @@ function buildBoardRecognitionImage(sample) {
   return output.toDataURL("image/png");
 }
 
-function buildRecognitionPayload(sample, { readHeroStack = false } = {}) {
+function buildOpponentStackRecognitionImage(sample) {
+  if (!Array.isArray(sample?.opponentStackImageData) || !sample.opponentStackImageData.length) return null;
+  const output = document.createElement("canvas");
+  output.width = 1000;
+  output.height = 680;
+  const context = output.getContext("2d");
+  context.fillStyle = "#101215";
+  context.fillRect(0, 0, output.width, output.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  for (const entry of sample.opponentStackImageData) {
+    const index = entry.seat - 1;
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = 30 + column * 490;
+    const y = 22 + row * 164;
+    context.fillStyle = "#ffffff";
+    context.font = "700 22px Arial, sans-serif";
+    context.fillText(`SCREEN SEAT V${entry.seat} STACK - CHIPS BEHIND IN BB`, x, y + 24);
+    const source = canvasFromImageData(entry.imageData, entry.canvas);
+    drawContained(context, source, { x, y: y + 38, width: 450, height: 104 });
+  }
+  return output.toDataURL("image/png");
+}
+
+function buildRecognitionPayload(sample, { readHeroStack = false, readOpponentStacks = false } = {}) {
+  const opponentStacksImageDataUrl = readOpponentStacks
+    ? buildOpponentStackRecognitionImage(sample)
+    : null;
   return {
     boardImageDataUrl: buildBoardRecognitionImage(sample),
     heroImageDataUrl: buildHeroRecognitionImage(sample, { readHeroStack }),
     ...(readHeroStack ? { readHeroStack: true } : {}),
+    ...(opponentStacksImageDataUrl
+      ? { readOpponentStacks: true, opponentStacksImageDataUrl }
+      : {}),
   };
 }
 
@@ -515,8 +570,18 @@ function formatDetection(detection) {
 
 export default function ReplayVisionPanel({
   open,
+  rescanRequest = 0,
   onClose,
   onCardsDetected,
+  onLocalTrackerGateChange,
+  onLocalTrackerUpdate,
+  seatStatusOverride,
+  absentSeats = [],
+  blindSeats,
+  seatCount = 8,
+  anteBB = 0,
+  handComplete = false,
+  localTrackingReady = false,
   onStatusChange,
   suppressCurrentHand = false,
 }) {
@@ -528,6 +593,10 @@ export default function ReplayVisionPanel({
   const heroAnalysisCanvasRef = useRef(document.createElement("canvas"));
   const boardAnalysisCanvasRef = useRef(document.createElement("canvas"));
   const heroStackAnalysisCanvasRef = useRef(document.createElement("canvas"));
+  const opponentStackAnalysisCanvasesRef = useRef(
+    Array.from({ length: 8 }, () => document.createElement("canvas")),
+  );
+  const opponentStackRegionsRef = useRef(null);
   const candidateRef = useRef(null);
   const committedSampleRef = useRef(null);
   const committedDetectionRef = useRef(null);
@@ -536,9 +605,13 @@ export default function ReplayVisionPanel({
   const emptyTableSamplesRef = useRef(0);
   const heroVisibleSinceRef = useRef(0);
   const heroSettleBaselineRef = useRef(null);
+  const dealerObservationRef = useRef(null);
+  const dealerBypassRef = useRef(false);
   const recognitionInFlightRef = useRef(false);
+  const handledRescanRequestRef = useRef(Number(rescanRequest || 0));
   const statusRef = useRef("idle");
   const onCardsDetectedRef = useRef(onCardsDetected);
+  const onLocalTrackerGateChangeRef = useRef(onLocalTrackerGateChange);
   const onStatusChangeRef = useRef(onStatusChange);
   const suppressCurrentHandRef = useRef(suppressCurrentHand);
   const [stream, setStream] = useState(null);
@@ -551,6 +624,9 @@ export default function ReplayVisionPanel({
     "Share the PokerCraft tab, then mark the enabled vision regions once.",
   );
   const [lastDetection, setLastDetection] = useState(null);
+  const [localCardContext, setLocalCardContext] = useState(null);
+  const [dealerObservation, setDealerObservation] = useState(null);
+  const [waitingForDealer, setWaitingForDealer] = useState(false);
   const [autoUpdateHeroStack, setAutoUpdateHeroStack] = useState(
     loadAutoUpdateHeroStack,
   );
@@ -569,6 +645,10 @@ export default function ReplayVisionPanel({
   }, [onCardsDetected]);
 
   useEffect(() => {
+    onLocalTrackerGateChangeRef.current = onLocalTrackerGateChange;
+  }, [onLocalTrackerGateChange]);
+
+  useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
   }, [onStatusChange]);
 
@@ -580,6 +660,40 @@ export default function ReplayVisionPanel({
     statusRef.current = nextStatus;
     setStatus(nextStatus);
     onStatusChangeRef.current?.(nextStatus);
+  }, []);
+
+  const handleDealerObservation = useCallback((observation) => {
+    setDealerObservation(observation);
+    if (observation?.confirmed && Number.isInteger(observation.dealerScreenSeat)) {
+      dealerObservationRef.current = observation;
+    }
+  }, []);
+
+  const handleLocalRegionsChange = useCallback((nextRegions) => {
+    opponentStackRegionsRef.current = nextRegions;
+  }, []);
+
+  const dealerAnchorForSample = useCallback((sample) => {
+    const required = sample?.expectedBoardCount === 0 &&
+      (!committedSampleRef.current || newHandArmedRef.current);
+    if (!required) return { required: false, ready: true, observation: null, bypassed: false };
+    if (dealerBypassRef.current) return { required: true, ready: true, observation: null, bypassed: true };
+    const observation = dealerObservationRef.current;
+    const minimumCapturedAt = heroVisibleSinceRef.current + HERO_SETTLE_DELAY_MS;
+    const ready = Boolean(
+      observation?.confirmed &&
+      Number.isInteger(observation.dealerScreenSeat) &&
+      Number(observation.capturedAt || 0) >= minimumCapturedAt,
+    );
+    return { required: true, ready, observation: ready ? observation : null, bypassed: false };
+  }, []);
+
+  const handleDealerBypass = useCallback(() => {
+    dealerBypassRef.current = true;
+    setWaitingForDealer(false);
+    candidateRef.current = null;
+    lastAttemptRef.current = { sample: null, at: 0 };
+    setMessage("Using the expected Hero seat for this hand. Waiting for stable cards…");
   }, []);
 
   const activateRegions = useCallback(
@@ -601,6 +715,8 @@ export default function ReplayVisionPanel({
       emptyTableSamplesRef.current = 0;
       heroVisibleSinceRef.current = 0;
       heroSettleBaselineRef.current = null;
+      dealerBypassRef.current = false;
+      setWaitingForDealer(false);
       setMessage(nextMessage);
       reportStatus("watching");
     },
@@ -608,6 +724,7 @@ export default function ReplayVisionPanel({
   );
 
   const stopCapture = useCallback(() => {
+    onLocalTrackerGateChangeRef.current?.(false);
     setStream((current) => {
       current?.getTracks().forEach((track) => track.stop());
       return null;
@@ -621,6 +738,10 @@ export default function ReplayVisionPanel({
     emptyTableSamplesRef.current = 0;
     heroVisibleSinceRef.current = 0;
     heroSettleBaselineRef.current = null;
+    dealerObservationRef.current = null;
+    dealerBypassRef.current = false;
+    setDealerObservation(null);
+    setWaitingForDealer(false);
     recognitionInFlightRef.current = false;
     setCalibrationStart(null);
     setCalibrationDraft(null);
@@ -632,6 +753,11 @@ export default function ReplayVisionPanel({
   useEffect(() => stopCapture, [stopCapture]);
 
   const startCapture = useCallback(async () => {
+    onLocalTrackerGateChangeRef.current?.(false);
+    dealerObservationRef.current = null;
+    dealerBypassRef.current = false;
+    setDealerObservation(null);
+    setWaitingForDealer(false);
     if (!navigator.mediaDevices?.getDisplayMedia) {
       setMessage("This browser does not support tab capture. Use a current Chrome or Edge build.");
       reportStatus("error");
@@ -933,7 +1059,7 @@ export default function ReplayVisionPanel({
   ]);
 
   const recognizeStableFrame = useCallback(
-    async (sample, { manualCorrection = false } = {}) => {
+    async (sample, { manualCorrection = false, forceNewHand = false } = {}) => {
       if (recognitionInFlightRef.current) return;
       recognitionInFlightRef.current = true;
       reportStatus("reading");
@@ -948,13 +1074,17 @@ export default function ReplayVisionPanel({
         const heroVisualDifference = previousSample
           ? frameDifference(previousSample.heroFingerprint, sample.heroFingerprint)
           : 0;
-        const newHandDetected = manualCorrection
-          ? false
-          : sample.expectedBoardCount === 0 &&
-            Boolean(previousSample) &&
-            (newHandArmedRef.current ||
-              previousSample.expectedBoardCount > 0 ||
-              heroVisualDifference > HERO_NEW_HAND_FRAME_DIFFERENCE);
+        const newHandDetected = recognitionStartsNewHand({
+          forceNewHand,
+          manualCorrection,
+          expectedBoardCount: sample.expectedBoardCount,
+          hasPreviousSample: Boolean(previousSample),
+          previousBoardCount: previousSample?.expectedBoardCount || 0,
+          newHandArmed: newHandArmedRef.current,
+          heroVisualDifference,
+          heroDifferenceThreshold: HERO_NEW_HAND_FRAME_DIFFERENCE,
+        });
+        if (newHandDetected) onLocalTrackerGateChangeRef.current?.(false);
         const knownCards = manualCorrection || newHandDetected || !previousDetection
           ? { heroCards: [], boardCards: [] }
           : replayDetectionCards(previousDetection);
@@ -963,8 +1093,14 @@ export default function ReplayVisionPanel({
           sample.expectedBoardCount === 0 &&
           Boolean(sample.heroStackImageData) &&
           (newHandDetected || !previousDetection || manualCorrection);
+        const readOpponentStacks = shouldReadOpeningOpponentStacks({
+          readHeroStack,
+          physicalSeatCount: seatCount,
+          opponentCropCount: sample.opponentStackImageData?.length,
+        });
         const recognitionPayload = buildRecognitionPayload(sample, {
           readHeroStack,
+          readOpponentStacks,
         });
         const result = await requestReplayCardRecognition({
           ...recognitionPayload,
@@ -989,9 +1125,17 @@ export default function ReplayVisionPanel({
           const nextCards = JSON.stringify(replayDetectionCards(result));
           const correctionChangedCards =
             manualCorrection && previousCards !== null && previousCards !== nextCards;
+          const confirmedResult = {
+            ...result,
+            dealerScreenSeat: Number.isInteger(sample.dealerObservation?.dealerScreenSeat)
+              ? sample.dealerObservation.dealerScreenSeat
+              : null,
+            dealerConfidence: sample.dealerObservation?.confidence ?? null,
+            dealerSeatBypassed: Boolean(sample.dealerSeatBypassed),
+          };
           committedSampleRef.current = visualSignature(sample);
-          committedDetectionRef.current = result;
-          setLastDetection(result);
+          committedDetectionRef.current = confirmedResult;
+          setLastDetection(confirmedResult);
           if (sample.expectedBoardCount === 0) {
             newHandArmedRef.current = false;
             emptyTableSamplesRef.current = 0;
@@ -999,11 +1143,28 @@ export default function ReplayVisionPanel({
           const includesConfirmedStack =
             Number.isFinite(Number(result.heroStackBehindBB)) &&
             Number(result.heroStackBehindBB) > 0;
-          if (!manualCorrection || correctionChangedCards || includesConfirmedStack) {
-            onCardsDetectedRef.current?.({
-              ...result,
+          const includesConfirmedOpponentStacks = Array.isArray(result.opponentStacks) &&
+            result.opponentStacks.some((entry) => Number.isFinite(Number(entry?.stackBehindBB)) && Number(entry.stackBehindBB) > 0);
+          let committedToCoach = true;
+          if (shouldCommitReplayDetection({
+            manualCorrection,
+            newHandDetected,
+            correctionChangedCards,
+            includesConfirmedStack,
+            includesConfirmedOpponentStacks,
+          })) {
+            committedToCoach = onCardsDetectedRef.current?.({
+              ...confirmedResult,
               newHandDetected,
               manualCorrection,
+            });
+          }
+          if (committedToCoach !== false) {
+            setLocalCardContext({
+              at: Date.now(),
+              newHand: Boolean(newHandDetected),
+              street: ["preflop", null, null, "flop", "turn", "river"][replayDetectionCards(result).boardCards.length] || "unknown",
+              opponentStacks: Array.isArray(result.opponentStacks) ? result.opponentStacks : [],
             });
           }
           const confidenceLabel = String(result.confidence || "unknown").toLowerCase();
@@ -1024,10 +1185,10 @@ export default function ReplayVisionPanel({
         reportStatus("watching");
       }
     },
-    [autoUpdateHeroStack, reportStatus],
+    [autoUpdateHeroStack, reportStatus, seatCount],
   );
 
-  const handleManualRescan = useCallback(() => {
+  const handleManualRescan = useCallback((forceNewHand = false) => {
     if (recognitionInFlightRef.current) return;
     const freshSample = inspectReplayFrame(
       videoRef.current,
@@ -1035,6 +1196,8 @@ export default function ReplayVisionPanel({
       heroAnalysisCanvasRef.current,
       boardAnalysisCanvasRef.current,
       heroStackAnalysisCanvasRef.current,
+      autoUpdateHeroStack ? opponentStackRegionsRef.current : null,
+      opponentStackAnalysisCanvasesRef.current,
     );
     if (!freshSample?.eligible) {
       setMessage("Rescan needs both Hero cards and a complete visible street in the calibrated regions.");
@@ -1052,9 +1215,28 @@ export default function ReplayVisionPanel({
         Number(freshSample.heroSharpness || 0)
         ? candidate.bestSample
         : freshSample;
+    const dealerAnchor = dealerAnchorForSample(freshSample);
+    if (!dealerAnchor.ready) {
+      setWaitingForDealer(true);
+      setMessage("Hero cards are ready. Waiting for two matching dealer-button reads…");
+      return;
+    }
     lastAttemptRef.current = { sample: null, at: 0 };
-    recognizeStableFrame(rescanSample, { manualCorrection: true });
-  }, [recognizeStableFrame, regions]);
+    recognizeStableFrame({
+      ...rescanSample,
+      dealerObservation: forceNewHand && freshSample.expectedBoardCount === 0 && dealerObservationRef.current?.confirmed
+        ? dealerObservationRef.current
+        : dealerAnchor.observation,
+      dealerSeatBypassed: dealerAnchor.bypassed,
+    }, { manualCorrection: true, forceNewHand });
+  }, [absentSeats, autoUpdateHeroStack, dealerAnchorForSample, recognizeStableFrame, regions]);
+
+  useEffect(() => {
+    const request = Number(rescanRequest || 0);
+    if (request <= handledRescanRequestRef.current) return;
+    handledRescanRequestRef.current = request;
+    handleManualRescan(true);
+  }, [rescanRequest, handleManualRescan]);
 
   useEffect(() => {
     if (!stream || !regions) return undefined;
@@ -1066,6 +1248,8 @@ export default function ReplayVisionPanel({
         heroAnalysisCanvasRef.current,
         boardAnalysisCanvasRef.current,
         heroStackAnalysisCanvasRef.current,
+        autoUpdateHeroStack ? opponentStackRegionsRef.current : null,
+        opponentStackAnalysisCanvasesRef.current,
       );
       const now = Date.now();
       let heroCardsSettled = false;
@@ -1100,6 +1284,9 @@ export default function ReplayVisionPanel({
           !newHandArmedRef.current
         ) {
           newHandArmedRef.current = true;
+          dealerBypassRef.current = false;
+          setWaitingForDealer(false);
+          onLocalTrackerGateChangeRef.current?.(false);
           setMessage("Hand finished. Waiting for the next stable Hero cards…");
         }
       } else if (sample?.eligible) {
@@ -1110,12 +1297,16 @@ export default function ReplayVisionPanel({
         sample?.eligible &&
         sample.expectedBoardCount === 0 &&
         committedSampleRef.current &&
+        !newHandArmedRef.current &&
         frameDifference(
           committedSampleRef.current.heroFingerprint,
           sample.heroFingerprint,
         ) > HERO_CHANGED_FRAME_DIFFERENCE
       ) {
         newHandArmedRef.current = true;
+        dealerBypassRef.current = false;
+        setWaitingForDealer(false);
+        onLocalTrackerGateChangeRef.current?.(false);
       }
       if (suppressCurrentHandRef.current && !newHandArmedRef.current) {
         candidateRef.current = null;
@@ -1130,6 +1321,14 @@ export default function ReplayVisionPanel({
         setMessage("Hero cards detected. Waiting for the deal animation to settle…");
         return;
       }
+      const dealerAnchor = dealerAnchorForSample(sample);
+      if (!dealerAnchor.ready) {
+        candidateRef.current = null;
+        setWaitingForDealer(true);
+        setMessage("Hero cards are ready. Waiting for two matching dealer-button reads…");
+        return;
+      }
+      setWaitingForDealer(false);
       const candidate = candidateRef.current;
       const stable = stableVisualState(candidate?.sample, sample);
       candidateRef.current = stable
@@ -1143,7 +1342,11 @@ export default function ReplayVisionPanel({
                 : sample,
           }
         : { sample, count: 1, bestSample: sample };
-      if (candidateRef.current.count < REQUIRED_STABLE_SAMPLES) return;
+      const requiredStableSamples = sample.expectedBoardCount === 0 &&
+        (!committedSampleRef.current || newHandArmedRef.current)
+        ? NEW_HAND_REQUIRED_STABLE_SAMPLES
+        : REQUIRED_STABLE_SAMPLES;
+      if (candidateRef.current.count < requiredStableSamples) return;
 
       const differsFromCommitted = changedFromCommitted(
         committedSampleRef.current,
@@ -1155,17 +1358,24 @@ export default function ReplayVisionPanel({
           RECOGNITION_RETRY_COOLDOWN_MS &&
         sameVisualState(lastAttemptRef.current.sample, sample);
       if (differsFromCommitted && !repeatedRecentAttempt) {
-        recognizeStableFrame(candidateRef.current.bestSample || sample);
+        recognizeStableFrame({
+          ...(candidateRef.current.bestSample || sample),
+          dealerObservation: dealerAnchor.observation,
+          dealerSeatBypassed: dealerAnchor.bypassed,
+        });
       }
     }, SAMPLE_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [stream, regions, recognizeStableFrame]);
+  }, [stream, regions, absentSeats, autoUpdateHeroStack, dealerAnchorForSample, recognizeStableFrame]);
 
   return (
     <>
       <video ref={videoRef} muted playsInline className="replay-vision-video" />
-      {open ? (
-        <div className="modal-backdrop replay-vision-backdrop" onClick={onClose}>
+      <div
+        className="modal-backdrop replay-vision-backdrop"
+        hidden={!open}
+        onClick={onClose}
+      >
           <section
             className="modal replay-vision-modal"
             onClick={(event) => event.stopPropagation()}
@@ -1190,10 +1400,9 @@ export default function ReplayVisionPanel({
                 </div>
                 <label className="replay-vision-option-row">
                   <span>
-                    <strong>Auto-update Hero stack</strong>
+                    <strong>Auto-update table stacks</strong>
                     <small>
-                      Read the BB value once at the start of each hand. Turn this off
-                      to exclude stack pixels and the stack field from vision requests.
+                      Read Hero and calibrated opponent BB values once with the start-of-hand card request. Local OCR can validate involved players from the flop onward.
                     </small>
                   </span>
                   <input
@@ -1208,8 +1417,8 @@ export default function ReplayVisionPanel({
                   <div className="replay-vision-stack-option-status">
                     <span>
                       {validRegion(regions?.stack)
-                        ? "Stack region ready"
-                        : "Stack region needs calibration"}
+                        ? "Hero stack ready · opponent regions use Local table tracking calibration"
+                        : "Hero stack region needs calibration"}
                     </span>
                     <button
                       type="button"
@@ -1229,7 +1438,7 @@ export default function ReplayVisionPanel({
                   <p>
                     Coach watches a shared PokerCraft replay and updates Hero, flop,
                     turn, and river cards after they remain stable on screen. Hero's
-                    BB stack can also update at the beginning of each hand.
+                    and opening BB stacks can also update together at the beginning of each hand.
                   </p>
                   <button type="button" onClick={startCapture} disabled={status === "starting"}>
                     {status === "starting" ? "Opening share picker…" : "Share PokerCraft tab"}
@@ -1265,7 +1474,7 @@ export default function ReplayVisionPanel({
                     <button
                       type="button"
                       className="pill-toggle"
-                      onClick={handleManualRescan}
+                      onClick={() => handleManualRescan(false)}
                       disabled={status === "reading" || status === "calibrating"}
                     >
                       {status === "reading" ? "Reading cards…" : "Rescan cards"}
@@ -1282,6 +1491,25 @@ export default function ReplayVisionPanel({
               <p className="replay-vision-message" role="status">
                 {message}
               </p>
+              {stream ? (
+                <div className="replay-vision-dealer-status">
+                  <span>
+                    Dealer watcher: {dealerObservation?.confirmed && Number.isInteger(dealerObservation.dealerScreenSeat)
+                      ? `${dealerObservation.dealerScreenSeat === 0 ? "Hero" : `V${dealerObservation.dealerScreenSeat}`} confirmed`
+                      : Number.isInteger(dealerObservation?.bestSeat)
+                        ? `${dealerObservation.bestSeat === 0 ? "Hero" : `V${dealerObservation.bestSeat}`} candidate`
+                        : "searching"}
+                    {Number.isFinite(dealerObservation?.confidence)
+                      ? ` · ${Math.round(dealerObservation.confidence * 100)}%`
+                      : ""}
+                  </span>
+                  {waitingForDealer ? (
+                    <button type="button" className="link-btn" onClick={handleDealerBypass}>
+                      Use expected seat for this hand
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {status === "calibrating" ? (
                 <p className="replay-vision-privacy">
                   Green should contain both visible Hero card tops and rank/suit corners, with as little avatar or name plate as practical. Blue must
@@ -1299,20 +1527,40 @@ export default function ReplayVisionPanel({
                   <span>
                     {lastDetection.confidence} cards
                     {lastDetection.heroStackBehindBB
-                      ? ` · ${lastDetection.stackConfidence} stack`
+                      ? ` · ${lastDetection.stackConfidence} Hero stack`
+                      : ""}
+                    {Array.isArray(lastDetection.opponentStacks)
+                      ? ` · ${lastDetection.opponentStacks.filter((entry) => !absentSeats.includes(Number(entry.screenSeat)) && Number.isFinite(entry.stackBehindBB)).length}/${Math.max(1, seatCount - absentSeats.length - 1)} opponent stacks`
                       : ""}
                   </span>
                 </div>
               ) : null}
               <p className="replay-vision-privacy">
-                Only the enabled, marked regions are sent when the local watcher
-                detects a stable card change. Hero stack is requested only on a
+                Standard card recognition: only the enabled, marked regions are sent when the local watcher
+                detects a stable card change. Hero and opponent stacks are requested only on a
                 preflop new-hand read; opponent cards are always excluded.
               </p>
             </div>
+            {stream && (
+              <LocalTableTrackingPanel
+                videoRef={videoRef}
+                stream={stream}
+                cardContext={localCardContext}
+                seatStatusOverride={seatStatusOverride}
+                absentSeats={absentSeats}
+                visible={open}
+                onTrackerUpdate={onLocalTrackerUpdate}
+                onDealerObservation={handleDealerObservation}
+                onRegionsChange={handleLocalRegionsChange}
+                blindSeats={blindSeats}
+                seatCount={seatCount}
+                anteBB={anteBB}
+                handComplete={handComplete}
+                trackingReady={localTrackingReady}
+              />
+            )}
           </section>
-        </div>
-      ) : null}
+      </div>
     </>
   );
 }

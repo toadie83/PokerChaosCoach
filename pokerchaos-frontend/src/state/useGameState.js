@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { applyEvent, initialState } from "./machine.js";
 import { buildStackState, reopenAssumedFoldForVision } from "./decisionState.js";
-import { previousSeatForNextHand } from "./seatUtils.js";
+import { normalizeSeat, previousSeatForNextHand, seatsForTableSize } from "./seatUtils.js";
 import {
   DEFAULT_COACH_MODEL,
   LEGACY_DEFAULT_COACH_MODEL,
@@ -575,9 +575,13 @@ export function useGameState() {
         Boolean(detection?.newHandDetected) &&
         Boolean(s.heroSeat) &&
         Number(s.visionRevision || 0) > 0;
-      const nextHeroSeat = shouldRotateSeat
+      const requestedHeroSeat = normalizeSeat(options?.heroSeatOverride);
+      const confirmedHeroSeat = seatsForTableSize(Number(s.tableSize)).includes(requestedHeroSeat)
+        ? requestedHeroSeat
+        : null;
+      const nextHeroSeat = confirmedHeroSeat || (shouldRotateSeat
         ? previousSeatForNextHand(s.heroSeat, s.tableSize)
-        : s.heroSeat;
+        : s.heroSeat);
       const visionFields = {
         heroCards,
         board,
@@ -625,6 +629,7 @@ export function useGameState() {
       const nextState = {
         ...continuedState,
         ...visionFields,
+        ...(confirmedHeroSeat && boardCount === 0 ? { heroSeat: confirmedHeroSeat } : {}),
         ...(nextStreet !== (s.street || "preflop")
           ? {
               nextActor: "hero",

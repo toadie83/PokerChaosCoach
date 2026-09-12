@@ -1,9 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  recognitionStartsNewHand,
   replayDetectionCards,
+  shouldCommitReplayDetection,
+  shouldReadOpeningOpponentStacks,
   validateReplayDetectionContinuity,
 } from "../src/vision/replayVisionLogic.js";
+
+test("one absent player does not remove a crop from the opening stack Vision batch", () => {
+  assert.equal(shouldReadOpeningOpponentStacks({
+    readHeroStack: true,
+    physicalSeatCount: 8,
+    opponentCropCount: 7,
+  }), true);
+  assert.equal(shouldReadOpeningOpponentStacks({
+    readHeroStack: true,
+    physicalSeatCount: 8,
+    opponentCropCount: 6,
+  }), false, "the seven-slot labelled composite must remain structurally complete");
+});
+
+test("the header recovery rescan starts a fresh hand only on a preflop frame", () => {
+  assert.equal(recognitionStartsNewHand({ forceNewHand: true, expectedBoardCount: 0 }), true);
+  assert.equal(recognitionStartsNewHand({ forceNewHand: true, expectedBoardCount: 3 }), false);
+  assert.equal(recognitionStartsNewHand({ manualCorrection: true, expectedBoardCount: 0, hasPreviousSample: true }), false);
+});
+
+test("a forced fresh-hand rescan commits even when its cards and stacks match", () => {
+  assert.equal(shouldCommitReplayDetection({ manualCorrection: true }), false);
+  assert.equal(shouldCommitReplayDetection({ manualCorrection: true, newHandDetected: true }), true);
+  assert.equal(shouldCommitReplayDetection({ manualCorrection: true, correctionChangedCards: true }), true);
+});
 
 function detection(hero, board = []) {
   return {

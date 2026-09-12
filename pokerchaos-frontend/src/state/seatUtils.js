@@ -14,14 +14,24 @@ export function actsFirstOnStreet(street, seat) {
 }
 
 export function seatsForTableSize(size) {
-  if (size <= 6) {
-    return ["UTG", "HJ", "CO", "BTN", "SB", "BB"];
-  }
-  if (size === 8) {
-    return ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
-  }
-  // 9-max or more
-  return ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
+  const count = Math.max(2, Math.min(9, Number(size) || 8));
+  return {
+    2: ["BTN", "BB"],
+    3: ["BTN", "SB", "BB"],
+    4: ["CO", "BTN", "SB", "BB"],
+    5: ["UTG", "CO", "BTN", "SB", "BB"],
+    6: ["UTG", "HJ", "CO", "BTN", "SB", "BB"],
+    7: ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+    8: ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+    9: ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+  }[count];
+}
+
+export function occupiedScreenSeats(physicalSeatCount = 8, absentSeats = []) {
+  const count = Math.max(2, Math.min(10, Number(physicalSeatCount) || 8));
+  const absent = new Set((Array.isArray(absentSeats) ? absentSeats : []).map(Number));
+  absent.delete(0);
+  return Array.from({ length: count }, (_, seat) => seat).filter((seat) => !absent.has(seat));
 }
 
 export function previousSeatForNextHand(seat, size = 8) {
@@ -29,6 +39,30 @@ export function previousSeatForNextHand(seat, size = 8) {
   const currentIndex = seats.indexOf(normalizeSeat(seat));
   if (currentIndex < 0) return normalizeSeat(seat);
   return seats[(currentIndex - 1 + seats.length) % seats.length];
+}
+
+// Local vision labels screen seats clockwise from Hero: Hero=0, V1, V2...
+export function localBlindSeats(heroSeat, size = 8, absentSeats = [], physicalSeatCount = size) {
+  const seats = seatsForTableSize(Number(size));
+  const occupied = occupiedScreenSeats(physicalSeatCount, absentSeats);
+  const heroIndex = seats.indexOf(normalizeSeat(heroSeat));
+  const sbIndex = seats.indexOf("SB");
+  const bbIndex = seats.indexOf("BB");
+  if (heroIndex < 0 || sbIndex < 0 || bbIndex < 0 || occupied.length !== seats.length) return null;
+  return {
+    sb: occupied[(sbIndex - heroIndex + seats.length) % seats.length],
+    bb: occupied[(bbIndex - heroIndex + seats.length) % seats.length],
+  };
+}
+
+export function heroSeatFromDealerScreenSeat(dealerScreenSeat, size = 8, absentSeats = [], physicalSeatCount = size) {
+  const seats = seatsForTableSize(Number(size));
+  const occupied = occupiedScreenSeats(physicalSeatCount, absentSeats);
+  const dealerSeat = Number(dealerScreenSeat);
+  const dealerOffset = occupied.indexOf(dealerSeat);
+  const buttonIndex = seats.indexOf("BTN");
+  if (!Number.isInteger(dealerSeat) || dealerOffset < 0 || buttonIndex < 0 || occupied.length !== seats.length) return null;
+  return seats[(buttonIndex - dealerOffset + seats.length) % seats.length];
 }
 
 export function positionCategory(seat, size = 8) {

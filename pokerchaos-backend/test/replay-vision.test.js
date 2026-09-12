@@ -141,6 +141,59 @@ test("normalizes an independently confirmed start-of-hand Hero stack", () => {
   assert.equal(result.stackConfidence, "high");
 });
 
+test("normalizes labelled opening opponent stacks independently from cards", () => {
+  const result = normalizeReplayCardRecognition(
+    {
+      heroCards: ["Kc", "Qh"],
+      boardCards: [],
+      confidence: "high",
+      heroStackBB: 67.6,
+      stackConfidence: "high",
+      opponentStacks: [
+        { screenSeat: 1, stackBB: 24.7, confidence: "high" },
+        { screenSeat: 2, stackBB: 43.788, confidence: "medium" },
+        { screenSeat: 3, stackBB: 14.1, confidence: "low" },
+        { screenSeat: 4, stackBB: null, confidence: "low" },
+        { screenSeat: 5, stackBB: 26.6, confidence: "high" },
+        { screenSeat: 6, stackBB: 38.2, confidence: "high" },
+        { screenSeat: 7, stackBB: 70.1, confidence: "high" },
+      ],
+    },
+    0,
+    { readHeroStack: true, readOpponentStacks: true },
+  );
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.opponentStacks.length, 7);
+  assert.deepEqual(result.opponentStacks[0], { screenSeat: 1, stackBehindBB: 24.7, confidence: "high" });
+  assert.deepEqual(result.opponentStacks[1], { screenSeat: 2, stackBehindBB: 43.79, confidence: "medium" });
+  assert.deepEqual(result.opponentStacks[2], { screenSeat: 3, stackBehindBB: null, confidence: "low" });
+  assert.equal(result.confidence, "high", "an unclear stack does not lower card confidence");
+});
+
+test("duplicate or missing opponent seat labels fail closed per seat", () => {
+  const result = normalizeReplayCardRecognition(
+    {
+      heroCards: ["Kc", "Qh"],
+      boardCards: [],
+      confidence: "high",
+      heroStackBB: 40,
+      stackConfidence: "high",
+      opponentStacks: [
+        { screenSeat: 1, stackBB: 20, confidence: "high" },
+        { screenSeat: 1, stackBB: 30, confidence: "high" },
+        { screenSeat: 3, stackBB: 15, confidence: "high" },
+      ],
+    },
+    0,
+    { readHeroStack: true, readOpponentStacks: true },
+  );
+
+  assert.deepEqual(result.opponentStacks[0], { screenSeat: 1, stackBehindBB: null, confidence: "low" });
+  assert.deepEqual(result.opponentStacks[1], { screenSeat: 2, stackBehindBB: null, confidence: "low" });
+  assert.deepEqual(result.opponentStacks[2], { screenSeat: 3, stackBehindBB: 15, confidence: "high" });
+});
+
 test("an unclear optional stack never rejects otherwise valid cards", () => {
   const result = normalizeReplayCardRecognition(
     {

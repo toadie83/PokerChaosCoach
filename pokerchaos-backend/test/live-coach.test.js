@@ -8,6 +8,16 @@ const completion = {
   usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
 };
 
+test("Coach request validation accepts local tracker pot sources", async () => {
+  const source = await readFile(new URL("../src/index.js", import.meta.url), "utf8");
+  const schemaStart = source.indexOf("const liveDecisionNodeSchema");
+  const schemaEnd = source.indexOf("const livePromptContextSchema", schemaStart);
+  assert.ok(schemaStart >= 0 && schemaEnd > schemaStart);
+  const schema = source.slice(schemaStart, schemaEnd);
+  assert.match(schema, /"table_display"/);
+  assert.match(schema, /"calculated_ledger"/);
+});
+
 test("GPT-5.6 Luna is the default coaching model while replay vision stays pinned", () => {
   assert.equal(__liveCoachTestables.defaultModel, "gpt-5.6-luna");
   assert.equal(__liveCoachTestables.defaultVisionModel, "gpt-4.1-mini");
@@ -351,6 +361,19 @@ test("every tournament live persona receives the central stage lens while cash s
   assert.doesNotMatch(range, /accumulate chips early/i);
 });
 
+test("Range Professor consumes observed table-stack features without inventing chip-leader or ICM pressure", async () => {
+  const source = await readFile(new URL("../src/openaiService.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function runRangeProfessor");
+  const range = source.slice(start);
+  assert.ok(start >= 0);
+  assert.match(range, /strategicTableState/);
+  assert.match(range, /chip leader is not by itself/i);
+  assert.match(range, /playersWhoCanRespond/);
+  assert.match(range, /postCallSPR/);
+  assert.match(range, /stage_only_unquantified/);
+  assert.match(range, /baseline range status, stack\/position adjustment/i);
+});
+
 test("selected bounty guidance is tournament-only and coverage-aware", () => {
   const guidance = __liveCoachTestables.selectedBountyTournamentGuidance({
     bountyMode: "standard_ko",
@@ -653,6 +676,146 @@ test("20 BB BB fallback preserves a priced Q9s defense", () => {
   assert.equal(result.hero_action, "call");
   assert.equal(result.sizing_bb, 1.2);
   assert.equal(result.fallback_source, "live_preflop_anchor");
+});
+
+test("a valid AI fold cannot override a deterministic priced BB continue", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "6s", card2: "5s" },
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      tableSize: 8,
+      decisionKind: "facing_open",
+      heroSeat: "BB",
+      opponentSeat: "BTN",
+      effectiveStackBB: 40,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+      heroCards: ["6s", "5s"],
+      facingAction: {
+        type: "open",
+        actorSeat: "BTN",
+        toAmountBB: 3,
+        callAmountBB: 2,
+      },
+    },
+  };
+  const parsed = {
+    hero_action: "fold",
+    sizing: "",
+    sizing_bb: null,
+    confidence: "high",
+    reasoning: "Fold this marginal hand.",
+    assumptions: [],
+    alternative_action: "call",
+    alternative_sizing: "Call 2 BB",
+    flavor_text: "Keep the range tight.",
+  };
+  const result = __liveCoachTestables.buildResponse(
+    parsed,
+    completion,
+    "Balance range discipline.",
+    "fold",
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(result.hero_action, "call");
+  assert.equal(result.sizing_bb, 2);
+  assert.equal(result.safety_override, "protected_preflop_continue_anchor");
+  assert.match(result.reasoning, /generated fold conflicted/i);
+});
+
+test("an unknown open-size assumption does not force a low-confidence BB call", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "Qs", card2: "9s" },
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      decisionKind: "facing_open",
+      heroSeat: "BB",
+      opponentSeat: "BTN",
+      effectiveStackBB: 40,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+      heroCards: ["Qs", "9s"],
+    },
+  };
+  const parsed = {
+    hero_action: "fold",
+    sizing: "",
+    sizing_bb: null,
+    confidence: "low",
+    reasoning: "The missing open size prevents a confident priced defense.",
+    assumptions: ["Open size is unknown."],
+    alternative_action: "call",
+    alternative_sizing: "Call",
+    flavor_text: "Missing price keeps this decision uncertain.",
+  };
+  const result = __liveCoachTestables.buildResponse(
+    parsed,
+    completion,
+    "Balance range discipline.",
+    "call",
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(result.hero_action, "fold");
+  assert.equal(result.safety_override, undefined);
+});
+
+test("AQo SB versus a 2 BB UTG+1 open is protected from an AI fold", () => {
+  const context = {
+    street: "preflop",
+    gameType: "tournament",
+    heroCards: { card1: "As", card2: "Qd" },
+    decisionNode: {
+      street: "preflop",
+      gameType: "tournament",
+      tableSize: 8,
+      decisionKind: "facing_open",
+      heroSeat: "SB",
+      opponentSeat: "UTG+1",
+      effectiveStackBB: 25.7,
+      legalActions: ["fold", "call", "3-bet", "jam"],
+      heroCards: ["As", "Qd"],
+      facingAction: {
+        type: "open",
+        actorSeat: "UTG+1",
+        toAmountBB: 2,
+        callAmountBB: 1.5,
+      },
+    },
+  };
+  const guidance = __liveCoachTestables.buildLivePreflopGuidance(context);
+  const parsed = {
+    hero_action: "fold",
+    sizing: "",
+    sizing_bb: null,
+    confidence: "medium",
+    reasoning: "Fold because the BB remains live.",
+    assumptions: [],
+    alternative_action: "call",
+    alternative_sizing: "Call 1.5 BB",
+    flavor_text: "Avoid the squeeze.",
+  };
+  const result = __liveCoachTestables.buildResponse(
+    parsed,
+    completion,
+    "Balance range discipline.",
+    "fold",
+    context.decisionNode.legalActions,
+    context,
+  );
+
+  assert.equal(guidance.situation, "sb_defend_vs_early_middle_open");
+  assert.equal(guidance.deterministicAnchor.verdict, "continue");
+  assert.equal(result.hero_action, "call");
+  assert.equal(result.sizing_bb, 1.5);
+  assert.equal(result.safety_override, "protected_preflop_continue_anchor");
 });
 
 test("selective SB blocker fallback produces a coherent 3-bet size", () => {
