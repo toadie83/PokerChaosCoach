@@ -9,6 +9,7 @@ test("captures the exact decision state sent to Coach", () => {
       street: "turn",
       tableSize: 8,
       persona: "range_professor",
+      chaosMode: true,
       tournamentStage: "post_bubble",
       bountyMode: "progressive_ko",
       villainType: "loose_passive",
@@ -21,6 +22,9 @@ test("captures the exact decision state sent to Coach", () => {
         relativePosition: "oop",
         playersLiveAtDecision: 2,
         playersYetToActSeats: [],
+        playersYetToActStackDetails: [
+          { seat: "BB", stackBehindBB: 18.25 },
+        ],
         gameType: "tournament",
         potBB: 31.73,
         heroStackBehindBB: 16.35,
@@ -61,10 +65,14 @@ test("captures the exact decision state sent to Coach", () => {
   assert.equal(receipt.potBB, 31.73);
   assert.equal(receipt.anteBB, 0.15);
   assert.equal(receipt.persona, "range_professor");
+  assert.equal(receipt.chaosMode, true);
   assert.equal(receipt.villainType, "loose_passive");
   assert.equal(receipt.bountyMode, "progressive_ko");
   assert.equal(receipt.facingAction.allIn, true);
   assert.equal(receipt.potOdds.requiredEquityPct, 34);
+  assert.deepEqual(receipt.playersYetToActStackDetails, [
+    { seat: "BB", stackBehindBB: 18.25 },
+  ]);
 });
 
 test("receipt remains unchanged when the live request payload later changes", () => {

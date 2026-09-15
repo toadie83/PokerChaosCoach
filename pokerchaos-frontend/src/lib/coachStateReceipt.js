@@ -129,6 +129,16 @@ export function buildCoachStateReceipt(payload = {}, capturedAt = Date.now()) {
       : [])
       .map((seat) => String(seat || "").trim().toUpperCase())
       .filter(Boolean),
+    playersYetToActStackDetails: (Array.isArray(
+      decisionNode?.playersYetToActStackDetails,
+    )
+      ? decisionNode.playersYetToActStackDetails
+      : [])
+      .map((opponent) => ({
+        seat: String(opponent?.seat || "").trim().toUpperCase(),
+        stackBehindBB: finiteNumberOrNull(opponent?.stackBehindBB),
+      }))
+      .filter((opponent) => opponent.seat),
     heroStackBehindBB: finiteNumberOrNull(
       decisionNode?.heroStackBehindBB ?? context?.heroStackBehindBB,
     ),
@@ -149,6 +159,7 @@ export function buildCoachStateReceipt(payload = {}, capturedAt = Date.now()) {
       .toLowerCase() || null,
     anteBB: finiteNumberOrNull(decisionNode?.anteBB ?? context?.anteBB),
     persona: String(context?.persona || "").trim().toLowerCase() || null,
+    chaosMode: Boolean(context?.chaosMode),
     tournamentStage:
       String(context?.tournamentStage || "").trim().toLowerCase() || null,
     villainType:

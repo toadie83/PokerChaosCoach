@@ -20,7 +20,7 @@ test("explicit capability states drive frontend access", () => {
   assert.equal(canAccessCapability(entitlements, "tournament_review"), true);
   assert.equal(canAccessCapability(entitlements, "coach"), false);
   assert.equal(getCapabilityStatusLabel(entitlements, "study_spots"), "Free");
-  assert.equal(getCapabilityStatusLabel(entitlements, "coach"), "Coming later");
+  assert.equal(getCapabilityStatusLabel(entitlements, "coach"), "Paid early access");
 });
 
 test("legacy entitlement fallback never enables Coach", () => {
@@ -32,6 +32,13 @@ test("legacy entitlement fallback never enables Coach", () => {
   assert.equal(getCapabilityState(entitlements, "tournament_review"), "trial");
   assert.equal(getCapabilityState(entitlements, "coach"), "disabled");
   assert.equal(canAccessCapability(entitlements, "coach"), false);
+});
+
+test("Tournament Review free tools remain available after AI credits are spent", () => {
+  const entitlements = { features: { review: false, reviewAi: false } };
+  assert.equal(getCapabilityState(entitlements, "tournament_review"), "enabled");
+  assert.equal(canAccessCapability(entitlements, "tournament_review"), true);
+  assert.equal(getCapabilityStatusLabel(entitlements, "tournament_review"), "Free tools");
 });
 
 test("explicit server Coach capability enables the developer route", () => {

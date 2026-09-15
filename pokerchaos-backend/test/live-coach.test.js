@@ -16,6 +16,45 @@ test("Coach request validation accepts local tracker pot sources", async () => {
   const schema = source.slice(schemaStart, schemaEnd);
   assert.match(schema, /"table_display"/);
   assert.match(schema, /"calculated_ledger"/);
+  assert.match(schema, /playersYetToActStackDetails/);
+  assert.match(schema, /missingPlayersYetToActStackSeats/);
+  assert.match(source, /chaosMode: z\.boolean\(\)/);
+});
+
+test("Chaos mode is opt-in and keeps its aggression guardrails", () => {
+  assert.equal(__liveCoachTestables.buildChaosModeGuidance({}), "");
+  const guidance = __liveCoachTestables.buildChaosModeGuidance({
+    chaosMode: true,
+  });
+  assert.match(guidance, /wider 3-bet range/i);
+  assert.match(guidance, /credible scare-card story/i);
+  assert.match(guidance, /Do not force aggression/i);
+  assert.match(guidance, /Preserve the persona's normal tone/i);
+});
+
+test("every live persona applies the shared Chaos mode modifier", async () => {
+  const source = await readFile(new URL("../src/openaiService.js", import.meta.url), "utf8");
+  const functionBody = (name, nextName) => {
+    const start = source.indexOf(`async function ${name}`);
+    const end = nextName
+      ? source.indexOf(`async function ${nextName}`, start + 1)
+      : source.length;
+    assert.ok(start >= 0, `${name} should exist`);
+    assert.ok(end > start, `${name} should have a readable function body`);
+    return source.slice(start, end);
+  };
+
+  const personas = [
+    functionBody("runReplayAnalyst", "runChaosCoach"),
+    functionBody("runChaosCoach", "runCashGameCrusher"),
+    functionBody("runCashGameCrusher", "runExploitDetective"),
+    functionBody("runExploitDetective", "runShortStackNinja"),
+    functionBody("runShortStackNinja", "runRangeProfessor"),
+    functionBody("runRangeProfessor"),
+  ];
+  for (const body of personas) {
+    assert.match(body, /buildChaosModeGuidance\(context\)/);
+  }
 });
 
 test("GPT-5.6 Luna is the default coaching model while replay vision stays pinned", () => {

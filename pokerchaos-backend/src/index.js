@@ -27,18 +27,17 @@ import {
   CAPABILITY_KEYS,
   canAccessCapability,
   createCapabilityGuard,
+  hasUnlimitedAiAccess,
   resolveCapabilities,
 } from "./capabilityService.js";
 import {
   createLearningResource,
   createLearningResourceForGap,
   completeContentGap,
-  consumeAiTrialTokens,
   deleteAiHandReviewsForTournament,
   deleteStudyReport,
   deleteTournamentPerformanceSnapshot,
   deleteTournamentUpload,
-  ensureAiTrialCredits,
   findLearningResourceDuplicates,
   getLearningResourceById,
   getLearningResourceBySlug,
@@ -46,6 +45,10 @@ import {
   getStudyReport,
   getAiHandReviewsForTournament,
   getMonthlyAiUsage,
+  ensureReviewCreditAccount,
+  grantReviewTopupCredits,
+  releaseReviewCredits,
+  reserveReviewCredits,
   getTournamentUpload,
   getBillingCustomerByUserId,
   getUserBillingAiAccess,
@@ -104,6 +107,15 @@ import {
   analyseStudySpotsUpload,
 } from "./studySpots/service.js";
 import { createPublicStudyRateLimiter } from "./publicStudyRateLimit.js";
+import {
+  isConfiguredReviewPriceValid,
+  REVIEW_MONTHLY_CREDITS,
+  REVIEW_PLAN_PRICE_PENCE,
+  REVIEW_SUMMARY_CREDIT_COST,
+  REVIEW_TOPUP_CREDITS,
+  REVIEW_TOPUP_PRICE_PENCE,
+  REVIEW_TRIAL_CREDITS,
+} from "./reviewPricingService.js";
 import {
   TournamentUploadError,
   saveTournamentHistory,
@@ -168,20 +180,29 @@ const stripeCancelUrl = String(process.env.STRIPE_CANCEL_URL || "").trim();
 const stripePortalReturnUrl = String(
   process.env.STRIPE_PORTAL_RETURN_URL || "",
 ).trim();
-const enableAiTrial =
-  String(process.env.AI_ENABLE_TRIAL || "true")
-    .trim()
-    .toLowerCase() !== "false";
-const aiTrialTokenGrantRaw = Number(process.env.AI_TRIAL_TOKEN_GRANT);
-const aiTrialTokenGrant =
-  Number.isFinite(aiTrialTokenGrantRaw) && aiTrialTokenGrantRaw > 0
-    ? Math.floor(aiTrialTokenGrantRaw)
-    : 100_000;
 const aiMonthlyTokenCapRaw = Number(process.env.AI_MONTHLY_TOKEN_CAP);
 const aiMonthlyTokenCap =
   Number.isFinite(aiMonthlyTokenCapRaw) && aiMonthlyTokenCapRaw > 0
     ? Math.floor(aiMonthlyTokenCapRaw)
     : 2_000_000;
+const reviewTrialCreditsRaw = Number(process.env.REVIEW_TRIAL_CREDITS);
+const reviewTrialCredits =
+  Number.isFinite(reviewTrialCreditsRaw) && reviewTrialCreditsRaw >= 0
+    ? Math.floor(reviewTrialCreditsRaw)
+    : REVIEW_TRIAL_CREDITS;
+const reviewMonthlyCreditsRaw = Number(process.env.REVIEW_MONTHLY_CREDITS);
+const reviewMonthlyCredits =
+  Number.isFinite(reviewMonthlyCreditsRaw) && reviewMonthlyCreditsRaw > 0
+    ? Math.floor(reviewMonthlyCreditsRaw)
+    : REVIEW_MONTHLY_CREDITS;
+const reviewTopupCreditsRaw = Number(process.env.REVIEW_TOPUP_CREDITS);
+const reviewTopupCredits =
+  Number.isFinite(reviewTopupCreditsRaw) && reviewTopupCreditsRaw > 0
+    ? Math.floor(reviewTopupCreditsRaw)
+    : REVIEW_TOPUP_CREDITS;
+const reviewPlanPricePence = REVIEW_PLAN_PRICE_PENCE;
+const reviewTopupPricePence = REVIEW_TOPUP_PRICE_PENCE;
+const summaryReviewCreditCost = REVIEW_SUMMARY_CREDIT_COST;
 const GPT_41_MINI_INPUT_COST_PER_TOKEN = 0.4 / 1_000_000;
 const GPT_41_MINI_OUTPUT_COST_PER_TOKEN = 1.6 / 1_000_000;
 const aiEstimatedHandReviewTokensPerHandRaw = Number(
@@ -221,6 +242,7 @@ const aiEstimatedTableHintTokens =
   aiEstimatedTableHintTokensRaw > 0
     ? Math.floor(aiEstimatedTableHintTokensRaw)
     : 10_000;
+const aiEstimatedCoachTokens = 10_000;
 const maxHandsPerAiReviewRequest = 30;
 const reviewQaEnabled =
   String(process.env.REVIEW_QA_ENABLED || "true")
@@ -291,21 +313,14 @@ app.post(
       });
     }
 
+    if (!stripeWebhookSecret) {
+      return res.status(503).json({ error: "Stripe webhook signing secret is not configured." });
+    }
     let event = null;
     try {
       const signature = req.headers["stripe-signature"];
-      if (stripeWebhookSecret && signature) {
-        event = stripe.webhooks.constructEvent(
-          req.body,
-          signature,
-          stripeWebhookSecret,
-        );
-      } else {
-        const textBody = Buffer.isBuffer(req.body)
-          ? req.body.toString("utf8")
-          : String(req.body || "");
-        event = JSON.parse(textBody || "{}");
-      }
+      if (!signature) throw new Error("Missing Stripe signature.");
+      event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
     } catch (error) {
       console.error(
         "[pokerchaos-backend] Stripe webhook signature error",
@@ -502,30 +517,27 @@ async function resolveBillingAiAccessForUser(userId) {
       subscription: null,
       hasActiveSubscription: false,
       subscriptionStatus: null,
-      trial: {
-        userId: uid,
-        grantedTokens: 0,
-        usedTokens: 0,
-        remainingTokens: 0,
-        grantedAt: null,
-        updatedAt: null,
-      },
       reviewAiGranted: false,
+      credits: {
+        trial: { granted: 0, used: 0, remaining: 0 },
+        paid: { granted: 0, used: 0, remaining: 0, periodStart: null, periodEnd: null },
+      },
     };
   }
 
-  if (enableAiTrial && aiTrialTokenGrant > 0) {
-    try {
-      await ensureAiTrialCredits(uid, aiTrialTokenGrant);
-    } catch (error) {
-      console.error(
-        "[pokerchaos-backend] Failed to ensure AI trial credits",
-        error,
-      );
-    }
-  }
-
-  return getUserBillingAiAccess(uid);
+  const access = await getUserBillingAiAccess(uid);
+  const credits = await ensureReviewCreditAccount({
+    userId: uid,
+    trialGrant: reviewTrialCredits,
+    activeSubscription: access.hasActiveSubscription ? access.subscription : null,
+    paidPeriodGrant: reviewMonthlyCredits,
+  });
+  return {
+    ...access,
+    credits,
+    reviewAiGranted:
+      access.hasActiveSubscription || (credits?.trial?.remaining || 0) > 0,
+  };
 }
 
 function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
@@ -538,7 +550,7 @@ function mergeEntitlementsWithBilling(baseEntitlements, billingAiAccess) {
       hasActiveSubscription: Boolean(billing.hasActiveSubscription),
       subscriptionStatus: billing.subscriptionStatus || null,
       subscription: billing.subscription || null,
-      trial: billing.trial || null,
+      credits: billing.credits || null,
     },
   };
   return {
@@ -633,9 +645,26 @@ async function handleStripeWebhookEvent(event, stripe) {
         stripeCustomerId: customerId,
         email,
       });
-      if (enableAiTrial && aiTrialTokenGrant > 0) {
-        await ensureAiTrialCredits(userId, aiTrialTokenGrant);
+    }
+
+    if (
+      object?.metadata?.purchaseType === "review_topup" &&
+      object?.payment_status === "paid" &&
+      object?.currency === "gbp" &&
+      Number(object?.amount_total) === reviewTopupPricePence &&
+      userId
+    ) {
+      const access = await resolveBillingAiAccessForUser(userId);
+      if (access.hasActiveSubscription) {
+        await grantReviewTopupCredits({
+          userId,
+          credits: reviewTopupCredits,
+          sourceEventId: String(event.id || object.id),
+          activeSubscription: access.subscription,
+          paidPeriodGrant: reviewMonthlyCredits,
+        });
       }
+      return;
     }
 
     if (object?.subscription) {
@@ -693,6 +722,7 @@ async function requireAuth(req, res, next) {
         );
       }
     }
+
     const userRole = resolveSessionRole(session);
     req.auth = { userId, role: userRole || null };
     const baseEntitlements = buildEntitlements(userId, userEmails, {
@@ -764,6 +794,20 @@ const liveDecisionNodeSchema = z
     playersYetToActSeats: z.array(z.string()).max(9).optional(),
     playersYetToActCount: z.number().int().min(0).max(9).optional(),
     playersYetToActStacksKnown: z.boolean().optional(),
+    playersYetToActStackDetails: z
+      .array(
+        z.object({
+          seat: z.string(),
+          stackBehindBB: z.number().nonnegative().nullable(),
+          effectiveStackAgainstHeroBB: z.number().nonnegative().nullable(),
+          stackBand: z.string().nullable().optional(),
+          confidence: z.number().min(0).max(1).nullable().optional(),
+          currentStackReconciled: z.boolean().nullable().optional(),
+        }),
+      )
+      .max(9)
+      .optional(),
+    missingPlayersYetToActStackSeats: z.array(z.string()).max(9).optional(),
     gameType: z.enum(["tournament", "cash"]),
     bountyMode: z
       .enum(["none", "unknown", "standard_ko", "progressive_ko"])
@@ -881,6 +925,7 @@ const livePromptContextSchema = z
       .catch("none")
       .optional(),
     persona: z.string().optional(),
+    chaosMode: z.boolean().optional().default(false),
     heroCards: z.record(z.any()).optional(),
     board: z.record(z.any()).optional(),
     decisionNode: liveDecisionNodeSchema.optional(),
@@ -1034,6 +1079,7 @@ const tournamentPerformanceSchema = z.object({
 const checkoutSessionSchema = z.object({
   successUrl: z.string().trim().url().optional(),
   cancelUrl: z.string().trim().url().optional(),
+  purchase: z.enum(["review", "topup"]).optional().default("review"),
 });
 
 const portalSessionSchema = z.object({
@@ -1239,10 +1285,11 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
         hasActiveSubscription: false,
         subscriptionStatus: null,
         trial: null,
+        credits: null,
+        unlimited: false,
       },
     });
   }
-  const trial = req.entitlements?.billing?.trial;
   const capabilities = req.entitlements?.capabilities || resolveCapabilities();
   return res.json({
     userId: req.auth?.userId || null,
@@ -1267,13 +1314,16 @@ app.get("/me/entitlements", requireAuth, (req, res) => {
         req.entitlements?.billing?.hasActiveSubscription,
       ),
       subscriptionStatus: req.entitlements?.billing?.subscriptionStatus || null,
-      trial: trial
-        ? {
-            grantedTokens: toNonNegativeInt(trial.grantedTokens),
-            usedTokens: toNonNegativeInt(trial.usedTokens),
-            remainingTokens: toNonNegativeInt(trial.remainingTokens),
-          }
-        : null,
+      credits: req.entitlements?.billing?.credits || null,
+      unlimited: hasUnlimitedAiAccess(req.entitlements),
+      plan: {
+        name: "Review",
+        currency: "GBP",
+        monthlyPricePence: reviewPlanPricePence,
+        monthlyCredits: reviewMonthlyCredits,
+        topupPricePence: reviewTopupPricePence,
+        topupCredits: reviewTopupCredits,
+      },
     },
   });
 });
@@ -1715,6 +1765,7 @@ app.post(
   "/study-spots/analyse",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  publicStudyRateLimit,
   async (req, res) => {
     if (!isDatabaseConfigured()) {
       return res.status(503).json({
@@ -1750,8 +1801,6 @@ app.post(
           endpoint: "/study-spots/analyse",
           model: studySpotsAiModel,
           usage: result.usage,
-          hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
-          consumeTrialCredits: false,
         });
       }
       logStudyTelemetry("study_spots_analysis_completed", {
@@ -1904,6 +1953,7 @@ app.post(
   "/study-spots/reports/:reportId/retry",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.STUDY_SPOTS),
+  publicStudyRateLimit,
   async (req, res) => {
     const parsed = studyReportIdParamSchema.safeParse(req.params ?? {});
     if (!parsed.success) {
@@ -1961,8 +2011,6 @@ app.post(
           endpoint: "/study-spots/retry",
           model: studySpotsAiModel,
           usage: result.usage,
-          hasActiveSubscription: Boolean(req.aiAccess?.hasActiveSubscription),
-          consumeTrialCredits: false,
         });
       }
       logStudyTelemetry("study_spots_analysis_completed", {
@@ -2164,9 +2212,8 @@ app.get("/me/ai-usage", requireAuth, async (req, res) => {
       billing: {
         hasActiveSubscription: Boolean(aiAccess.hasActiveSubscription),
         subscriptionStatus: aiAccess.subscriptionStatus || null,
-        trialRemainingTokens: toNonNegativeInt(
-          aiAccess?.trial?.remainingTokens,
-        ),
+        reviewCredits: aiAccess.credits,
+        unlimited: hasUnlimitedAiAccess(req.entitlements),
       },
       pricing: {
         inputPer1MUsd: 0.4,
@@ -2194,6 +2241,8 @@ app.get("/me/billing", requireAuth, async (req, res) => {
     const access = await resolveBillingAiAccessForUser(userId);
     return res.json({
       stripeConfigured: Boolean(stripeSecretKey && stripePriceId),
+      topupConfigured: Boolean(stripeSecretKey),
+      hasActiveSubscription: Boolean(access.hasActiveSubscription),
       customer: customer
         ? {
             stripeCustomerId: customer.stripeCustomerId,
@@ -2208,13 +2257,16 @@ app.get("/me/billing", requireAuth, async (req, res) => {
             cancelAtPeriodEnd: access.subscription.cancelAtPeriodEnd,
           }
         : null,
-      trial: access.trial
-        ? {
-            grantedTokens: toNonNegativeInt(access.trial.grantedTokens),
-            usedTokens: toNonNegativeInt(access.trial.usedTokens),
-            remainingTokens: toNonNegativeInt(access.trial.remainingTokens),
-          }
-        : null,
+      credits: access.credits,
+      unlimited: hasUnlimitedAiAccess(req.entitlements),
+      plan: {
+        name: "Review",
+        currency: "GBP",
+        monthlyPricePence: reviewPlanPricePence,
+        monthlyCredits: reviewMonthlyCredits,
+        topupPricePence: reviewTopupPricePence,
+        topupCredits: reviewTopupCredits,
+      },
       reviewAiGranted: Boolean(access.reviewAiGranted),
     });
   } catch (error) {
@@ -2230,12 +2282,6 @@ app.post("/billing/checkout-session", requireAuth, async (req, res) => {
         "Database is required for billing. Configure DATABASE_URL and restart backend.",
     });
   }
-  if (!stripePriceId) {
-    return res.status(500).json({
-      error: "STRIPE_PRICE_ID is not configured.",
-    });
-  }
-
   const parsed = checkoutSessionSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -2246,6 +2292,12 @@ app.post("/billing/checkout-session", requireAuth, async (req, res) => {
 
   const successUrl = parsed.data.successUrl || stripeSuccessUrl;
   const cancelUrl = parsed.data.cancelUrl || stripeCancelUrl;
+  const isTopup = parsed.data.purchase === "topup";
+  if (!isTopup && !stripePriceId) {
+    return res.status(500).json({
+      error: "STRIPE_PRICE_ID is not configured.",
+    });
+  }
   if (!successUrl || !cancelUrl) {
     return res.status(500).json({
       error:
@@ -2264,11 +2316,27 @@ app.post("/billing/checkout-session", requireAuth, async (req, res) => {
   try {
     const userId = req.auth?.userId || "";
     const access = await resolveBillingAiAccessForUser(userId);
-    if (access.hasActiveSubscription) {
+    if (!isTopup && access.hasActiveSubscription) {
       return res.status(409).json({
         error: "An active subscription already exists for this account.",
         code: "SUBSCRIPTION_ALREADY_ACTIVE",
       });
+    }
+    if (isTopup && !access.hasActiveSubscription) {
+      return res.status(403).json({
+        error: "Review top-ups are available only with an active Review plan.",
+        code: "ACTIVE_SUBSCRIPTION_REQUIRED",
+      });
+    }
+    if (!isTopup) {
+      const selectedPrice = await stripe.prices.retrieve(stripePriceId);
+      if (!isConfiguredReviewPriceValid(selectedPrice)) {
+        console.error("Configured STRIPE_PRICE_ID is not an active recurring GBP 12 monthly price.");
+        return res.status(503).json({
+          error: "Review checkout is currently unavailable. Please try again shortly.",
+          code: "STRIPE_PRICE_MISMATCH",
+        });
+      }
     }
 
     const existingCustomer = await getBillingCustomerByUserId(userId);
@@ -2293,17 +2361,35 @@ app.post("/billing/checkout-session", requireAuth, async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+      mode: isTopup ? "payment" : "subscription",
       customer: stripeCustomerId,
       client_reference_id: userId,
       success_url: successUrl,
       cancel_url: cancelUrl,
-      line_items: [{ price: stripePriceId, quantity: 1 }],
-      allow_promotion_codes: true,
-      metadata: { userId },
-      subscription_data: {
-        metadata: { userId },
+      line_items: [
+        isTopup
+          ? {
+              price_data: {
+                currency: "gbp",
+                unit_amount: reviewTopupPricePence,
+                product_data: {
+                  name: `${reviewTopupCredits} Playback Poker Review credits`,
+                  description: "Extra Review credits expire at the end of the current subscription period.",
+                },
+              },
+              quantity: 1,
+            }
+          : { price: stripePriceId, quantity: 1 },
+      ],
+      allow_promotion_codes: !isTopup,
+      metadata: {
+        userId,
+        purchaseType: isTopup ? "review_topup" : "review_subscription",
+        credits: String(isTopup ? reviewTopupCredits : reviewMonthlyCredits),
       },
+      ...(isTopup
+        ? {}
+        : { subscription_data: { metadata: { userId, plan: "review" } } }),
     });
 
     return res.json({
@@ -2377,14 +2463,6 @@ app.post("/billing/portal-session", requireAuth, async (req, res) => {
   }
 });
 
-function requireReviewAi(req, res, next) {
-  if (req.entitlements?.reviewAi) return next();
-  return res.status(403).json({
-    error: "AI help currently disabled for this user.",
-    requiredFeature: "reviewAi",
-  });
-}
-
 function toNonNegativeInt(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
@@ -2441,6 +2519,7 @@ function calculateUsageCost(usage) {
 }
 
 async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
+  if (hasUnlimitedAiAccess(req.entitlements)) return null;
   if (!isDatabaseConfigured()) {
     return res.status(503).json({
       error:
@@ -2454,36 +2533,6 @@ async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
   try {
     const aiAccess =
       req.aiAccess || (await resolveBillingAiAccessForUser(userId));
-    const hasActiveSubscription = Boolean(aiAccess?.hasActiveSubscription);
-    const trialRemainingTokens = toNonNegativeInt(
-      aiAccess?.trial?.remainingTokens,
-    );
-    const shouldEnforceTrial =
-      !hasActiveSubscription &&
-      enableAiTrial &&
-      !Boolean(req.entitlements?.admin) &&
-      !reviewAiAllowAll;
-    if (shouldEnforceTrial) {
-      if (trialRemainingTokens <= 0) {
-        return res.status(429).json({
-          error:
-            "AI trial tokens are exhausted. Start a subscription to continue using AI reviews.",
-          code: "AI_TRIAL_TOKENS_EXHAUSTED",
-          endpoint: endpointLabel,
-          trialRemainingTokens: 0,
-        });
-      }
-      if (estimate > trialRemainingTokens) {
-        return res.status(429).json({
-          error:
-            "This request exceeds remaining AI trial tokens. Reduce request size or subscribe.",
-          code: "AI_TRIAL_TOKENS_INSUFFICIENT",
-          endpoint: endpointLabel,
-          trialRemainingTokens,
-          estimatedTokens: estimate,
-        });
-      }
-    }
 
     const usage = await getMonthlyAiUsage(userId, new Date());
     const usedTokens = toNonNegativeInt(usage.totalTokens);
@@ -2513,13 +2562,68 @@ async function ensureAiQuota(req, res, estimatedTokens, endpointLabel) {
   }
 }
 
+async function reserveReviewCreditQuota(req, res, credits, endpointLabel) {
+  const cost = toNonNegativeInt(credits);
+  if (hasUnlimitedAiAccess(req.entitlements) || cost <= 0) {
+    return { unlimited: hasUnlimitedAiAccess(req.entitlements), cost: 0, bucket: null };
+  }
+  try {
+    const userId = req.auth?.userId || "";
+    const access = req.aiAccess || (await resolveBillingAiAccessForUser(userId));
+    const bucket = access.hasActiveSubscription ? "paid" : "trial";
+    const balance = await reserveReviewCredits({ userId, credits: cost, bucket });
+    if (!balance) {
+      const remaining = toNonNegativeInt(access?.credits?.[bucket]?.remaining);
+      res.status(429).json({
+        error: access.hasActiveSubscription
+          ? "This analysis costs more credits than remain in your Review plan. Buy a top-up or wait for renewal."
+          : "Your free AI review credits are used. Start the Review plan to continue.",
+        code: "REVIEW_CREDITS_INSUFFICIENT",
+        endpoint: endpointLabel,
+        requiredCredits: cost,
+        remainingCredits: remaining,
+      });
+      return null;
+    }
+    return { unlimited: false, cost, bucket, balance };
+  } catch (error) {
+    console.error("[pokerchaos-backend] Review credit reservation failed", error);
+    res.status(500).json({ error: "Failed to reserve Review credits. Please try again." });
+    return null;
+  }
+}
+
+async function refundReviewCreditReservation(req, reservation) {
+  if (!reservation?.bucket || !reservation?.cost) return;
+  try {
+    await releaseReviewCredits({
+      userId: req.auth?.userId || "",
+      credits: reservation.cost,
+      bucket: reservation.bucket,
+    });
+  } catch (error) {
+    console.error("[pokerchaos-backend] Review credit refund failed", error);
+  }
+}
+
+function reviewCreditUsagePayload(reservation) {
+  if (reservation?.unlimited) return { unlimited: true, charged: 0, remaining: null };
+  const remaining = toNonNegativeInt(
+    reservation?.balance?.[reservation?.bucket]?.remaining,
+  );
+  return {
+    unlimited: false,
+    charged: toNonNegativeInt(reservation?.cost),
+    remaining,
+    bucket: reservation?.bucket || null,
+  };
+}
+
 async function trackAiUsage({
   userId,
   endpoint,
   model,
   usage,
-  hasActiveSubscription = false,
-  consumeTrialCredits = true,
 }) {
   const safeUsage = normalizeUsage(usage);
   const costs = calculateUsageCost(safeUsage);
@@ -2534,11 +2638,7 @@ async function trackAiUsage({
     outputCostUsd: costs.outputCostUsd,
     totalCostUsd: costs.totalCostUsd,
   });
-  let trial = null;
-  if (consumeTrialCredits && enableAiTrial && !hasActiveSubscription) {
-    trial = await consumeAiTrialTokens(userId, safeUsage.total_tokens);
-  }
-  return { monthlyUsage, trial };
+  return { monthlyUsage };
 }
 
 app.post(
@@ -2558,11 +2658,27 @@ app.post(
     return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
   }
 
+  const quotaResponse = await ensureAiQuota(
+    req,
+    res,
+    aiEstimatedCoachTokens,
+    "/prompts",
+  );
+  if (quotaResponse) return quotaResponse;
+
   try {
     const result = await getAggressionPrompt(
       parsed.data.context,
       parsed.data.instruction,
     );
+    if (isDatabaseConfigured() && result?.usage) {
+      await trackAiUsage({
+        userId: req.auth?.userId || "",
+        endpoint: "/prompts",
+        model: result?.model || reviewAiModel,
+        usage: result.usage,
+      });
+    }
     return res.json(result);
   } catch (error) {
     console.error("[pokerchaos-backend] OpenAI error", error);
@@ -2586,13 +2702,28 @@ app.post(
         details: parsed.error.flatten(),
       });
     }
-
     if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const quotaResponse = await ensureAiQuota(
+      req,
+      res,
+      aiEstimatedCoachTokens,
+      "/replay-vision/cards",
+    );
+    if (quotaResponse) return quotaResponse;
+
     try {
       const result = await recognizeReplayCards(parsed.data);
+      if (isDatabaseConfigured() && result?.usage) {
+        await trackAiUsage({
+          userId: req.auth?.userId || "",
+          endpoint: "/replay-vision/cards",
+          model: result?.model || "gpt-4.1-mini",
+          usage: result.usage,
+        });
+      }
       return res.json(result);
     } catch (error) {
       console.error("[pokerchaos-backend] Replay vision error", error);
@@ -3049,7 +3180,6 @@ app.post(
   "/hand-history/review",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
-  requireReviewAi,
   async (req, res) => {
     const selectedHandsRaw = Array.isArray(req.body?.selectedHands)
       ? req.body.selectedHands
@@ -3081,13 +3211,23 @@ app.post(
       1,
       parsed.data.selectedHands.length * aiEstimatedHandReviewTokensPerHand,
     );
+    const creditReservation = await reserveReviewCreditQuota(
+      req,
+      res,
+      parsed.data.selectedHands.length,
+      "/hand-history/review",
+    );
+    if (!creditReservation) return;
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       estimatedTokens,
       "/hand-history/review",
     );
-    if (quotaResponse) return quotaResponse;
+    if (quotaResponse) {
+      await refundReviewCreditReservation(req, creditReservation);
+      return quotaResponse;
+    }
 
     try {
       const opponentLookup = buildOpponentLookup(parsed.data.opponentSnapshot);
@@ -3177,14 +3317,13 @@ app.post(
                 toNonNegativeInt(usageState.monthlyUsage.totalTokens),
             ),
             usedCostUsd: usageState.monthlyUsage.totalCostUsd,
-            trialRemainingTokens: toNonNegativeInt(
-              usageState.trial?.remainingTokens,
-            ),
           },
+          reviewCredits: reviewCreditUsagePayload(creditReservation),
         },
         reviews,
       });
     } catch (error) {
+      await refundReviewCreditReservation(req, creditReservation);
       console.error("[pokerchaos-backend] Hand review error", error);
       return res.status(502).json({
         error:
@@ -3198,7 +3337,6 @@ app.post(
   "/hand-history/summary-review",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
-  requireReviewAi,
   async (req, res) => {
     const parsed = summaryReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -3214,13 +3352,24 @@ app.post(
         .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const creditReservation = await reserveReviewCreditQuota(
+      req,
+      res,
+      summaryReviewCreditCost,
+      "/hand-history/summary-review",
+    );
+    if (!creditReservation) return;
+
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedSummaryTokens,
       "/hand-history/summary-review",
     );
-    if (quotaResponse) return quotaResponse;
+    if (quotaResponse) {
+      await refundReviewCreditReservation(req, creditReservation);
+      return quotaResponse;
+    }
 
     try {
       const review = await reviewTournamentSummary(
@@ -3248,12 +3397,11 @@ app.post(
               toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
-          trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens,
-          ),
         },
+        reviewCredits: reviewCreditUsagePayload(creditReservation),
       });
     } catch (error) {
+      await refundReviewCreditReservation(req, creditReservation);
       console.error("[pokerchaos-backend] Session Summary review error", error);
       return res.status(502).json({
         error:
@@ -3267,7 +3415,6 @@ app.post(
   "/hand-history/icm-review",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
-  requireReviewAi,
   async (req, res) => {
     const parsed = icmReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -3283,13 +3430,24 @@ app.post(
         .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const creditReservation = await reserveReviewCreditQuota(
+      req,
+      res,
+      summaryReviewCreditCost,
+      "/hand-history/icm-review",
+    );
+    if (!creditReservation) return;
+
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedIcmTokens,
       "/hand-history/icm-review",
     );
-    if (quotaResponse) return quotaResponse;
+    if (quotaResponse) {
+      await refundReviewCreditReservation(req, creditReservation);
+      return quotaResponse;
+    }
 
     try {
       const review = await reviewIcmSpotSummary(
@@ -3317,12 +3475,11 @@ app.post(
               toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
-          trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens,
-          ),
         },
+        reviewCredits: reviewCreditUsagePayload(creditReservation),
       });
     } catch (error) {
+      await refundReviewCreditReservation(req, creditReservation);
       console.error("[pokerchaos-backend] ICM review error", error);
       return res.status(502).json({
         error:
@@ -3336,7 +3493,6 @@ app.post(
   "/hand-history/blind-defense-review",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
-  requireReviewAi,
   async (req, res) => {
     const parsed = blindDefenseReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -3352,13 +3508,24 @@ app.post(
         .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const creditReservation = await reserveReviewCreditQuota(
+      req,
+      res,
+      summaryReviewCreditCost,
+      "/hand-history/blind-defense-review",
+    );
+    if (!creditReservation) return;
+
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedBlindDefenseTokens,
       "/hand-history/blind-defense-review",
     );
-    if (quotaResponse) return quotaResponse;
+    if (quotaResponse) {
+      await refundReviewCreditReservation(req, creditReservation);
+      return quotaResponse;
+    }
 
     try {
       const review = await reviewBlindDefenseSummary(
@@ -3386,12 +3553,11 @@ app.post(
               toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
-          trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens,
-          ),
         },
+        reviewCredits: reviewCreditUsagePayload(creditReservation),
       });
     } catch (error) {
+      await refundReviewCreditReservation(req, creditReservation);
       console.error("[pokerchaos-backend] Blind defense review error", error);
       return res.status(502).json({
         error:
@@ -3405,7 +3571,6 @@ app.post(
   "/hand-history/table-hint",
   requireAuth,
   requireCapability(CAPABILITY_KEYS.TOURNAMENT_REVIEW),
-  requireReviewAi,
   async (req, res) => {
     const parsed = tableHintSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -3421,13 +3586,24 @@ app.post(
         .json({ error: "OPENAI_API_KEY is not configured" });
     }
 
+    const creditReservation = await reserveReviewCreditQuota(
+      req,
+      res,
+      summaryReviewCreditCost,
+      "/hand-history/table-hint",
+    );
+    if (!creditReservation) return;
+
     const quotaResponse = await ensureAiQuota(
       req,
       res,
       aiEstimatedTableHintTokens,
       "/hand-history/table-hint",
     );
-    if (quotaResponse) return quotaResponse;
+    if (quotaResponse) {
+      await refundReviewCreditReservation(req, creditReservation);
+      return quotaResponse;
+    }
 
     try {
       const tableHintContext = {
@@ -3466,12 +3642,11 @@ app.post(
               toNonNegativeInt(usageState.monthlyUsage.totalTokens),
           ),
           usedCostUsd: usageState.monthlyUsage.totalCostUsd,
-          trialRemainingTokens: toNonNegativeInt(
-            usageState.trial?.remainingTokens,
-          ),
         },
+        reviewCredits: reviewCreditUsagePayload(creditReservation),
       });
     } catch (error) {
+      await refundReviewCreditReservation(req, creditReservation);
       console.error("[pokerchaos-backend] Current table hint error", error);
       return res.status(502).json({
         error:

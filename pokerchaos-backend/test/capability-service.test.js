@@ -7,8 +7,16 @@ import {
   canAccessCapability,
   createCapabilityGuard,
   getCapabilityDenial,
+  hasUnlimitedAiAccess,
   resolveCapabilities,
 } from "../src/capabilityService.js";
+
+test("only the server-resolved admin entitlement bypasses AI allowances", () => {
+  assert.equal(hasUnlimitedAiAccess({ admin: true }), true);
+  assert.equal(hasUnlimitedAiAccess({ developer: true }), false);
+  assert.equal(hasUnlimitedAiAccess({ coach: true }), false);
+  assert.equal(hasUnlimitedAiAccess({ billing: { hasActiveSubscription: true } }), false);
+});
 
 test("registered users always receive Study Spots access", () => {
   const capabilities = resolveCapabilities({});
@@ -20,10 +28,10 @@ test("registered users always receive Study Spots access", () => {
   assert.equal(canAccessCapability(capabilities, "study_spots"), true);
 });
 
-test("Tournament Review maps billing and trial access to explicit states", () => {
+test("Tournament Review keeps free tools open and maps paid AI access states", () => {
   assert.equal(
     resolveCapabilities({})[CAPABILITY_KEYS.TOURNAMENT_REVIEW],
-    CAPABILITY_STATES.LOCKED,
+    CAPABILITY_STATES.ENABLED,
   );
   assert.equal(
     resolveCapabilities({ reviewAi: true })[
@@ -93,18 +101,18 @@ function invokeGuard(capabilities, capabilityKey) {
   return { nextCalled, responseStatus, responseBody };
 }
 
-test("capability middleware rejects disabled Coach and locked Review directly", () => {
+test("capability middleware rejects disabled Coach while free Review stays open", () => {
   const capabilities = resolveCapabilities({});
 
   const coach = invokeGuard(capabilities, CAPABILITY_KEYS.COACH);
   assert.equal(coach.nextCalled, false);
   assert.equal(coach.responseStatus, 403);
   assert.equal(coach.responseBody.code, "CAPABILITY_DISABLED");
+  assert.match(coach.responseBody.error, /qacopilotdev@gmail\.com/);
+  assert.match(coach.responseBody.error, /priced separately from Tournament Review/);
 
   const review = invokeGuard(capabilities, CAPABILITY_KEYS.TOURNAMENT_REVIEW);
-  assert.equal(review.nextCalled, false);
-  assert.equal(review.responseStatus, 403);
-  assert.equal(review.responseBody.code, "CAPABILITY_LOCKED");
+  assert.equal(review.nextCalled, true);
 });
 
 test("capability middleware admits enabled Study Spots and entitled Review", () => {

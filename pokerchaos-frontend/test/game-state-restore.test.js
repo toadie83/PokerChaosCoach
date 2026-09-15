@@ -50,6 +50,12 @@ test("normalizes card fields while rebuilding a saved decision", () => {
   });
 });
 
+test("restores Chaos mode only from an explicit boolean", () => {
+  assert.equal(prepareRestoredGameState({ chaosMode: true }).chaosMode, true);
+  assert.equal(prepareRestoredGameState({ chaosMode: "true" }).chaosMode, false);
+  assert.equal(prepareRestoredGameState({}).chaosMode, false);
+});
+
 test("restored tournament stage is retained and invalid values fall back to auto", () => {
   assert.equal(
     prepareRestoredGameState({ tournamentStage: "post_bubble" }).tournamentStage,

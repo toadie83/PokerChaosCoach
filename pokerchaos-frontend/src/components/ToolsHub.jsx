@@ -1,4 +1,7 @@
 import {
+  COACH_ACCESS_DESCRIPTION,
+} from "../lib/coachAccess.js";
+import {
   CAPABILITY_KEYS,
   canAccessCapability,
   getCapabilityState,
@@ -23,7 +26,7 @@ const TOOL_DEFINITIONS = [
   {
     key: CAPABILITY_KEYS.COACH,
     title: "Poker Coach",
-    description: "Personalised ongoing analysis and study guidance.",
+    description: COACH_ACCESS_DESCRIPTION,
     path: "/tools/coach",
   },
 ];
@@ -32,10 +35,11 @@ function getActionLabel(entitlements, tool) {
   const state = getCapabilityState(entitlements, tool.key);
   if (tool.key === CAPABILITY_KEYS.STUDY_SPOTS) return "Start";
   if (tool.key === CAPABILITY_KEYS.COACH) {
-    return state === "active" ? "Open" : "";
+    return state === "active" ? "Open" : "Request early access";
   }
   if (state === "active") return "Open";
   if (state === "trial") return "Continue trial";
+  if (state === "enabled") return "Open free tools";
   return "View access";
 }
 
@@ -77,7 +81,7 @@ export default function ToolsHub({ entitlements, navigate }) {
                 </button>
               ) : (
                 <span className="tool-card-unavailable" aria-label="Unavailable">
-                  {isCoach ? "Coming later" : "Unavailable"}
+                  {isCoach ? "Paid early access" : "Unavailable"}
                 </span>
               )}
             </article>

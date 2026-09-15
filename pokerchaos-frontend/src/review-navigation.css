@@ -175,6 +175,64 @@
   font-variant-numeric: tabular-nums;
 }
 
+.auth-bar--review .review-credit-menu-trigger {
+  min-height: 32px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid rgb(244 241 230 / 0.14);
+  border-radius: 6px;
+  background: rgb(244 241 230 / 0.035);
+}
+
+.auth-bar--review .review-credit-menu-trigger:hover,
+.auth-bar--review .review-credit-menu-trigger[aria-expanded="true"] {
+  border-color: rgb(0 227 154 / 0.42);
+  background: rgb(0 227 154 / 0.07);
+}
+
+.auth-bar--review .review-credit-menu-trigger .top-nav-status-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.auth-bar--review .review-credit-menu-trigger .top-nav-status-value {
+  font-size: 12px;
+}
+
+.auth-bar--review .review-credit-popover {
+  border-color: rgb(244 241 230 / 0.16);
+  background: #101820;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.46);
+  color: var(--brand-text-primary);
+}
+
+.auth-bar--review .review-credit-popover-balance,
+.auth-bar--review .review-credit-popover-link,
+.auth-bar--review .review-credit-popover-message {
+  color: #aebbb4;
+}
+
+.auth-bar--review .review-credit-popover-balance strong,
+.auth-bar--review .review-credit-popover-link:hover {
+  color: var(--brand-text-primary);
+}
+
+.auth-bar--review .review-credit-popover-link:hover {
+  background: rgb(244 241 230 / 0.07);
+}
+
+.auth-bar--review .review-credit-popover-action {
+  border-color: rgb(200 162 77 / 0.45);
+  background: rgb(200 162 77 / 0.1);
+  color: #e1c37e;
+}
+
+.auth-bar--review .review-credit-popover-action:hover:not(:disabled) {
+  background: rgb(200 162 77 / 0.18);
+}
+
 .auth-bar--review .auth-bar-actions .top-nav-link--cta {
   border-color: rgb(200 162 77 / 0.4);
   background: rgb(200 162 77 / 0.08);

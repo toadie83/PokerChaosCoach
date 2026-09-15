@@ -109,9 +109,22 @@ export default function CoachStateReceipt({
   const behindSeats = Array.isArray(receipt.playersYetToActSeats)
     ? receipt.playersYetToActSeats.filter(Boolean)
     : [];
+  const behindStackDetails = Array.isArray(receipt.playersYetToActStackDetails)
+    ? receipt.playersYetToActStackDetails.filter((opponent) => opponent?.seat)
+    : [];
+  const behindLabel = behindStackDetails.length
+    ? behindStackDetails
+        .map((opponent) => {
+          const stack = formatNumber(opponent.stackBehindBB);
+          return `${opponent.seat}${stack !== null ? ` ${stack} BB` : " unknown"}`;
+        })
+        .join(" / ")
+    : behindSeats.length
+      ? `${behindSeats.join("/")} behind`
+      : null;
   const playerValue = [
     players !== null ? `${players} players` : null,
-    behindSeats.length ? `${behindSeats.join("/")} behind` : null,
+    behindLabel,
   ]
     .filter(Boolean)
     .join(" / ");
@@ -193,6 +206,12 @@ export default function CoachStateReceipt({
           label="Stage"
           value={receipt.tournamentStage ? titleCase(receipt.tournamentStage) : ""}
           title="Tournament stage used"
+        />
+        <ReceiptItem
+          label="Strategy"
+          value={receipt.chaosMode ? "Chaos mode" : ""}
+          tone="warning"
+          title="This recommendation used the wider, selectively aggressive strategy modifier"
         />
         <ReceiptItem
           label="Format"

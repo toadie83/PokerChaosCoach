@@ -724,6 +724,19 @@ function buildStyleTone(style) {
   }
 }
 
+const CHAOS_MODE_GUIDANCE = `CHAOS MODE is ON. Keep the selected persona's voice and specialist knowledge, but use a deliberately wider, more aggressive strategy:
+- Start from the normal sound baseline, then favor the aggressive branch in genuinely close or mixed decisions. This is a strategic modifier, not permission to ignore the hand state.
+- Preflop, widen unopened opens most in late position and by a smaller amount early; favor playable suited, connected, and blocker-rich fringe hands.
+- Build a noticeably wider 3-bet range by promoting the best blocker-rich or playable calls and borderline folds into 3-bets when position, stack depth, opener range, callers, and players behind support fold equity. Keep a credible value region and a plan versus a 4-bet or shove.
+- Postflop, actively seek extra bets, raises, probes, check-raises, and multi-street bluffs when range/nut advantage, blockers, equity, capped ranges, or a credible scare-card story support them. State the value region represented, likely folds targeted, follow-through cards, and abort conditions.
+- Do not force aggression into calling stations, strong uncapped ranges, bad multiway textures, stack/ICM traps, or spots with no credible fold equity. Thin value aggression can replace a bluff against opponents who call too much.
+- Never override legal actions, known stack and pot geometry, made-hand safety, explicit tournament/bounty constraints, or clear dominated/negative-EV situations. Do not invent solver frequencies.
+- When chaos changes the recommendation from the ordinary baseline, say so concisely in reasoning and explain the concrete strategic license. Preserve the persona's normal tone; do not imitate Chaos Coach unless that is the selected persona.`;
+
+function buildChaosModeGuidance(context = {}) {
+  return context?.chaosMode === true ? CHAOS_MODE_GUIDANCE : "";
+}
+
 function formatHeroHand(context = {}) {
   const raw =
     typeof context?.heroHand === "string" ? context.heroHand.trim() : "";
@@ -922,7 +935,8 @@ function stackSnapshot(context = {}) {
 const LIVE_STACK_LEVERAGE_RULES = `Live stack rules:
 - Treat heroStackBehindBB and effectiveStackBB in the supplied decision object as chips remaining now, not hand-start stacks. Replay Analyst receives context.decisionNode as decision.
 - effectiveStackBB and primaryOpponentEffectiveStackBB describe Hero versus the named primary opponent only. They do not cap Hero's total exposure to unacted players.
-- On preflop decisions, inspect playersYetToActSeats, playersYetToActCount, playersLiveAtDecision, heroMaximumExposureBB, and strategicRestrictions. A default playersInHand value of 2 does not erase seats that structurally remain to act.
+- On preflop decisions, inspect playersYetToActSeats, playersYetToActStackDetails, playersYetToActStacksKnown, playersLiveAtDecision, heroMaximumExposureBB, and strategicRestrictions. A default playersInHand value of 2 does not erase seats that structurally remain to act.
+- When playersYetToActStacksKnown is true, use the supplied per-seat stacks and never describe them as unknown. Distinguish short reshove stacks from deeper retaliation-capable stacks.
 - When players remain behind and their stacks are unknown, assume they can cover Hero. Never justify risking Hero's full stack solely because the opener is short; assess the jam against both the opener's range and the cold-call/cold-4-bet ranges behind.
 - If Hero covers a short opener but has a materially deeper stack exposed to players behind, preserve calls and non-all-in 3-bets for non-premium hands so Hero can respond to a cold reshove. Reserve a full-stack jam for a range robust against every live continuing range.
 - Use potBB, facingAction.callAmountBB, heroStackAfterCallBB, and SPR together when choosing an action and size. potBB and contestablePotBB exclude any uncalled excess that Hero cannot win; never use rawPotBB or uncalledExcessBB to make a covering shove look like a better price.
@@ -1734,6 +1748,7 @@ export const __liveCoachTestables = {
   allowedModels: ALLOWED_MODELS,
   allowedVisionModels: ALLOWED_VISION_MODELS,
   buildChatCompletionRequest,
+  buildChaosModeGuidance,
   buildLivePreflopGuidance,
   buildIncompleteLiveCoachResponse,
   buildResponse,
@@ -8911,6 +8926,7 @@ ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
+${buildChaosModeGuidance(context)}
 Respond only with strict JSON and no markdown.
 
 Output JSON:
@@ -8979,6 +8995,7 @@ ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
+${buildChaosModeGuidance(context)}
 You always respond with valid JSON only - no markdown or commentary.
 
 ${styleTone}
@@ -9236,6 +9253,7 @@ ${CASH_GAME_LIFECYCLE_RULES}
 ${LIVE_STACK_LEVERAGE_RULES}
 ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
+${buildChaosModeGuidance(context)}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
@@ -9367,6 +9385,7 @@ ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
+${buildChaosModeGuidance(context)}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
@@ -9503,6 +9522,7 @@ ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
+${buildChaosModeGuidance(context)}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
@@ -9599,6 +9619,7 @@ async function runRangeProfessor(context = {}, instruction, model) {
   const preflopBaseline = buildLivePreflopGuidance(context);
   const stageLens = selectedTournamentStageGuidance(context);
   const bountyLens = selectedBountyTournamentGuidance(context);
+  const chaosMode = context?.chaosMode === true;
   const effectiveStack = stacks.effective ?? stacks.hero ?? null;
   const stackBucket =
     context?.stackBucket ||
@@ -9656,7 +9677,9 @@ async function runRangeProfessor(context = {}, instruction, model) {
     preflopAnchor?.applicable
       ? `Deterministic preflop anchor: ${preflopAnchor.verdict}; recommended ${preflopAnchor.recommendedActions.join("/")}; fallback ${preflopAnchor.fallbackAction}.`
       : "",
-    "Hero profile: balanced aggression; manage pot size when nut edge is unclear.",
+    chaosMode
+      ? "Hero profile: reasoned chaos; expand the defensible aggressive fringe while keeping coherent value, bluff, and exit plans."
+      : "Hero profile: balanced aggression; manage pot size when nut edge is unclear.",
     stacks.hero ? `Hero stack: ${stacks.hero} BB` : "",
     stacks.villain ? `Villain stack: ${stacks.villain} BB` : "",
     stacks.effective ? `Effective stack: ${stacks.effective} BB` : "",
@@ -9740,11 +9763,13 @@ async function runRangeProfessor(context = {}, instruction, model) {
     relativePosition,
     decisionNode,
     potSize: context?.potSize,
+    chaosMode,
     heroProfile: {
-      riskTolerance: "medium",
-      style: "balanced_position_aware",
-      guidance:
-        "Use position-appropriate aggression and defend frequencies preflop; apply pot control postflop when nut or range advantage is unclear.",
+      riskTolerance: chaosMode ? "medium_high" : "medium",
+      style: chaosMode ? "reasoned_chaos" : "balanced_position_aware",
+      guidance: chaosMode
+        ? "Widen sound opens and blocker-led 3-bets; add board-credible bluffs with explicit targets, follow-through cards, and abort conditions."
+        : "Use position-appropriate aggression and defend frequencies preflop; apply pot control postflop when nut or range advantage is unclear.",
     },
     stakeTier: stakeTier,
     stakeGuidance: stakeGuide ? stakeGuide.note : undefined,
@@ -9763,6 +9788,7 @@ ${LIVE_MADE_HAND_SAFETY_RULES}
 ${preflopBaseline ? LIVE_PREFLOP_POSITION_RULES : ""}
 ${stageLens ? TOURNAMENT_STAGE_LIFECYCLE_RULES : ""}
 ${bountyLens ? BOUNTY_TOURNAMENT_LIFECYCLE_RULES : ""}
+${buildChaosModeGuidance(context)}
 Respond only with strict JSON (no markdown).
 
 Output JSON:
@@ -9799,7 +9825,7 @@ Rules:
 - Pair plus strong draw combinations (e.g. pair + flush draw or pair + open-ended) typically continue versus single raises; only fold with clear GTO justification (stack, range disadvantage, extreme sizing).
 - When the board shows three or more of a suit, tighten calling frequencies without that suit blocker; default to folding two-pair or weaker versus large raises unless blockers or sizing justify a hero call.
 - Preflop: protect a calling range. In position versus 3-bets, mix flats with suited broadways, pocket pairs, and Axs; out of position, defend with suited broadways/pairs that play well post-flop while keeping 4-bet traps for premiums.
-- Hero profile: balanced and position-aware; use controlled aggression postflop, but do not suppress routine late-position opens, steals, calls, or blind defenses merely to reduce variance.
+- Hero profile: ${chaosMode ? "reasoned chaos; widen defensible opens and 3-bets and select more credible bluff candidates without abandoning range construction" : "balanced and position-aware; use controlled aggression postflop, but do not suppress routine late-position opens, steals, calls, or blind defenses merely to reduce variance"}.
 - In bloated or multiway pots without the nuts, lean on pot-control or disciplined folds unless range/nut dynamics justify pressure; detail loss-mitigation plans.
 - Reference blockers, equity shifts, or nut advantages from the board only as supporting evidence; don't ignore positional/range foundations.
 - Mention plan adjustments when facing calls, raises, or folds.
