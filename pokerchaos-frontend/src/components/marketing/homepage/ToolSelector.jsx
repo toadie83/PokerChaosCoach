@@ -1,3 +1,6 @@
+import { COACH_ACCESS_DESCRIPTION, COACH_EARLY_ACCESS_URL } from "../../../lib/coachAccess.js";
+import { REVIEW_MONTHLY_CREDITS, REVIEW_PLAN_PRICE, REVIEW_TRIAL_CREDITS } from "../../../lib/reviewPricing.js";
+
 export default function ToolSelector({ studyAction, reviewAction }) {
   return (
     <section className="home-v2-section home-v2-tools" id="tools">
@@ -18,22 +21,23 @@ export default function ToolSelector({ studyAction, reviewAction }) {
         </article>
         <article className="home-v2-tool">
           <div className="home-v2-tool-heading">
-            <span>Advanced / Tier 1</span>
+            <span>{REVIEW_PLAN_PRICE} · {REVIEW_MONTHLY_CREDITS} credits</span>
             <strong>02</strong>
           </div>
           <h3>Tournament Review</h3>
           <p>Review decisions, mistakes, missed opportunities, and recurring tournament-wide patterns in greater detail.</p>
           {reviewAction}
-          <small>Free trial access may be available.</small>
+          <small>Start with {REVIEW_TRIAL_CREDITS} free review credits. Credits are applied automatically when you use AI Review. Coach is separate.</small>
         </article>
-        <article className="home-v2-tool home-v2-tool-disabled" aria-disabled="true">
+        <article className="home-v2-tool">
           <div className="home-v2-tool-heading">
-            <span>Coming later</span>
+            <span>Paid early access</span>
             <strong>03</strong>
           </div>
           <h3>Poker Coach</h3>
-          <p>Personalised ongoing study and coaching shaped around your game.</p>
-          <span className="home-v2-disabled-action">Not currently available</span>
+          <p>{COACH_ACCESS_DESCRIPTION}</p>
+          <a className="tool-card-action" href={COACH_EARLY_ACCESS_URL}>Contact me — request early access</a>
+          <small>Opens your email app to request pricing and an agreed usage allowance.</small>
         </article>
       </div>
     </section>

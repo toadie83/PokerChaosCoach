@@ -45,6 +45,7 @@ import {
 import { initAnalytics, trackPageView } from "./lib/analytics.js";
 import { pingHealth, setAuthTokenFetcher } from "./lib/api.js";
 import { DISCORD_COMMUNITY_URL } from "./lib/community.js";
+import { getAvailableReviewCredits, REVIEW_CREDITS_UPDATED_EVENT } from "./lib/reviewPricing.js";
 import {
   CAPABILITY_KEYS,
   canAccessCapability,
@@ -65,7 +66,6 @@ import "./coach-workspace.css";
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const DEFAULT_ROUTE = DEFAULT_AUTH_ROUTE;
 const ABOUT_SEEN_STORAGE_KEY = "pcc_about_seen";
-const TRIAL_TOKENS_UPDATED_EVENT = "pcc:trial-tokens-updated";
 const SPA_ROUTE_CHANGE_EVENT = "pcc:spa-route-change";
 const LOCAL_LIVE_STREAM_URL = "/livestream/index.html";
 const SHOW_LOCAL_LIVE_STREAM = import.meta.env.DEV;
@@ -167,7 +167,7 @@ const SECTION_CONFIG = [
     capability: CAPABILITY_KEYS.TOURNAMENT_REVIEW,
     component: ReviewApp,
     lockedText:
-      "Tournament Review requires an active trial or Tier 1 access.",
+      "AI Tournament Review requires remaining trial allowance or an active paid review plan. Coach is priced separately.",
   },
   {
     path: "/tools/coach",
@@ -378,21 +378,22 @@ function TrialInfoModal({ open, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h2 className="modal-title">About Trial AI Tokens</h2>
+          <h2 className="modal-title">Your AI review allowance</h2>
           <button type="button" className="link-btn" onClick={onClose}>
             Close
           </button>
         </div>
         <div className="modal-body">
           <p>
-            New users receive <strong>100,000 trial AI tokens</strong>, which is
-            approximately <strong>20 AI reviews</strong> based on typical usage.
+            New accounts receive <strong>5 one-time AI review credits</strong>.
+            Credits are applied automatically when you use AI Review.
           </p>
           <p>
-            After trial credits are used, AI features move to a paid plan to
-            support API costs and server maintenance.
+            Review costs <strong>£12/month</strong> and includes 100 credits per
+            billing period. Credits reset at renewal and do not roll over.
           </p>
-          <p>All non-AI features remain free forever.</p>
+          <p>Free access includes Study Spots and basic hand-history tools.</p>
+          <p>Coach is separate paid early access because it uses substantial AI resources. Request pricing from qacopilotdev@gmail.com through the Coach page.</p>
           <p>Thank You for trying out the PlaybackPoker service!</p>
           <p>-- Trev</p>
         </div>
@@ -528,10 +529,12 @@ function SignedInShell() {
   const [entitlementsError, setEntitlementsError] = useState("");
   const [billingActionStatus, setBillingActionStatus] = useState("");
   const [billingActionLoading, setBillingActionLoading] = useState("");
+  const [creditMenuOpen, setCreditMenuOpen] = useState(false);
   const [trialInfoOpen, setTrialInfoOpen] = useState(false);
   const [disclaimerOpen, setDisclaimerOpen] = useState(false);
   const [mobileUtilityOpen, setMobileUtilityOpen] = useState(false);
   const mobileUtilityToggleRef = useRef(null);
+  const creditMenuRef = useRef(null);
 
   useEffect(() => {
     document.body.classList.toggle("tournament-review-route", isTournamentReview);
@@ -564,7 +567,23 @@ function SignedInShell() {
 
   useEffect(() => {
     setMobileUtilityOpen(false);
+    setCreditMenuOpen(false);
   }, [routePath]);
+
+  useEffect(() => {
+    if (!creditMenuOpen) return undefined;
+    const closeMenu = (event) => {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      if (event.type === "pointerdown" && creditMenuRef.current?.contains(event.target)) return;
+      setCreditMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    document.addEventListener("keydown", closeMenu);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenu);
+      document.removeEventListener("keydown", closeMenu);
+    };
+  }, [creditMenuOpen]);
 
   useEffect(() => {
     if (routePath === "/") {
@@ -635,9 +654,8 @@ function SignedInShell() {
       }
       window.location.assign(url);
     } catch (error) {
-      setBillingActionStatus(
-        error?.message || "Failed to start upgrade checkout.",
-      );
+      const message = String(error?.message || "");
+      setBillingActionStatus(message || "Failed to open Review checkout.");
     } finally {
       setBillingActionLoading("");
     }
@@ -683,28 +701,32 @@ function SignedInShell() {
 
   useEffect(() => {
     const handleTrialTokenUpdate = (event) => {
-      const nextRemaining = Number(event?.detail?.remainingTokens);
+      const nextRemaining = Number(event?.detail?.remainingCredits);
       if (!Number.isFinite(nextRemaining) || nextRemaining < 0) return;
       setEntitlements((previous) => {
         if (!previous || typeof previous !== "object") return previous;
         const billing = previous.billing || {};
-        const trial = billing.trial || {};
+        const bucket = billing.hasActiveSubscription ? "paid" : "trial";
+        const credits = billing.credits || {};
         return {
           ...previous,
           billing: {
             ...billing,
-            trial: {
-              ...trial,
-              remainingTokens: nextRemaining,
+            credits: {
+              ...credits,
+              [bucket]: {
+                ...(credits[bucket] || {}),
+                remaining: nextRemaining,
+              },
             },
           },
         };
       });
     };
-    window.addEventListener(TRIAL_TOKENS_UPDATED_EVENT, handleTrialTokenUpdate);
+    window.addEventListener(REVIEW_CREDITS_UPDATED_EVENT, handleTrialTokenUpdate);
     return () => {
       window.removeEventListener(
-        TRIAL_TOKENS_UPDATED_EVENT,
+        REVIEW_CREDITS_UPDATED_EVENT,
         handleTrialTokenUpdate,
       );
     };
@@ -750,9 +772,8 @@ function SignedInShell() {
   const hasActiveSubscription = Boolean(
     entitlements?.billing?.hasActiveSubscription,
   );
-  const trialRemainingTokens = Number(
-    entitlements?.billing?.trial?.remainingTokens || 0,
-  );
+  const reviewCreditsRemaining = getAvailableReviewCredits(entitlements?.billing);
+  const hasUnlimitedReview = Boolean(entitlements?.billing?.unlimited);
   const SectionComponent = currentSection.component;
 
   useEffect(() => {
@@ -774,7 +795,7 @@ function SignedInShell() {
         title: "Poker Coach | Playback Poker",
         description: coachEnabled
           ? "Use Playback Poker's live decision coach and replay analysis tools."
-          : "Personalised ongoing poker analysis and study guidance, coming later to Playback Poker.",
+          : "Request paid early access to Playback Poker Coach. Contact us for pricing and an agreed AI usage allowance.",
         path: "/tools/coach",
       });
       return;
@@ -908,49 +929,59 @@ function SignedInShell() {
                   Live stream
                 </a>
               ) : null}
-              {entitlementsStatus === "ready" && !hasActiveSubscription ? (
-                <button
-                  type="button"
-                  className="top-nav-status"
-                  onClick={handleOpenTrialInfo}
-                  title="About trial AI credits"
-                >
-                  <span className="top-nav-status-label">Trial</span>
-                  <span className="top-nav-status-value">
-                    {Number.isFinite(trialRemainingTokens)
-                      ? trialRemainingTokens.toLocaleString()
-                      : "0"}
-                  </span>
-                </button>
+              {entitlementsStatus === "ready" ? (
+                <div className="review-credit-menu" ref={creditMenuRef}>
+                  <button
+                    type="button"
+                    className="top-nav-status review-credit-menu-trigger"
+                    onClick={() => setCreditMenuOpen((open) => !open)}
+                    aria-expanded={creditMenuOpen}
+                    aria-haspopup="menu"
+                    title="Review credits and access"
+                  >
+                    <span className="top-nav-status-label">Credits</span>
+                    <span className="top-nav-status-value">
+                      {hasUnlimitedReview ? "Unlimited" : reviewCreditsRemaining.toLocaleString()}
+                    </span>
+                    <span className="review-credit-menu-chevron" aria-hidden="true">⌄</span>
+                  </button>
+                  {creditMenuOpen ? (
+                    <div className="review-credit-popover" role="menu">
+                      <div className="review-credit-popover-balance">
+                        <span>AI Review credits</span>
+                        <strong>{hasUnlimitedReview ? "Unlimited" : reviewCreditsRemaining.toLocaleString()}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="review-credit-popover-link"
+                        onClick={() => {
+                          setCreditMenuOpen(false);
+                          handleOpenTrialInfo();
+                        }}
+                      >
+                        How credits work
+                      </button>
+                      {!hasUnlimitedReview ? (
+                        <button
+                          type="button"
+                          className="review-credit-popover-action"
+                          onClick={hasActiveSubscription ? openBillingPortal : openBillingCheckout}
+                          disabled={Boolean(billingActionLoading)}
+                        >
+                          {billingActionLoading
+                            ? "Opening…"
+                            : hasActiveSubscription
+                              ? "Manage or upgrade plan"
+                              : "Unlock AI Review · £12/month"}
+                        </button>
+                      ) : null}
+                      {billingActionStatus ? (
+                        <p className="review-credit-popover-message" role="status">{billingActionStatus}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
-              <button
-                type="button"
-                className="top-nav-link top-nav-link--cta"
-                onClick={
-                  hasActiveSubscription
-                    ? openBillingPortal
-                    : openBillingCheckout
-                }
-                disabled={Boolean(billingActionLoading)}
-                title={
-                  hasActiveSubscription
-                    ? "Manage your PlaybackPoker subscription"
-                    : "Upgrade to unlock ongoing AI reviews"
-                }
-              >
-                {billingActionLoading === "checkout"
-                  ? "Opening checkout..."
-                  : billingActionLoading === "portal"
-                    ? "Opening portal..."
-                    : hasActiveSubscription
-                      ? "Manage plan"
-                      : "Upgrade AI"}
-                {!hasActiveSubscription ? (
-                  <span className="top-nav-cta-crown" aria-hidden="true">
-                    {"\u265B"}
-                  </span>
-                ) : null}
-              </button>
               <div className="top-nav-account">
                 <UserButton />
               </div>
@@ -1000,7 +1031,7 @@ function SignedInShell() {
                   </span>
                 </a>
               ) : null}
-              {entitlementsStatus === "ready" && !hasActiveSubscription ? (
+              {entitlementsStatus === "ready" ? (
                 <button
                   type="button"
                   className="mobile-utility-item mobile-utility-item--status"
@@ -1009,11 +1040,9 @@ function SignedInShell() {
                     handleOpenTrialInfo();
                   }}
                 >
-                  <span className="mobile-utility-label">Trial credits</span>
+                  <span className="mobile-utility-label">Review credits</span>
                   <span className="mobile-utility-value">
-                    {Number.isFinite(trialRemainingTokens)
-                      ? trialRemainingTokens.toLocaleString()
-                      : "0"}
+                    {hasUnlimitedReview ? "Unlimited" : reviewCreditsRemaining.toLocaleString()}
                   </span>
                 </button>
               ) : null}
@@ -1028,7 +1057,7 @@ function SignedInShell() {
                 disabled={Boolean(billingActionLoading)}
               >
                 <span className="mobile-utility-label">
-                  {hasActiveSubscription ? "Manage plan" : "Upgrade AI"}
+                  {hasActiveSubscription ? "Manage or upgrade plan" : "Unlock AI Review · £12/month"}
                 </span>
                 {!hasActiveSubscription ? (
                   <span className="mobile-utility-value" aria-hidden="true">
@@ -1043,11 +1072,6 @@ function SignedInShell() {
             </div>
           ) : null}
         </div>
-        {entitlementsStatus === "ready" && billingActionStatus ? (
-          <div className="auth-bar-meta">
-            <span>{billingActionStatus}</span>
-          </div>
-        ) : null}
       </div>
 
       <ServerWakeGate>

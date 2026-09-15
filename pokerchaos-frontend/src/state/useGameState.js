@@ -139,6 +139,8 @@ function loadInitialState() {
     if (typeof localStorage !== "undefined") {
       const savedStyle = localStorage.getItem("pcc_style");
       if (savedStyle) base.style = savedStyle;
+      const savedChaosMode = localStorage.getItem("pcc_chaos_mode");
+      if (savedChaosMode !== null) base.chaosMode = savedChaosMode === "true";
       const savedPersona = localStorage.getItem("pcc_persona");
       if (savedPersona) {
         base.persona = savedPersona;
@@ -242,6 +244,7 @@ export function prepareRestoredGameState(snapshot) {
   return {
     ...initialState,
     ...restored,
+    chaosMode: restored.chaosMode === true,
     tournamentStage: normalizeTournamentStage(restored.tournamentStage),
     bountyMode:
       restored.gameType === "cash"
@@ -270,6 +273,7 @@ function persistRestoredFields(state) {
   try {
     if (typeof localStorage === "undefined") return;
     localStorage.setItem("pcc_style", String(state.style || ""));
+    localStorage.setItem("pcc_chaos_mode", String(Boolean(state.chaosMode)));
     localStorage.setItem("pcc_persona", String(state.persona || ""));
     localStorage.setItem("pcc_model", String(state.model || ""));
     localStorage.setItem("pcc_hero_cards", JSON.stringify(state.heroCards || {}));
@@ -359,6 +363,13 @@ export function useGameState() {
         }
       }));
       return;
+    }
+    if (key === "chaosMode") {
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("pcc_chaos_mode", String(Boolean(value)));
+        }
+      } catch {}
     }
     if (key === "villainStackBB") {
       try {
@@ -598,6 +609,7 @@ export function useGameState() {
           heroSeat: nextHeroSeat,
           tableSize: s.tableSize,
           style: s.style,
+          chaosMode: Boolean(s.chaosMode),
           openSize: s.openSize,
           persona: s.persona,
           heroRelativePosition: "auto",
@@ -687,6 +699,7 @@ export function useGameState() {
           ...initialState,
           tableSize: s.tableSize,
           style: s.style,
+          chaosMode: Boolean(s.chaosMode),
           openSize: s.openSize,
           persona: s.persona,
           heroRelativePosition: "auto",

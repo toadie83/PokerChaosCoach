@@ -27,6 +27,7 @@ import {
 import { getChaosMood } from "./state/chaosMeter.js";
 import { computeSizingNote } from "./lib/sizing.js";
 import { buildCoachStateReceipt } from "./lib/coachStateReceipt.js";
+import { buildCoachRefreshState } from "./lib/coachRefresh.js";
 import { getQuickOpenSnapshot } from "./lib/quickOpenRange.js";
 import {
   clearStreetCoachHistoryFrom,
@@ -50,6 +51,7 @@ import {
   buildDecisionNode,
   buildStackState,
   assumedHeroEventFromRecommendation,
+  decisionKeyForAssumedAction,
 } from "./state/decisionState.js";
 import {
   COACH_MODEL_OPTIONS,
@@ -119,6 +121,10 @@ export default function App() {
   } = useGameState();
   const [coach, setCoach] = useState(null);
   const [coachByStreet, setCoachByStreet] = useState({});
+  const [coachRefreshRevision, setCoachRefreshRevision] = useState(0);
+  const coachDecisionStateRef = useRef(null);
+  const pendingCoachRefreshStateRef = useRef(null);
+  const handledCoachRefreshRevisionRef = useRef(0);
   const [recentHands, setRecentHands] = useState(loadRecentHands);
   const [loading, setLoading] = useState(false);
   const [cardSelectorConfig, setCardSelectorConfig] = useState(null);
@@ -770,10 +776,29 @@ export default function App() {
     archiveCoachHand(state, coachByStreet, coach);
   }, [state, coachByStreet, coach, archiveCoachHand]);
 
+  const handleCoachRefresh = useCallback(() => {
+    if (loading) return;
+    const refreshState = buildCoachRefreshState(
+      coachDecisionStateRef.current,
+      state,
+    );
+    if (!refreshState) return;
+    pendingCoachRefreshStateRef.current = refreshState;
+    setCoachRefreshRevision((revision) => revision + 1);
+  }, [loading, state]);
+
   useEffect(() => {
     let isCancelled = false;
     async function run() {
-      if (!state.lastEventAt || !state.lastEvent) return;
+      const isExplicitRefresh =
+        coachRefreshRevision > handledCoachRefreshRevisionRef.current;
+      if (isExplicitRefresh) {
+        handledCoachRefreshRevisionRef.current = coachRefreshRevision;
+      }
+      const requestState = isExplicitRefresh
+        ? pendingCoachRefreshStateRef.current
+        : state;
+      if (!requestState?.lastEventAt || !requestState?.lastEvent) return;
       const skip = new Set([
         "next_street",
         "reset_hand",
@@ -793,15 +818,15 @@ export default function App() {
         "opp_all_fold",
         "opp_check_back",
       ]);
-      if (skip.has(state.lastEvent)) return;
+      if (!isExplicitRefresh && skip.has(requestState.lastEvent)) return;
 
-      const personaCode = state.persona || "chaos_shark";
+      const personaCode = requestState.persona || "chaos_shark";
       const needsCards =
         (personaCode === "replay_analyst" ||
           personaCode === "range_professor" ||
           personaCode === "short_stack_ninja" ||
           personaCode === "cash_game_crusher") &&
-        (!state.heroCards?.card1 || !state.heroCards?.card2);
+        (!requestState.heroCards?.card1 || !requestState.heroCards?.card2);
       if (needsCards) {
         let prompt = "Select your starting hand for coach guidance.";
         if (personaCode === "short_stack_ninja") {
@@ -822,7 +847,7 @@ export default function App() {
             assumptions: ["hero_cards_missing"],
             alternative_action: null,
             alternative_sizing: null,
-            legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
+            legal_actions: Array.isArray(requestState.legalActions) ? requestState.legalActions : [],
           });
           setLoading(false);
         }
@@ -830,7 +855,7 @@ export default function App() {
       }
 
       if (personaCode === "short_stack_ninja") {
-        const heroBB = Number(state.heroStackBB ?? 0);
+        const heroBB = Number(requestState.heroStackBB ?? 0);
         if (!heroBB || heroBB <= 0) {
           if (!isCancelled) {
             setCoach({
@@ -845,7 +870,7 @@ export default function App() {
               assumptions: ["effective_stack_missing"],
               alternative_action: null,
               alternative_sizing: null,
-              legal_actions: Array.isArray(state.legalActions) ? state.legalActions : [],
+              legal_actions: Array.isArray(requestState.legalActions) ? requestState.legalActions : [],
             });
             setLoading(false);
           }
@@ -855,7 +880,8 @@ export default function App() {
 
       setLoading(true);
       try {
-        const payload = summarizeForAI(state);
+        coachDecisionStateRef.current = cloneDecisionValue(requestState);
+        const payload = summarizeForAI(requestState);
         const decisionReceipt = buildCoachStateReceipt(payload);
         const res = await requestChaosLine(payload);
         if (!isCancelled) {
@@ -865,7 +891,7 @@ export default function App() {
           };
           const assumedHeroEvent = assumedHeroEventFromRecommendation(
             responseWithReceipt,
-            state,
+            requestState,
           );
           const acceptedRecommendation =
             assumedHeroEvent?.recommendation || responseWithReceipt;
@@ -873,31 +899,40 @@ export default function App() {
           setCoachByStreet((current) =>
             rememberStreetCoach(
               current,
-              state.street || "preflop",
+              requestState.street || "preflop",
               acceptedRecommendation,
               {
-                persona: state.persona,
-                model: state.model,
+                persona: requestState.persona,
+                model: requestState.model,
                 tournamentStage:
-                  state.gameType === "tournament" &&
-                  state.persona !== "cash_game_crusher"
-                    ? state.tournamentStage || "auto"
+                  requestState.gameType === "tournament" &&
+                  requestState.persona !== "cash_game_crusher"
+                    ? requestState.tournamentStage || "auto"
                     : "",
                 potOdds: payload.context?.decisionNode?.potOdds || null,
               },
             ),
           );
-          if (assumedHeroEvent) {
+          const currentDecisionStillOpen =
+            decisionKeyForAssumedAction(state) ===
+              decisionKeyForAssumedAction(requestState) &&
+            state.nextActor === "hero" &&
+            !state.handComplete;
+          if (assumedHeroEvent && (!isExplicitRefresh || currentDecisionStillOpen)) {
             dispatch(assumedHeroEvent);
+          } else if (isExplicitRefresh) {
+            setField("lastRecommendation", acceptedRecommendation);
           }
-          try {
-            const inc = /bet|raise|jam|3-bet|4-bet|open/i.test(
-              res?.hero_action || "",
-            )
-              ? 1
-              : -0.5;
-            setField("momentum", Math.max(0, (state.momentum || 0) + inc));
-          } catch {}
+          if (!isExplicitRefresh) {
+            try {
+              const inc = /bet|raise|jam|3-bet|4-bet|open/i.test(
+                res?.hero_action || "",
+              )
+                ? 1
+                : -0.5;
+              setField("momentum", Math.max(0, (state.momentum || 0) + inc));
+            } catch {}
+          }
         }
       } catch (e) {
         console.error("[Coach] Request failed", e);
@@ -919,10 +954,12 @@ export default function App() {
     state.lastEventAt,
     state.lastEvent,
     state.persona,
+    state.chaosMode,
     state.heroCards?.card1,
     state.heroCards?.card2,
     state.heroStackBB,
     state.villainStackBB,
+    coachRefreshRevision,
   ]);
 
   useEffect(() => {
@@ -948,6 +985,7 @@ export default function App() {
   );
 
   const persona = state.persona || "replay_analyst";
+  const chaosMode = Boolean(state.chaosMode);
   const stakeTier = state.stakeTier || "unknown";
   const tournamentStage = normalizeTournamentStage(state.tournamentStage);
   const tournamentStageMeta = getTournamentStageMeta(tournamentStage);
@@ -1599,7 +1637,10 @@ export default function App() {
   const riverDisplay = formatCard(state.board?.river);
   return (
     <>
-      <div className="wrap coach-wrap wrap-compact">
+      <div
+        className="wrap coach-wrap wrap-compact"
+        data-chaos-mode={chaosMode ? "true" : "false"}
+      >
         <div className="panel">
           <div className="panel-heading">
             <div className="panel-heading-actions">
@@ -1675,6 +1716,16 @@ export default function App() {
                   <span className="persona-avatar" aria-hidden>
                     {personaAvatar}
                   </span>
+                  {chaosMode ? (
+                    <span
+                      className="chaos-mode-indicator"
+                      role="status"
+                      aria-label="Chaos mode active"
+                      title="Chaos mode is biasing this persona toward wider, reasoned aggression"
+                    >
+                      Chaos
+                    </span>
+                  ) : null}
                   <select
                     aria-label="Persona"
                     value={persona}
@@ -1967,6 +2018,11 @@ export default function App() {
           <DecisionCard
             coach={coach}
             isLoading={loading}
+            canRefresh={Boolean(coach && coachDecisionStateRef.current)}
+            onRefresh={handleCoachRefresh}
+            refreshLabel={String(coach?.flavor_text || "").startsWith("(Error)")
+              ? "Retry Coach"
+              : "Refresh Coach with current settings"}
             handComplete={state.handComplete}
             canAdvanceStreet={state.nextActor === "await_street"}
             onNextStreet={() => onAction("next_street")}
@@ -2189,6 +2245,27 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="drawer-section">
+                <h3>Coaching style</h3>
+                <div className="drawer-row">
+                  <span className="pill-label">Strategy mode</span>
+                  <button
+                    type="button"
+                    className={`pill-toggle chaos-mode-toggle ${chaosMode ? "active" : ""}`}
+                    onClick={() => setField("chaosMode", !chaosMode)}
+                    aria-pressed={chaosMode}
+                    title="Bias this persona toward wider, reasoned aggression"
+                  >
+                    Chaos mode {chaosMode ? "on" : "off"}
+                  </button>
+                  <span className="drawer-hint">
+                    Keeps {personaMeta.label}&apos;s expertise, but widens sound
+                    opens and 3-bets and hunts credible postflop bluffs. Refresh
+                    an existing recommendation to apply the change immediately.
+                  </span>
+                </div>
+              </div>
+
               {/* {personaNeedsCards ? (
                 <div className="drawer-section">
                   <h3>Card tools</h3>
@@ -2263,7 +2340,7 @@ export default function App() {
         actions={actions}
         onAction={onAction}
         actionStageLabel={actionStageLabel}
-        personaLabel={personaMeta?.label}
+        personaLabel={`${personaMeta?.label || "Coach"}${chaosMode ? " · Chaos" : ""}`}
         seats={seats}
         onHeroSeatChange={(seat) => setField("heroSeat", seat)}
         villainType={villainType}

@@ -26,7 +26,9 @@ const ABOUT_SLIDES = [
     points: [
       "Look for the AI marker or AI Review button on supported views.",
       "Our poker-tuned AI can analyze your decisions and suggest improvements.",
-      "AI analysis is available with a low-cost subscription to cover model usage.",
+      "AI review starts with 5 free credits. Review costs £12/month and includes 100 credits per billing period.",
+      "Credits are applied automatically when you use AI Review.",
+      "Coach is available by early-access request, priced separately to reflect its substantial AI usage. Contact qacopilotdev@gmail.com for pricing and an agreed allowance.",
     ],
   },
 ];

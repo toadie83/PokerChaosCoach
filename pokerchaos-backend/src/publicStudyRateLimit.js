@@ -1,5 +1,7 @@
 function requestKey(req) {
-  return String(req?.ip || req?.socket?.remoteAddress || "unknown");
+  const userId = String(req?.auth?.userId || "").trim();
+  if (userId) return `user:${userId}`;
+  return `ip:${String(req?.ip || req?.socket?.remoteAddress || "unknown")}`;
 }
 
 export function createPublicStudyRateLimiter({
@@ -12,6 +14,7 @@ export function createPublicStudyRateLimiter({
   const safeWindowMs = Math.max(1000, Number(windowMs) || 24 * 60 * 60 * 1000);
 
   return function publicStudyRateLimit(req, res, next) {
+    if (req?.entitlements?.admin === true) return next();
     const timestamp = now();
     const key = requestKey(req);
     const current = buckets.get(key);
@@ -31,7 +34,7 @@ export function createPublicStudyRateLimiter({
       const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - timestamp) / 1000));
       res.set?.("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: "The anonymous analysis limit has been reached. Register for free Study Spots to continue.",
+        error: "The free Study Spots analysis limit has been reached. Please try again after it resets.",
         code: "FREE_ANALYSIS_LIMIT_REACHED",
         retryAfter,
       });

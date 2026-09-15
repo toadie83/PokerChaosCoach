@@ -27,6 +27,7 @@ export function getCapabilityState(entitlements, capabilityKey) {
       return CAPABILITY_STATES.ACTIVE;
     }
     if (entitlements?.features?.review) return CAPABILITY_STATES.TRIAL;
+    return CAPABILITY_STATES.ENABLED;
   }
   return CAPABILITY_STATES.LOCKED;
 }
@@ -38,6 +39,7 @@ export function canAccessCapability(entitlements, capabilityKey) {
   }
   if (capabilityKey === CAPABILITY_KEYS.TOURNAMENT_REVIEW) {
     return (
+      state === CAPABILITY_STATES.ENABLED ||
       state === CAPABILITY_STATES.TRIAL || state === CAPABILITY_STATES.ACTIVE
     );
   }
@@ -47,9 +49,13 @@ export function canAccessCapability(entitlements, capabilityKey) {
 export function getCapabilityStatusLabel(entitlements, capabilityKey) {
   const state = getCapabilityState(entitlements, capabilityKey);
   if (capabilityKey === CAPABILITY_KEYS.STUDY_SPOTS) return "Free";
+  if (
+    capabilityKey === CAPABILITY_KEYS.TOURNAMENT_REVIEW &&
+    state === CAPABILITY_STATES.ENABLED
+  ) return "Free tools";
   if (state === CAPABILITY_STATES.ACTIVE) return "Included";
   if (state === CAPABILITY_STATES.TRIAL) return "Trial";
-  if (state === CAPABILITY_STATES.DISABLED) return "Coming later";
+  if (capabilityKey === CAPABILITY_KEYS.COACH) return "Paid early access";
+  if (state === CAPABILITY_STATES.DISABLED) return "Unavailable";
   return "Locked";
 }
-

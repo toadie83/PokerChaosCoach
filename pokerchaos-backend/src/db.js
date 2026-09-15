@@ -640,6 +640,36 @@ export async function initDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS review_credit_accounts (
+      user_id TEXT PRIMARY KEY,
+      trial_granted INTEGER NOT NULL DEFAULT 0,
+      trial_used INTEGER NOT NULL DEFAULT 0,
+      paid_period_start TIMESTAMPTZ,
+      paid_period_end TIMESTAMPTZ,
+      paid_granted INTEGER NOT NULL DEFAULT 0,
+      paid_used INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE TABLE IF NOT EXISTS review_credit_grants (
+      source_event_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      credits INTEGER NOT NULL,
+      period_start TIMESTAMPTZ,
+      period_end TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await resolvedPool.query(`
+    CREATE INDEX IF NOT EXISTS review_credit_grants_user_idx
+    ON review_credit_grants (user_id, created_at DESC);
+  `);
 }
 
 function toRowPayload(row) {
@@ -1949,10 +1979,7 @@ export async function consumeAiTrialTokens(userId, consumedTokens) {
 }
 
 export async function getUserBillingAiAccess(userId) {
-  const [subscription, trial] = await Promise.all([
-    getBillingSubscriptionByUserId(userId),
-    getAiTrialCredits(userId),
-  ]);
+  const subscription = await getBillingSubscriptionByUserId(userId);
   const activeSubscriptionStatuses = new Set(["active", "trialing"]);
   const status = String(subscription?.status || "").trim().toLowerCase();
   const hasActiveSubscription = activeSubscriptionStatuses.has(status);
@@ -1960,9 +1987,180 @@ export async function getUserBillingAiAccess(userId) {
     subscription: subscription || null,
     hasActiveSubscription,
     subscriptionStatus: status || null,
-    trial,
-    reviewAiGranted: hasActiveSubscription || (trial?.remainingTokens || 0) > 0,
+    trial: null,
+    reviewAiGranted: hasActiveSubscription,
   };
+}
+
+function toReviewCreditPayload(row) {
+  if (!row) return null;
+  const trialGranted = parseNumericDbValue(row.trial_granted);
+  const trialUsed = parseNumericDbValue(row.trial_used);
+  const paidGranted = parseNumericDbValue(row.paid_granted);
+  const paidUsed = parseNumericDbValue(row.paid_used);
+  return {
+    userId: row.user_id,
+    trial: {
+      granted: trialGranted,
+      used: trialUsed,
+      remaining: Math.max(0, trialGranted - trialUsed),
+    },
+    paid: {
+      granted: paidGranted,
+      used: paidUsed,
+      remaining: Math.max(0, paidGranted - paidUsed),
+      periodStart: row.paid_period_start || null,
+      periodEnd: row.paid_period_end || null,
+    },
+    updatedAt: row.updated_at || null,
+  };
+}
+
+export async function ensureReviewCreditAccount({
+  userId,
+  trialGrant,
+  activeSubscription = null,
+  paidPeriodGrant,
+}) {
+  const resolvedPool = getRequiredPool();
+  const safeTrialGrant = toIntOrZero(trialGrant);
+  const safePaidGrant = toIntOrZero(paidPeriodGrant);
+  const periodStart = activeSubscription?.currentPeriodStart || null;
+  const periodEnd = activeSubscription?.currentPeriodEnd || null;
+  await resolvedPool.query(
+    `
+      INSERT INTO review_credit_accounts (user_id, trial_granted)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id) DO NOTHING;
+    `,
+    [userId, safeTrialGrant]
+  );
+  if (periodStart && periodEnd) {
+    await resolvedPool.query(
+      `
+        UPDATE review_credit_accounts
+        SET
+          paid_period_start = $2::timestamptz,
+          paid_period_end = $3::timestamptz,
+          paid_granted = CASE
+            WHEN paid_period_start IS DISTINCT FROM $2::timestamptz THEN $4
+            ELSE GREATEST(paid_granted, $4)
+          END,
+          paid_used = CASE
+            WHEN paid_period_start IS DISTINCT FROM $2::timestamptz THEN 0
+            ELSE paid_used
+          END,
+          updated_at = NOW()
+        WHERE user_id = $1;
+      `,
+      [userId, periodStart, periodEnd, safePaidGrant]
+    );
+  }
+  const result = await resolvedPool.query(
+    `SELECT * FROM review_credit_accounts WHERE user_id = $1 LIMIT 1;`,
+    [userId]
+  );
+  return toReviewCreditPayload(result.rows[0] || null);
+}
+
+export async function reserveReviewCredits({
+  userId,
+  credits,
+  bucket,
+}) {
+  const resolvedPool = getRequiredPool();
+  const safeCredits = toIntOrZero(credits);
+  if (safeCredits <= 0) return null;
+  const isPaid = bucket === "paid";
+  const usedColumn = isPaid ? "paid_used" : "trial_used";
+  const grantedColumn = isPaid ? "paid_granted" : "trial_granted";
+  const result = await resolvedPool.query(
+    `
+      UPDATE review_credit_accounts
+      SET ${usedColumn} = ${usedColumn} + $2, updated_at = NOW()
+      WHERE user_id = $1 AND ${grantedColumn} - ${usedColumn} >= $2
+      RETURNING *;
+    `,
+    [userId, safeCredits]
+  );
+  return toReviewCreditPayload(result.rows[0] || null);
+}
+
+export async function releaseReviewCredits({ userId, credits, bucket }) {
+  const resolvedPool = getRequiredPool();
+  const safeCredits = toIntOrZero(credits);
+  if (safeCredits <= 0) return null;
+  const usedColumn = bucket === "paid" ? "paid_used" : "trial_used";
+  const result = await resolvedPool.query(
+    `
+      UPDATE review_credit_accounts
+      SET ${usedColumn} = GREATEST(0, ${usedColumn} - $2), updated_at = NOW()
+      WHERE user_id = $1
+      RETURNING *;
+    `,
+    [userId, safeCredits]
+  );
+  return toReviewCreditPayload(result.rows[0] || null);
+}
+
+export async function grantReviewTopupCredits({
+  userId,
+  credits,
+  sourceEventId,
+  activeSubscription,
+  paidPeriodGrant,
+}) {
+  await ensureReviewCreditAccount({
+    userId,
+    trialGrant: 0,
+    activeSubscription,
+    paidPeriodGrant,
+  });
+  const resolvedPool = getRequiredPool();
+  const client = await resolvedPool.connect();
+  try {
+    await client.query("BEGIN");
+    const inserted = await client.query(
+      `
+        INSERT INTO review_credit_grants (
+          source_event_id, user_id, credits, period_start, period_end
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (source_event_id) DO NOTHING
+        RETURNING source_event_id;
+      `,
+      [
+        sourceEventId,
+        userId,
+        toIntOrZero(credits),
+        activeSubscription?.currentPeriodStart || null,
+        activeSubscription?.currentPeriodEnd || null,
+      ]
+    );
+    if (inserted.rowCount > 0) {
+      await client.query(
+        `
+          UPDATE review_credit_accounts
+          SET paid_granted = paid_granted + $2, updated_at = NOW()
+          WHERE user_id = $1;
+        `,
+        [userId, toIntOrZero(credits)]
+      );
+    }
+    const result = await client.query(
+      `SELECT * FROM review_credit_accounts WHERE user_id = $1 LIMIT 1;`,
+      [userId]
+    );
+    await client.query("COMMIT");
+    return {
+      credits: toReviewCreditPayload(result.rows[0] || null),
+      granted: inserted.rowCount > 0,
+    };
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function toStudySpotPayload(row) {

@@ -303,7 +303,7 @@ export const TOOL_COMPARISON_ROWS = [
   { label: "Detailed hand analysis", studySpots: "-", review: "Yes" },
   { label: "Tournament-wide patterns", studySpots: "-", review: "Yes" },
   { label: "Decision-by-decision review", studySpots: "-", review: "Yes" },
-  { label: "Access", studySpots: "Free", review: "Tier 1" },
+  { label: "Access", studySpots: "Free", review: "£12/month · 100 credits" },
 ];
 
 export function selectHomepageLearningResources(resources, limit = 4) {

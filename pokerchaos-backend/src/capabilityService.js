@@ -15,6 +15,7 @@ export const CAPABILITY_STATES = Object.freeze({
 const CAPABILITY_ACCESS_STATES = Object.freeze({
   [CAPABILITY_KEYS.STUDY_SPOTS]: new Set([CAPABILITY_STATES.ENABLED]),
   [CAPABILITY_KEYS.TOURNAMENT_REVIEW]: new Set([
+    CAPABILITY_STATES.ENABLED,
     CAPABILITY_STATES.TRIAL,
     CAPABILITY_STATES.ACTIVE,
   ]),
@@ -27,7 +28,7 @@ export function resolveCapabilities(entitlements = {}) {
     ? CAPABILITY_STATES.ACTIVE
     : entitlements.reviewAi
       ? CAPABILITY_STATES.TRIAL
-      : CAPABILITY_STATES.LOCKED;
+      : CAPABILITY_STATES.ENABLED;
   const coach =
     entitlements.coach || entitlements.admin || entitlements.developer
       ? CAPABILITY_STATES.ACTIVE
@@ -47,6 +48,10 @@ export function canAccessCapability(capabilities, capabilityKey) {
   return allowedStates.has(capabilities?.[capabilityKey]);
 }
 
+export function hasUnlimitedAiAccess(entitlements = {}) {
+  return entitlements?.admin === true;
+}
+
 export function getCapabilityDenial(capabilities, capabilityKey) {
   const state = capabilities?.[capabilityKey] || CAPABILITY_STATES.LOCKED;
   return {
@@ -56,7 +61,9 @@ export function getCapabilityDenial(capabilities, capabilityKey) {
         ? "CAPABILITY_DISABLED"
         : "CAPABILITY_LOCKED",
     error:
-      state === CAPABILITY_STATES.DISABLED
+      capabilityKey === CAPABILITY_KEYS.COACH
+        ? "Coach requires approved paid early access. Email qacopilotdev@gmail.com to request pricing and an agreed usage allowance. Coach uses substantial AI token resources and is priced separately from Tournament Review."
+        : state === CAPABILITY_STATES.DISABLED
         ? "This capability is not available."
         : "This capability is not enabled for this account.",
     requiredCapability: capabilityKey,

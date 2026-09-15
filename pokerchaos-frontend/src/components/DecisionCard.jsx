@@ -30,6 +30,9 @@ export default function DecisionCard({
   onEditCards,
   onEditStacks,
   onUndoAction,
+  canRefresh = false,
+  onRefresh,
+  refreshLabel = "Refresh Coach",
 }) {
   const [expanded, setExpanded] = useState(false);
   const action = coach?.hero_action ? String(coach.hero_action).toUpperCase() : null;
@@ -105,6 +108,18 @@ export default function DecisionCard({
             </div>
           ) : null}
           <div className="decision-cta">
+            {canRefresh ? (
+              <button
+                type="button"
+                className="decision-refresh"
+                onClick={onRefresh}
+                disabled={isLoading || !onRefresh}
+                title={refreshLabel}
+                aria-label={refreshLabel}
+              >
+                ↻
+              </button>
+            ) : null}
             {handComplete ? (
               <button type="button" className="primary" onClick={onResetHand}>
                 Start Next Hand

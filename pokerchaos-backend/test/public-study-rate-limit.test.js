@@ -62,3 +62,12 @@ test("public study rate limiting ignores a caller-supplied forwarded address", (
   assert.equal(limited.statusCode, 429);
   assert.equal(limited.body.code, "FREE_ANALYSIS_LIMIT_REACHED");
 });
+
+test("server-resolved admins bypass free Study Spots rate limits", () => {
+  const limiter = createPublicStudyRateLimiter({ limit: 1 });
+  const req = { ip: "127.0.0.1", entitlements: { admin: true } };
+  let calls = 0;
+  limiter(req, responseRecorder(), () => { calls += 1; });
+  limiter(req, responseRecorder(), () => { calls += 1; });
+  assert.equal(calls, 2);
+});

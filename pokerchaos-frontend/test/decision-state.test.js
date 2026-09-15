@@ -14,6 +14,15 @@ test("tournament games default to the standard GG Poker ante", () => {
   assert.equal(initialState.anteBB, DEFAULT_TOURNAMENT_ANTE_BB);
   assert.equal(DEFAULT_TOURNAMENT_ANTE_BB, 0.15);
   assert.equal(initialState.bountyMode, "none");
+  assert.equal(initialState.chaosMode, false);
+});
+
+test("Chaos mode is sent to Coach and survives a new hand", () => {
+  const state = freshState({ chaosMode: true });
+  assert.equal(summarizeForAI(state).context.chaosMode, true);
+
+  const reset = step(state, "reset_hand");
+  assert.equal(reset.chaosMode, true);
 });
 import {
   assumedHeroEventFromRecommendation,
@@ -569,6 +578,114 @@ test("short opener stack does not hide deeper players yet to act", () => {
   );
   assert.ok(
     decision.missingInformation.includes("players_yet_to_act_stack_sizes"),
+  );
+});
+
+test("validated Vision stacks satisfy the players-behind decision evidence", () => {
+  const state = freshState({
+    street: "preflop",
+    heroSeat: "BTN",
+    opponentSeat: "CO",
+    heroCards: { card1: "Ah", card2: "Jc" },
+    heroStackBB: 50,
+    villainStackBB: 15,
+    decisionKind: "facing_open",
+    facingAction: {
+      type: "raise",
+      actorSeat: "CO",
+      amountBB: 2,
+      toAmountBB: 2,
+      callAmountBB: 2,
+      allIn: false,
+    },
+    legalActions: ["fold", "call", "3-bet", "jam"],
+    liveTrackerReceipt: {
+      street: "preflop",
+      strategicTableState: {
+        features: { playersYetToAct: ["SB", "BB"] },
+        opponents: [
+          {
+            position: "SB",
+            stackBehindBB: 12,
+            effectiveStackBB: 12,
+            stackBand: "reshove",
+            confidence: 0.96,
+            currentStackReconciled: true,
+          },
+          {
+            position: "BB",
+            stackBehindBB: 9,
+            effectiveStackBB: 9,
+            stackBand: "shove_fold",
+            confidence: 0.94,
+            currentStackReconciled: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const decision = buildDecisionNode(state);
+  assert.equal(decision.playersYetToActStacksKnown, true);
+  assert.deepEqual(decision.missingPlayersYetToActStackSeats, []);
+  assert.deepEqual(
+    decision.playersYetToActStackDetails.map(({ seat, stackBehindBB }) => ({
+      seat,
+      stackBehindBB,
+    })),
+    [
+      { seat: "SB", stackBehindBB: 12 },
+      { seat: "BB", stackBehindBB: 9 },
+    ],
+  );
+  assert.equal(
+    decision.missingInformation.includes("players_yet_to_act_stack_sizes"),
+    false,
+  );
+  assert.equal(decision.legalActions.includes("jam"), true);
+  assert.equal(decision.strategicRestrictions.length, 0);
+});
+
+test("a known retaliation stack behind retains the overjam guard without claiming it is unknown", () => {
+  const state = freshState({
+    street: "preflop",
+    heroSeat: "BTN",
+    opponentSeat: "CO",
+    heroCards: { card1: "Ah", card2: "Jc" },
+    heroStackBB: 50,
+    villainStackBB: 15,
+    decisionKind: "facing_open",
+    facingAction: {
+      type: "raise",
+      actorSeat: "CO",
+      amountBB: 2,
+      toAmountBB: 2,
+      callAmountBB: 2,
+      allIn: false,
+    },
+    legalActions: ["fold", "call", "3-bet", "jam"],
+    liveTrackerReceipt: {
+      street: "preflop",
+      strategicTableState: {
+        features: { playersYetToAct: ["SB", "BB"] },
+        opponents: [
+          { position: "SB", stackBehindBB: 42, effectiveStackBB: 42 },
+          { position: "BB", stackBehindBB: 11, effectiveStackBB: 11 },
+        ],
+      },
+    },
+  });
+
+  const decision = buildDecisionNode(state);
+  assert.equal(decision.playersYetToActStacksKnown, true);
+  assert.equal(decision.legalActions.includes("jam"), false);
+  assert.match(
+    decision.strategicRestrictions[0]?.reason || "",
+    /observed retaliation-capable stack/i,
+  );
+  assert.doesNotMatch(
+    decision.strategicRestrictions[0]?.reason || "",
+    /unknown stacks/i,
   );
 });
 

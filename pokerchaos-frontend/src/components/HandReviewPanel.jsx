@@ -22,6 +22,12 @@ import TournamentPerformanceChart from "./TournamentPerformanceChart.jsx";
 import ReviewOverview from "./review/ReviewOverview.jsx";
 import ReviewWelcome from "./review/ReviewWelcome.jsx";
 import { resolveHandBbResult } from "../lib/handResult.js";
+import {
+  getAvailableReviewCredits,
+  REVIEW_CREDITS_UPDATED_EVENT,
+  REVIEW_TOPUP_CREDITS,
+  REVIEW_TOPUP_PRICE,
+} from "../lib/reviewPricing.js";
 
 const CASH_NOTICE_DISMISS_KEY = "pokerchaos_cash_notice_dismissed";
 const MIN_VALID_TOURNAMENT_EPOCH = Date.UTC(2000, 0, 1);
@@ -3081,19 +3087,18 @@ function getErrorCode(error) {
 function isUpgradeRequiredError(error) {
   const code = getErrorCode(error);
   return (
-    code === "AI_TRIAL_TOKENS_EXHAUSTED" ||
-    code === "AI_TRIAL_TOKENS_INSUFFICIENT" ||
-    code === "AI_MONTHLY_TOKEN_LIMIT_REACHED"
+    code === "AI_MONTHLY_TOKEN_LIMIT_REACHED" ||
+    code === "REVIEW_CREDITS_INSUFFICIENT"
   );
 }
 
-function publishTrialTokenUpdate(remainingTokens) {
+function publishReviewCreditUpdate(reviewCredits) {
   if (typeof window === "undefined") return;
-  const numeric = Number(remainingTokens);
+  const numeric = Number(reviewCredits?.remaining);
   if (!Number.isFinite(numeric) || numeric < 0) return;
   window.dispatchEvent(
-    new CustomEvent("pcc:trial-tokens-updated", {
-      detail: { remainingTokens: numeric },
+    new CustomEvent(REVIEW_CREDITS_UPDATED_EVENT, {
+      detail: { remainingCredits: numeric },
     }),
   );
 }
@@ -3229,24 +3234,19 @@ export default function HandReviewPanel({ entitlements = null }) {
   };
 
   const canSubmit = historyText.trim().length > 0;
-  const hasActiveSubscription = Boolean(
-    billingStatus?.subscription?.status &&
-    String(billingStatus.subscription.status).toLowerCase() === "active",
-  );
-  const trialRemainingTokens = Number(
-    billingStatus?.trial?.remainingTokens || 0,
-  );
+  const hasActiveSubscription = Boolean(billingStatus?.hasActiveSubscription);
+  const reviewCreditsRemaining = getAvailableReviewCredits(billingStatus);
+  const hasUnlimitedReview = Boolean(billingStatus?.unlimited);
   const aiUpgradePromptMessage = useMemo(() => {
     if (aiAccessErrorCode === "AI_MONTHLY_TOKEN_LIMIT_REACHED") {
       return hasActiveSubscription
         ? "Your monthly AI token limit is reached. Manage your plan to continue."
         : "Your current AI limit is reached. Upgrade to continue AI reviews.";
     }
-    if (aiAccessErrorCode === "AI_TRIAL_TOKENS_INSUFFICIENT") {
-      return "This request is larger than your remaining trial credits. Upgrade to continue.";
-    }
-    if (aiAccessErrorCode === "AI_TRIAL_TOKENS_EXHAUSTED") {
-      return "Your free AI trial credits are used. Upgrade to continue AI reviews.";
+    if (aiAccessErrorCode === "REVIEW_CREDITS_INSUFFICIENT") {
+      return hasActiveSubscription
+        ? "You do not have enough Review credits remaining for this analysis."
+        : "Your 5 free Review credits are used. Unlock AI Review to continue.";
     }
     return "AI access is limited for this account. Upgrade or manage your plan to continue.";
   }, [aiAccessErrorCode, hasActiveSubscription]);
@@ -3327,6 +3327,22 @@ export default function HandReviewPanel({ entitlements = null }) {
       setBillingActionError(
         error?.message || "Failed to open billing subscription portal.",
       );
+    } finally {
+      setBillingActionLoading("");
+    }
+  };
+
+  const openTopupCheckout = async () => {
+    if (billingActionLoading) return;
+    setBillingActionError("");
+    setBillingActionLoading("topup");
+    try {
+      const session = await requestBillingCheckoutSession({ purchase: "topup" });
+      const url = String(session?.url || "").trim();
+      if (!url) throw new Error("Top-up checkout URL was not returned by the server.");
+      window.location.assign(url);
+    } catch (error) {
+      setBillingActionError(error?.message || "Failed to start top-up checkout.");
     } finally {
       setBillingActionLoading("");
     }
@@ -5049,7 +5065,7 @@ export default function HandReviewPanel({ entitlements = null }) {
         reviewPayload.opponentSnapshot = opponentSnapshot;
       }
       const res = await requestHandHistoryReview(reviewPayload);
-      publishTrialTokenUpdate(res?.summary?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.summary?.reviewCredits);
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
@@ -5094,7 +5110,7 @@ export default function HandReviewPanel({ entitlements = null }) {
         reviewPayload.opponentSnapshot = opponentSnapshot;
       }
       const res = await requestHandHistoryReview(reviewPayload);
-      publishTrialTokenUpdate(res?.summary?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.summary?.reviewCredits);
       setReviewsByHandKey((previous) => {
         const next = { ...previous };
         for (const item of res?.reviews || []) {
@@ -5135,7 +5151,7 @@ export default function HandReviewPanel({ entitlements = null }) {
       const res = await requestTournamentSummaryReview({
         summary: tournamentSummaryPayload,
       });
-      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.reviewCredits);
       setSummaryReview(res?.review || null);
       setShowUpgradePrompt(false);
       setAiAccessErrorCode("");
@@ -5168,7 +5184,7 @@ export default function HandReviewPanel({ entitlements = null }) {
       const res = await requestBlindDefenseReview({
         blindDefenseSummary: blindDefenseReviewPayload,
       });
-      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.reviewCredits);
       setBlindDefenseReview(res?.review || null);
       setShowUpgradePrompt(false);
       setAiAccessErrorCode("");
@@ -5201,7 +5217,7 @@ export default function HandReviewPanel({ entitlements = null }) {
       const res = await requestIcmSpotReview({
         icmSummary: icmReviewPayload,
       });
-      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.reviewCredits);
       setIcmReview(res?.review || null);
       setShowUpgradePrompt(false);
       setAiAccessErrorCode("");
@@ -5230,7 +5246,7 @@ export default function HandReviewPanel({ entitlements = null }) {
     setLoadingTableHintReview(true);
     try {
       const res = await requestTableHintReview(tableHintPayload);
-      publishTrialTokenUpdate(res?.monthlyUsage?.trialRemainingTokens);
+      publishReviewCreditUpdate(res?.reviewCredits);
       setTableHintReview(res?.review || null);
       setShowUpgradePrompt(false);
       setAiAccessErrorCode("");
@@ -5487,31 +5503,34 @@ export default function HandReviewPanel({ entitlements = null }) {
                 type="button"
                 onClick={
                   hasActiveSubscription
-                    ? openBillingPortal
+                    ? openTopupCheckout
                     : openUpgradeCheckout
                 }
                 disabled={Boolean(billingActionLoading)}
               >
                 {billingActionLoading === "checkout"
                   ? "Opening checkout..."
-                  : billingActionLoading === "portal"
-                    ? "Opening portal..."
+                  : billingActionLoading === "topup"
+                    ? "Opening top-up..."
                     : hasActiveSubscription
-                      ? "Manage plan"
-                      : "Upgrade AI"}
+                      ? `Buy ${REVIEW_TOPUP_CREDITS} credits · ${REVIEW_TOPUP_PRICE}`
+                      : "Unlock AI Review · £12/month"}
               </button>
               {loadingBillingStatus ? (
                 <span className="ai-upgrade-prompt-meta">
                   Checking billing…
                 </span>
               ) : null}
-              {!hasActiveSubscription ? (
-                <span className="ai-upgrade-prompt-meta">
-                  Trial tokens left:{" "}
-                  {Number.isFinite(trialRemainingTokens)
-                    ? trialRemainingTokens.toLocaleString()
-                    : "0"}
-                </span>
+              <span className="ai-upgrade-prompt-meta">
+                Review credits left: {hasUnlimitedReview ? "Unlimited" : reviewCreditsRemaining.toLocaleString()}
+              </span>
+              {hasActiveSubscription ? (
+                <>
+                  <span className="ai-upgrade-prompt-meta">Top-up credits expire at your next renewal.</span>
+                  <button type="button" onClick={openBillingPortal} disabled={Boolean(billingActionLoading)}>
+                    Manage plan
+                  </button>
+                </>
               ) : null}
             </div>
             {billingActionError ? (
@@ -5630,7 +5649,7 @@ export default function HandReviewPanel({ entitlements = null }) {
                   })()
                 : quickReviewHandKey
                   ? "Reviewing..."
-                  : "Analyze"}
+                  : "Analyze selected"}
             </button>
           </div>
         ) : null}

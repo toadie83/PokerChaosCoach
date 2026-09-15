@@ -657,8 +657,59 @@ export function buildDecisionNode(state = {}) {
           ).toFixed(2),
         )
       : null;
-  const playersYetToActSeats = preflopPlayersYetToAct(state);
+  const strategicTableState =
+    state.liveTrackerReceipt?.strategicTableState &&
+    typeof state.liveTrackerReceipt.strategicTableState === "object" &&
+    String(state.liveTrackerReceipt?.street || "").toLowerCase() ===
+      String(state.street || "preflop").toLowerCase()
+      ? state.liveTrackerReceipt.strategicTableState
+      : null;
+  const observedPlayersYetToActSeats = Array.isArray(
+    strategicTableState?.features?.playersYetToAct,
+  )
+    ? strategicTableState.features.playersYetToAct
+        .map((seat) => String(seat || "").trim().toUpperCase())
+        .filter(Boolean)
+    : null;
+  const playersYetToActSeats = observedPlayersYetToActSeats ||
+    preflopPlayersYetToAct(state);
   const playersYetToActCount = playersYetToActSeats.length;
+  const strategicOpponents = Array.isArray(strategicTableState?.opponents)
+    ? strategicTableState.opponents
+    : [];
+  const playersYetToActStackDetails = playersYetToActSeats.map((seat) => {
+    const opponent = strategicOpponents.find(
+      (candidate) =>
+        String(candidate?.position || "").trim().toUpperCase() === seat,
+    );
+    const stackBehindBB = finiteNonNegativeOrNull(opponent?.stackBehindBB);
+    const effectiveStackAgainstHeroBB = finiteNonNegativeOrNull(
+      opponent?.effectiveStackBB,
+    );
+    return {
+      seat,
+      stackBehindBB,
+      effectiveStackAgainstHeroBB,
+      stackBand: opponent?.stackBand || null,
+      confidence: finiteNonNegativeOrNull(opponent?.confidence),
+      currentStackReconciled:
+        typeof opponent?.currentStackReconciled === "boolean"
+          ? opponent.currentStackReconciled
+          : null,
+    };
+  });
+  const missingPlayersYetToActStackSeats = playersYetToActStackDetails
+    .filter((opponent) => opponent.stackBehindBB === null)
+    .map((opponent) => opponent.seat);
+  const playersYetToActStacksKnown =
+    playersYetToActCount === 0 ||
+    (Boolean(strategicTableState) &&
+      missingPlayersYetToActStackSeats.length === 0);
+  const knownRetaliationStackBehind = playersYetToActStackDetails.some(
+    (opponent) =>
+      opponent.effectiveStackAgainstHeroBB !== null &&
+      opponent.effectiveStackAgainstHeroBB >= 25,
+  );
   const activeActorsBeforeSeatsBehind =
     String(state.decisionKind || "").toLowerCase() ===
     "facing_open_and_3bet"
@@ -684,6 +735,7 @@ export function buildDecisionNode(state = {}) {
       String(state.decisionKind || "").toLowerCase(),
     ) &&
     playersYetToActCount > 0 &&
+    (!playersYetToActStacksKnown || knownRetaliationStackBehind) &&
     maxHeroTotalToBB !== null &&
     maxOpponentTotalToBB !== null &&
     maxHeroTotalToBB >= 30 &&
@@ -735,7 +787,7 @@ export function buildDecisionNode(state = {}) {
   if (Number(state.playersInHand || 2) > 2) {
     missingInformation.push("remaining_player_positions");
   }
-  if (playersYetToActCount > 0) {
+  if (!playersYetToActStacksKnown) {
     missingInformation.push("players_yet_to_act_stack_sizes");
   }
   if (String(state.decisionKind || "").toLowerCase() === "facing_open_and_3bet") {
@@ -758,11 +810,14 @@ export function buildDecisionNode(state = {}) {
 
   const strategicRestrictions = [];
   if (overjamPlayersBehindRisk) {
+    const riskDescription = playersYetToActStacksKnown
+      ? "an observed retaliation-capable stack remains behind"
+      : "unacted players with unknown stacks remain behind";
     strategicRestrictions.push({
       action: "jam",
       code: "short_opener_players_behind_overjam",
       reason:
-        "The primary opponent's short stack does not cap Hero's exposure while unacted players with unknown stacks remain behind.",
+        `The primary opponent's short stack does not cap Hero's exposure while ${riskDescription}.`,
     });
   }
   if (String(state.decisionKind || "").toLowerCase() === "facing_open_and_3bet") {
@@ -785,6 +840,8 @@ export function buildDecisionNode(state = {}) {
     playersLiveAtDecision,
     playersYetToActSeats,
     playersYetToActCount,
+    playersYetToActStackDetails,
+    missingPlayersYetToActStackSeats,
     gameType: state.gameType || "tournament",
     bountyMode:
       state.gameType === "cash" ? "none" : state.bountyMode || "none",
@@ -808,7 +865,7 @@ export function buildDecisionNode(state = {}) {
     maxOpponentTotalToBB,
     heroMaximumExposureBB: maxHeroTotalToBB,
     heroExposureBeyondPrimaryOpponentBB,
-    playersYetToActStacksKnown: playersYetToActCount === 0,
+    playersYetToActStacksKnown,
     strategicRestrictions,
     effectiveStackToPotRatio: spr,
     heroStackToPotRatio:
