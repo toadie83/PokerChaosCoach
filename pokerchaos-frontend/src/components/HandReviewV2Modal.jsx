@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { resolveHandBbResult } from "../lib/handResult.js";
+import HandReplay from "./HandReplay.jsx";
 
 const STREET_ORDER = ["preflop", "flop", "turn", "river"];
 
@@ -464,8 +465,8 @@ export default function HandReviewV2Modal({
                 <details className="review-v2-devqa">
                   <summary className="review-v2-devqa-summary">
                     Developer QA
-                    {qaScoreLabel !== null ? ` • ${qaScoreLabel}` : ""}
-                    {qaWarnings.length > 0 ? ` • ! ${qaWarnings.length}` : ""}
+                    {qaScoreLabel !== null ? ` â€¢ ${qaScoreLabel}` : ""}
+                    {qaWarnings.length > 0 ? ` â€¢ ! ${qaWarnings.length}` : ""}
                   </summary>
                   {qaEvaluation ? (
                     <div className="review-v2-devqa-body">
@@ -493,7 +494,7 @@ export default function HandReviewV2Modal({
                                 return (
                                   <li key={`warning-${code || index}`}>
                                     {code || "warning"}
-                                    {message ? ` — ${message}` : ""}
+                                    {message ? ` â€” ${message}` : ""}
                                   </li>
                                 );
                               })}
@@ -648,9 +649,7 @@ export default function HandReviewV2Modal({
           ) : null}
 
           {activeTab === "replay" ? (
-            <div className="review-v2-placeholder">
-              <p>Replay controls placeholder for future action timeline and animation overlays.</p>
-            </div>
+            <HandReplay key={hand?.handId} hand={hand} streetReviews={streetReviews} />
           ) : null}
         </div>
       </div>

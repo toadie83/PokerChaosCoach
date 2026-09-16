@@ -3,6 +3,7 @@ const BENEFITS = [
   "Recurring leak detection",
   "Deeper decision review",
   "Tournament-wide patterns",
+  "Decision-by-decision replay",
 ];
 
 export default function TournamentReviewUpsell({ action }) {

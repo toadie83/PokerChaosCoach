@@ -765,6 +765,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
   let heroWonAmount = null;
   const summaryLines = [];
   const collectedEvents = [];
+  const replayEvents = [];
 
   for (const line of lines.slice(1)) {
     if (/^\*\*\* HOLE CARDS \*\*\*/.test(line)) {
@@ -777,6 +778,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
       inSummary = false;
       const match = /^\*\*\* FLOP \*\*\* \[([^\]]+)\]/.exec(line);
       if (match) board.flop = parseCardList(match[1]);
+      replayEvents.push({ type: "street", street: "flop", cards: [...board.flop] });
       continue;
     }
     if (/^\*\*\* TURN \*\*\*/.test(line)) {
@@ -787,6 +789,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
         const cards = parseCardList(groups[1][1]);
         board.turn = cards[0] || null;
       }
+      replayEvents.push({ type: "street", street: "turn", cards: [...board.flop, board.turn].filter(Boolean) });
       continue;
     }
     if (/^\*\*\* RIVER \*\*\*/.test(line)) {
@@ -797,6 +800,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
         const cards = parseCardList(groups[1][1]);
         board.river = cards[0] || null;
       }
+      replayEvents.push({ type: "street", street: "river", cards: [...board.flop, board.turn, board.river].filter(Boolean) });
       continue;
     }
     if (/^\*\*\* SUMMARY \*\*\*/.test(line)) {
@@ -808,6 +812,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
       currentStreet = null;
       inSummary = false;
       hadShowdown = true;
+      replayEvents.push({ type: "street", street: "showdown" });
       continue;
     }
 
@@ -843,6 +848,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
     const showMatch = /^([^:]+):\s+shows\s+\[([^\]]+)\]/i.exec(line);
     if (showMatch) {
       revealedCards.set(showMatch[1].trim(), parseCardList(showMatch[2]));
+      replayEvents.push({ type: "show", player: showMatch[1].trim(), cards: parseCardList(showMatch[2]) });
       continue;
     }
 
@@ -875,11 +881,12 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
     }
 
     const collectNoColonMatch =
-      /^(.+?)\s+collected\s+\$?([\d,.]+)\s+from pot$/i.exec(line);
+      /^(.+?)\s+collected\s+\$?([\d,.]+)\s+from (?:pot|(?:main|side) pot(?:-\d+)?)/i.exec(line);
     if (collectNoColonMatch) {
       const player = collectNoColonMatch[1].trim();
       const amount = toNumber(collectNoColonMatch[2]);
       collectedEvents.push({ player, amount });
+      replayEvents.push({ type: "collect", player, amount, raw: line });
       continue;
     }
 
@@ -888,6 +895,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
     if (uncalledBetReturnedMatch) {
       const amount = toNumber(uncalledBetReturnedMatch[1]);
       const player = String(uncalledBetReturnedMatch[2] || "").trim();
+      replayEvents.push({ type: "return_uncalled", player, amount, raw: line });
       const streetKey = currentStreet;
       if (streetKey && actionsByStreet[streetKey]) {
         actionsByStreet[streetKey].push({
@@ -903,6 +911,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
 
     const action = parseActionLine(line);
     if (!action) continue;
+    replayEvents.push(action);
     if (action.type === "collect") {
       collectedEvents.push({ player: action.player, amount: action.amount ?? 0 });
     }
@@ -1008,6 +1017,7 @@ function parseSingleHand(rawChunk, heroName, forcedFormat = null) {
     heroPreflop,
     actionsByStreet,
     rawText: rawChunk,
+    replayEvents,
   };
 }
 
@@ -1430,6 +1440,9 @@ export function compactHandForApi(hand) {
       chips: seat?.chips ?? null,
     })),
     heroName: hand.heroName,
+    heroSeat: hand.heroSeat,
+    table: hand.table,
+    replayEvents: hand.replayEvents,
     heroPosition: hand.heroPosition,
     heroStack: hand.heroStack,
     heroCards: hand.heroCards,

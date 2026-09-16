@@ -1,0 +1,426 @@
+.hand-replay {
+  color: #e2e8f0;
+}
+
+.hand-replay button {
+  border: 1px solid #3c5264;
+  border-radius: 7px;
+  background: #152838;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.hand-replay button:hover:not(:disabled),
+.hand-replay button[aria-pressed="true"],
+.hand-replay button[aria-current] {
+  background: #234839;
+  border-color: #77caa1;
+}
+
+.hand-replay button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.hand-replay button:focus-visible,
+.hand-replay input:focus-visible {
+  outline: 2px solid #b6f3cf;
+  outline-offset: 3px;
+}
+
+.hand-replay-streets {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin: -5px 0 8px;
+  border-bottom: 1px solid #2b4050;
+}
+
+.hand-replay-streets button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 5px 9px;
+  color: #8fa9bb;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.hand-replay-streets button:hover:not(:disabled),
+.hand-replay-streets button[aria-pressed="true"] {
+  border-color: #77caa1;
+  background: transparent;
+  color: #dcebe4;
+}
+
+.hand-replay-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 16px;
+}
+
+.hand-replay-stage {
+  min-width: 0;
+}
+
+.hand-replay-table {
+  position: relative;
+  height: 510px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  background: radial-gradient(ellipse, #1b3140, #0a1520);
+}
+
+.hand-replay-felt {
+  position: absolute;
+  inset: 17% 10%;
+  border: 9px solid #314248;
+  border-radius: 48%;
+  background: radial-gradient(ellipse, #235744, #10382f);
+  box-shadow: 0 0 0 3px #101f27, inset 0 0 35px #09251e;
+}
+
+.hand-replay-board {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.hand-replay-board strong {
+  font-size: 20px;
+}
+
+.hand-replay-board small {
+  color: #b0c8bd;
+  font-size: 10px;
+  text-align: center;
+}
+
+.hand-replay-street-label {
+  color: #acd4bf;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.hand-replay-cards {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  min-height: 28px;
+}
+
+.hand-replay-card,
+.hand-replay-card-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 29px;
+  height: 38px;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #14232c;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 2px 4px #0004;
+}
+
+.hand-replay-card.is-red {
+  color: #c32943;
+}
+
+.hand-replay-card.is-hidden {
+  border: 1px solid #7892aa;
+  background: repeating-linear-gradient(45deg, #284767, #284767 3px, #345676 3px, #345676 5px);
+  color: #b0c8df;
+}
+
+.hand-replay-card-slot {
+  border: 1px solid #ffffff20;
+  background: #ffffff09;
+  box-shadow: none;
+}
+
+.hand-replay-seat {
+  position: absolute;
+  width: 100px;
+  padding: 5px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #496171;
+  border-radius: 10px;
+  background: #102331;
+  box-shadow: 0 4px 12px #0005;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.hand-replay-seat.is-hero {
+  border-color: #85d6ae;
+  background: #193e35;
+}
+
+.hand-replay-seat.is-active {
+  box-shadow: 0 0 0 2px #e7bd6a, 0 0 20px #e7bd6a33;
+}
+
+.hand-replay-seat.is-folded {
+  opacity: 0.48;
+}
+
+.hand-replay-seat-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #b2c4d2;
+  font-size: 10px;
+}
+
+.hand-replay-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #365263;
+  font-size: 15px;
+}
+
+.hand-replay-dealer {
+  width: 14px;
+  border-radius: 50%;
+  background: #edf1e9;
+  color: #263c32;
+  text-align: center;
+}
+
+.hand-replay-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hand-replay-stack {
+  font-variant-numeric: tabular-nums;
+}
+
+.hand-replay-seat .hand-replay-card {
+  width: 22px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.hand-replay-action {
+  color: #c4d2dd;
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.hand-replay-bet {
+  color: #f4d18c;
+  font-size: 10px;
+}
+
+.hand-replay-caption {
+  min-height: 24px;
+  margin: 12px 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+.hand-replay-controls {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.hand-replay-scrubber {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.hand-replay-scrubber input {
+  flex: 1;
+  min-width: 0;
+  accent-color: #85d6ae;
+}
+
+.hand-replay-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hand-replay-guidance,
+.hand-replay-log {
+  border: 1px solid #2b4050;
+  border-radius: 12px;
+  background: #0e1d29;
+}
+
+.hand-replay-guidance {
+  padding: 14px;
+}
+
+.hand-replay-guidance-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hand-replay-guidance-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: capitalize;
+}
+
+.hand-replay-guidance-heading span {
+  border-radius: 999px;
+  background: #234839;
+  padding: 3px 7px;
+  color: #aee2c4;
+  font-size: 10px;
+}
+
+.hand-replay-guidance dl {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+}
+
+.hand-replay-guidance dl div {
+  display: grid;
+  gap: 2px;
+}
+
+.hand-replay-guidance dt {
+  color: #8fa9bb;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hand-replay-guidance dd {
+  margin: 0;
+  font-size: 12px;
+}
+
+.hand-replay-guidance p {
+  margin: 0;
+  color: #c8d5dd;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.hand-replay-log {
+  overflow: hidden;
+}
+
+.hand-replay-log h3 {
+  margin: 0;
+  padding: 14px;
+  font-size: 14px;
+}
+
+.hand-replay-log ol {
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+  scroll-behavior: smooth;
+}
+
+.hand-replay-log button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 5px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  font-size: 12px;
+}
+
+.hand-replay-log small {
+  color: #8fa9bb;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.hand-replay-note {
+  margin: 10px 0 0;
+  color: #d1b581;
+  font-size: 12px;
+}
+
+.hand-replay-empty {
+  padding: 32px;
+  color: #9fb2c0;
+  text-align: center;
+}
+
+@media (max-width: 1050px) {
+  .hand-replay-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hand-replay-log ol {
+    max-height: 300px;
+  }
+}
+
+@media (max-width: 550px) {
+  .hand-replay-table {
+    height: 550px;
+  }
+
+  .hand-replay-seat {
+    width: 70px;
+    padding: 3px;
+    font-size: 9px;
+  }
+
+  .hand-replay-seat-top {
+    gap: 2px;
+    font-size: 8px;
+  }
+
+  .hand-replay-avatar {
+    width: 15px;
+    height: 15px;
+    font-size: 12px;
+  }
+
+  .hand-replay-board {
+    gap: 7px;
+  }
+
+  .hand-replay-board .hand-replay-card,
+  .hand-replay-card-slot {
+    width: 23px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .hand-replay-controls button {
+    padding: 8px;
+    font-size: 12px;
+  }
+}
