@@ -1,14 +1,40 @@
+import { useEffect, useState } from "react";
 import { SignInButton, SignUpButton } from "@clerk/react";
+
+const GALLERY = [
+  {
+    src: "/images/tournament-review1.png",
+    alt: "Tournament Review workspace showing the complete tournament decision trail",
+    label: "Tournament workspace",
+  },
+  {
+    src: "/images/ReplayVision.png",
+    alt: "Tournament Review hand replay showing the poker table, street guidance, and decision log",
+    label: "Decision replay",
+  },
+];
 
 const BENEFITS = [
   ["Every hand analysed", "See the decisions that shaped your tournament, not just a small preview."],
   ["Recurring leak detection", "Spot patterns that repeat across positions, streets, and stack depths."],
   ["Deeper decision review", "Move from a headline result into the context behind each decision."],
   ["Tournament-wide patterns", "Understand your progression, frequencies, and next adjustments in one view."],
+  ["Decision-by-decision replay", "Revisit every action and street as the table, cards, pot, and stacks update around the hand."],
 ];
 
 export default function TournamentReviewModal({ open, onClose }) {
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  useEffect(() => {
+    if (open) setActiveSlide(0);
+  }, [open]);
+
   if (!open) return null;
+
+  const slide = GALLERY[activeSlide];
+  const showSlide = (index) => {
+    setActiveSlide((index + GALLERY.length) % GALLERY.length);
+  };
 
   return (
     <div className="home-v2-review-modal-backdrop" role="presentation" onClick={onClose}>
@@ -22,8 +48,44 @@ export default function TournamentReviewModal({ open, onClose }) {
         <button className="home-v2-review-modal-close" type="button" onClick={onClose} aria-label="Close Tournament Review introduction">
           ×
         </button>
-        <div className="home-v2-review-modal-visual">
-          <img src="/images/tournament-review1.png" alt="Tournament Review dashboard showing a complete tournament decision trail" />
+        <div className="home-v2-review-modal-gallery">
+          <div className="home-v2-review-modal-visual">
+            <img key={slide.src} src={slide.src} alt={slide.alt} />
+            <button
+              className="home-v2-review-gallery-arrow is-previous"
+              type="button"
+              onClick={() => showSlide(activeSlide - 1)}
+              aria-label="Previous Tournament Review image"
+            >
+              ‹
+            </button>
+            <button
+              className="home-v2-review-gallery-arrow is-next"
+              type="button"
+              onClick={() => showSlide(activeSlide + 1)}
+              aria-label="Next Tournament Review image"
+            >
+              ›
+            </button>
+          </div>
+          <div className="home-v2-review-gallery-footer">
+            <p>{slide.label}</p>
+            <div className="home-v2-review-gallery-tabs" role="tablist" aria-label="Tournament Review gallery">
+              {GALLERY.map((item, index) => (
+                <button
+                  key={item.src}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeSlide === index}
+                  aria-label={`Show ${item.label}`}
+                  onClick={() => showSlide(index)}
+                >
+                  <span aria-hidden="true" />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="home-v2-review-modal-copy">
           <p className="home-v2-kicker">Tournament intelligence</p>
