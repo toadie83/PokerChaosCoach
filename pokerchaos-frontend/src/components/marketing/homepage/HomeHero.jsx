@@ -1,4 +1,4 @@
-import pokerNightfall from "../../../assets/marketing/emerald-poker-nightfall.png";
+const pokerNightfall = "https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/emerald_poker_nightfall.png";
 
 const PRODUCT_MARKERS = [
   "Private upload",

@@ -10,7 +10,7 @@ export default function TournamentReviewUpsell({ action }) {
   return (
     <aside className="home-v2-review-upsell">
       <div className="home-v2-review-upsell-image">
-        <img src="/images/tournament-review1.png" alt="Tournament Review dashboard preview" />
+        <img src="https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/tournament-review1.png" alt="Tournament Review dashboard preview" />
       </div>
       <span className="home-v2-upsell-label">Go deeper when you are ready</span>
       <div className="home-v2-upsell-mark" aria-hidden="true">♛</div>

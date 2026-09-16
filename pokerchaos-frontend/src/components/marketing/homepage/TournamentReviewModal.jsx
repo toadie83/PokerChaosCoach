@@ -3,12 +3,12 @@ import { SignInButton, SignUpButton } from "@clerk/react";
 
 const GALLERY = [
   {
-    src: "/images/tournament-review1.png",
+    src: "https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/tournament-review1.png",
     alt: "Tournament Review workspace showing the complete tournament decision trail",
     label: "Tournament workspace",
   },
   {
-    src: "/images/ReplayVision.png",
+    src: "https://pub-1f64fd7c586548cbb026391e26e2d358.r2.dev/ReplayVision.png",
     alt: "Tournament Review hand replay showing the poker table, street guidance, and decision log",
     label: "Decision replay",
   },
